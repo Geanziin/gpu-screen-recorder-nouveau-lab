@@ -358,7 +358,6 @@ bool drm_monitor_get_display_server_data(const gsr_window *window, const gsr_mon
 
 bool gl_get_gpu_info(gsr_egl *egl, gsr_gpu_info *info) {
     const char *software_renderers[] = { "llvmpipe", "SWR", "softpipe", NULL };
-    bool supported = true;
     const char *gl_vendor = (const char*)egl->glGetString(GL_VENDOR);
     const char *gl_renderer = (const char*)egl->glGetString(GL_RENDERER);
 
@@ -367,16 +366,14 @@ bool gl_get_gpu_info(gsr_egl *egl, gsr_gpu_info *info) {
 
     if(!gl_vendor) {
         fprintf(stderr, "gsr error: failed to get gpu vendor\n");
-        supported = false;
-        goto end;
+        return false;
     }
 
     if(gl_renderer) {
         for(int i = 0; software_renderers[i]; ++i) {
             if(strstr(gl_renderer, software_renderers[i])) {
                 fprintf(stderr, "gsr error: your opengl environment is not properly setup. It's using %s (software rendering) for opengl instead of your graphics card. Please make sure your graphics driver is properly installed\n", software_renderers[i]);
-                supported = false;
-                goto end;
+                return false;
             }
         }
     }
@@ -393,8 +390,7 @@ bool gl_get_gpu_info(gsr_egl *egl, gsr_gpu_info *info) {
         info->vendor = GSR_GPU_VENDOR_BROADCOM;
     else {
         fprintf(stderr, "gsr error: unknown gpu vendor: %s\n", gl_vendor);
-        supported = false;
-        goto end;
+        return false;
     }
 
     if(gl_renderer) {
@@ -403,8 +399,7 @@ bool gl_get_gpu_info(gsr_egl *egl, gsr_gpu_info *info) {
         info->is_steam_deck = strstr(gl_renderer, "vangogh") != NULL;
     }
 
-    end:
-    return supported;
+    return true;
 }
 
 bool try_card_has_valid_plane(const char *card_path) {
