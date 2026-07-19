@@ -359,8 +359,8 @@ bool drm_monitor_get_display_server_data(const gsr_window *window, const gsr_mon
 bool gl_get_gpu_info(gsr_egl *egl, gsr_gpu_info *info) {
     const char *software_renderers[] = { "llvmpipe", "SWR", "softpipe", NULL };
     bool supported = true;
-    const unsigned char *gl_vendor = egl->glGetString(GL_VENDOR);
-    const unsigned char *gl_renderer = egl->glGetString(GL_RENDERER);
+    const char *gl_vendor = (const char*)egl->glGetString(GL_VENDOR);
+    const char *gl_renderer = (const char*)egl->glGetString(GL_RENDERER);
 
     info->gpu_version = 0;
     info->is_steam_deck = false;
@@ -373,7 +373,7 @@ bool gl_get_gpu_info(gsr_egl *egl, gsr_gpu_info *info) {
 
     if(gl_renderer) {
         for(int i = 0; software_renderers[i]; ++i) {
-            if(strstr((const char*)gl_renderer, software_renderers[i])) {
+            if(strstr(gl_renderer, software_renderers[i])) {
                 fprintf(stderr, "gsr error: your opengl environment is not properly setup. It's using %s (software rendering) for opengl instead of your graphics card. Please make sure your graphics driver is properly installed\n", software_renderers[i]);
                 supported = false;
                 goto end;
@@ -381,15 +381,15 @@ bool gl_get_gpu_info(gsr_egl *egl, gsr_gpu_info *info) {
         }
     }
 
-    if(strstr((const char*)gl_vendor, "AMD"))
+    if(strstr(gl_vendor, "AMD"))
         info->vendor = GSR_GPU_VENDOR_AMD;
-    else if(strstr((const char*)gl_vendor, "Mesa") && gl_renderer && strstr((const char*)gl_renderer, "AMD"))
+    else if(strstr(gl_vendor, "Mesa") && gl_renderer && strstr(gl_renderer, "AMD"))
         info->vendor = GSR_GPU_VENDOR_AMD;
-    else if(strstr((const char*)gl_vendor, "Intel"))
+    else if(strstr(gl_vendor, "Intel"))
         info->vendor = GSR_GPU_VENDOR_INTEL;
-    else if(strstr((const char*)gl_vendor, "NVIDIA"))
+    else if(strstr(gl_vendor, "NVIDIA"))
         info->vendor = GSR_GPU_VENDOR_NVIDIA;
-    else if(strstr((const char*)gl_vendor, "Broadcom"))
+    else if(strstr(gl_vendor, "Broadcom"))
         info->vendor = GSR_GPU_VENDOR_BROADCOM;
     else {
         fprintf(stderr, "gsr error: unknown gpu vendor: %s\n", gl_vendor);
@@ -399,8 +399,8 @@ bool gl_get_gpu_info(gsr_egl *egl, gsr_gpu_info *info) {
 
     if(gl_renderer) {
         if(info->vendor == GSR_GPU_VENDOR_NVIDIA)
-            sscanf((const char*)gl_renderer, "%*s %*s %*s %d", &info->gpu_version);
-        info->is_steam_deck = strstr((const char*)gl_renderer, "vangogh") != NULL;
+            sscanf(gl_renderer, "%*s %*s %*s %d", &info->gpu_version);
+        info->is_steam_deck = strstr(gl_renderer, "vangogh") != NULL;
     }
 
     end:

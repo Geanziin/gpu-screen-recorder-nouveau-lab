@@ -14,7 +14,7 @@ This is a cli-only tool, if you want an UI for this check out [GPU Screen Record
 Supported video codecs:
 * H264 (default)
 * HEVC (Optionally with HDR)
-* AV1
+* AV1 (Optionally with HDR)
 * VP8
 * VP9
 
