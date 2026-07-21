@@ -33,6 +33,8 @@ typedef struct {
     uint32_t reference_luminance; /* cd/m² (nits) */
     uint32_t max_luminance;       /* cd/m² (nits) */
     bool luminance_valid;
+    int32_t primaries[8]; /* CIE 1931 xy chromaticity coordinates multiplied by 1 million, in the order red, green, blue, white */
+    bool primaries_valid;
 } gsr_wayland_output;
 
 struct gsr_window_wayland {
@@ -113,6 +115,7 @@ static void image_description_info_handle_done(void *data, struct wp_image_descr
     wp_image_description_info_v1_destroy(info);
     output->image_description_info = NULL;
     output->luminance_valid = output->reference_luminance > 0 || output->max_luminance > 0;
+    output->primaries_valid = output->primaries[1] > 0 && output->primaries[3] > 0 && output->primaries[5] > 0 && output->primaries[7] > 0;
 }
 
 static void image_description_info_handle_icc_file(void *data, struct wp_image_description_info_v1 *info, int32_t icc, uint32_t icc_size) {
@@ -121,6 +124,19 @@ static void image_description_info_handle_icc_file(void *data, struct wp_image_d
 }
 
 static void image_description_info_handle_primaries(void *data, struct wp_image_description_info_v1 *info, int32_t r_x, int32_t r_y, int32_t g_x, int32_t g_y, int32_t b_x, int32_t b_y, int32_t w_x, int32_t w_y) {
+    (void)info;
+    gsr_wayland_output *output = data;
+    output->primaries[0] = r_x;
+    output->primaries[1] = r_y;
+    output->primaries[2] = g_x;
+    output->primaries[3] = g_y;
+    output->primaries[4] = b_x;
+    output->primaries[5] = b_y;
+    output->primaries[6] = w_x;
+    output->primaries[7] = w_y;
+}
+
+static void image_description_info_handle_target_primaries(void *data, struct wp_image_description_info_v1 *info, int32_t r_x, int32_t r_y, int32_t g_x, int32_t g_y, int32_t b_x, int32_t b_y, int32_t w_x, int32_t w_y) {
     (void)data; (void)info; (void)r_x; (void)r_y; (void)g_x; (void)g_y; (void)b_x; (void)b_y; (void)w_x; (void)w_y;
 }
 
@@ -147,7 +163,7 @@ static const struct wp_image_description_info_v1_listener image_description_info
     .tf_power = image_description_info_handle_uint_noop,
     .tf_named = image_description_info_handle_uint_noop,
     .luminances = image_description_info_handle_luminances,
-    .target_primaries = image_description_info_handle_primaries,
+    .target_primaries = image_description_info_handle_target_primaries,
     .target_luminance = image_description_info_handle_target_luminance,
     .target_max_cll = image_description_info_handle_uint_noop,
     .target_max_fall = image_description_info_handle_uint_noop,
@@ -580,6 +596,19 @@ static bool gsr_window_wayland_get_monitor_hdr_info(const gsr_window *window, co
 
         hdr_info->sdr_white_luminance = output->reference_luminance;
         hdr_info->max_peak_luminance = output->max_luminance;
+        hdr_info->primaries_valid = output->primaries_valid;
+        if(output->primaries_valid) {
+            hdr_info->primaries.red_x = output->primaries[0] / 1000000.0f;
+            hdr_info->primaries.red_y = output->primaries[1] / 1000000.0f;
+            hdr_info->primaries.green_x = output->primaries[2] / 1000000.0f;
+            hdr_info->primaries.green_y = output->primaries[3] / 1000000.0f;
+            hdr_info->primaries.blue_x = output->primaries[4] / 1000000.0f;
+            hdr_info->primaries.blue_y = output->primaries[5] / 1000000.0f;
+            hdr_info->primaries.white_x = output->primaries[6] / 1000000.0f;
+            hdr_info->primaries.white_y = output->primaries[7] / 1000000.0f;
+        } else {
+            memset(&hdr_info->primaries, 0, sizeof(hdr_info->primaries));
+        }
         return true;
     }
     return false;

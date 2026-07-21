@@ -19,13 +19,18 @@ typedef struct {
     double v[3];
 } vec3d;
 
+typedef struct {
+    double m[9];
+} mat3d;
+
 struct gsr_kde_night_light {
     pthread_t thread;
     bool thread_created;
     atomic_bool stop;
     atomic_int temperature;
-    int cached_temperature;
-    float cached_inverse_matrix[9];
+    int cached_temperature[2];
+    gsr_color_chromaticities cached_container_primaries[2];
+    float cached_inverse_matrix[2][9];
 };
 
 /* Blackbody whitepoint table for 1000K-6500K at 100K intervals, from https://github.com/jonls/redshift/blob/master/README-colorramp */
@@ -77,13 +82,152 @@ static vec3d night_light_channel_factors(int temperature) {
     return result;
 }
 
-/* Kde plasma multiplies the composited image with the night light channel factors in linear space (verified against kde plasma 6.7, both in sdr and hdr mode) */
-static void compute_inverse_night_light_matrix(int temperature, float inverse_matrix[9]) {
-    const vec3d factors = night_light_channel_factors(temperature);
+static const gsr_color_chromaticities SRGB_CHROMATICITIES = {
+    .red_x = 0.64f, .red_y = 0.33f,
+    .green_x = 0.30f, .green_y = 0.60f,
+    .blue_x = 0.15f, .blue_y = 0.06f,
+    .white_x = 0.3127f, .white_y = 0.3290f
+};
+
+/* Bradford cone response matrices, the same values that kde plasma uses (kwin colorspace.cpp, chromaticAdaptationMatrix) */
+static const mat3d BRADFORD = { .m = {
+     0.8951,  0.2664, -0.1614,
+    -0.7502,  1.7135,  0.0367,
+     0.0389, -0.0685,  1.0296
+}};
+
+static const mat3d BRADFORD_INVERSE = { .m = {
+     0.9869929, -0.1470543, 0.1599627,
+     0.4323053,  0.5183603, 0.0492912,
+    -0.0085287,  0.0400428, 0.9684867
+}};
+
+static vec3d chromaticity_to_xyz(double x, double y) {
+    return (vec3d){ .v = { x / y, 1.0, (1.0 - x - y) / y } };
+}
+
+static vec3d mat3d_mul_vec3d(const mat3d *matrix, vec3d vec) {
+    vec3d result;
+    for(int i = 0; i < 3; ++i) {
+        result.v[i] = matrix->m[i*3 + 0] * vec.v[0] + matrix->m[i*3 + 1] * vec.v[1] + matrix->m[i*3 + 2] * vec.v[2];
+    }
+    return result;
+}
+
+static mat3d mat3d_multiply(const mat3d *a, const mat3d *b) {
+    mat3d result;
+    for(int row = 0; row < 3; ++row) {
+        for(int column = 0; column < 3; ++column) {
+            result.m[row*3 + column] =
+                a->m[row*3 + 0] * b->m[0*3 + column] +
+                a->m[row*3 + 1] * b->m[1*3 + column] +
+                a->m[row*3 + 2] * b->m[2*3 + column];
+        }
+    }
+    return result;
+}
+
+static bool mat3d_invert(const mat3d *matrix, mat3d *result) {
+    const double *m = matrix->m;
+    const double c00 = m[4]*m[8] - m[5]*m[7];
+    const double c01 = m[5]*m[6] - m[3]*m[8];
+    const double c02 = m[3]*m[7] - m[4]*m[6];
+    const double determinant = m[0]*c00 + m[1]*c01 + m[2]*c02;
+    if(fabs(determinant) < 1e-12)
+        return false;
+
+    const double inverse_determinant = 1.0 / determinant;
+    result->m[0] = c00 * inverse_determinant;
+    result->m[1] = (m[2]*m[7] - m[1]*m[8]) * inverse_determinant;
+    result->m[2] = (m[1]*m[5] - m[2]*m[4]) * inverse_determinant;
+    result->m[3] = c01 * inverse_determinant;
+    result->m[4] = (m[0]*m[8] - m[2]*m[6]) * inverse_determinant;
+    result->m[5] = (m[2]*m[3] - m[0]*m[5]) * inverse_determinant;
+    result->m[6] = c02 * inverse_determinant;
+    result->m[7] = (m[1]*m[6] - m[0]*m[7]) * inverse_determinant;
+    result->m[8] = (m[0]*m[4] - m[1]*m[3]) * inverse_determinant;
+    return true;
+}
+
+static bool rgb_to_xyz_matrix(const gsr_color_chromaticities *chromaticities, mat3d *result) {
+    const vec3d red = chromaticity_to_xyz(chromaticities->red_x, chromaticities->red_y);
+    const vec3d green = chromaticity_to_xyz(chromaticities->green_x, chromaticities->green_y);
+    const vec3d blue = chromaticity_to_xyz(chromaticities->blue_x, chromaticities->blue_y);
+    const vec3d white = chromaticity_to_xyz(chromaticities->white_x, chromaticities->white_y);
+
+    mat3d primaries;
+    for(int i = 0; i < 3; ++i) {
+        primaries.m[i*3 + 0] = red.v[i];
+        primaries.m[i*3 + 1] = green.v[i];
+        primaries.m[i*3 + 2] = blue.v[i];
+    }
+
+    mat3d primaries_inverse;
+    if(!mat3d_invert(&primaries, &primaries_inverse))
+        return false;
+
+    const vec3d white_scale = mat3d_mul_vec3d(&primaries_inverse, white);
+    for(int i = 0; i < 3; ++i) {
+        result->m[i*3 + 0] = red.v[i] * white_scale.v[0];
+        result->m[i*3 + 1] = green.v[i] * white_scale.v[1];
+        result->m[i*3 + 2] = blue.v[i] * white_scale.v[2];
+    }
+    return true;
+}
+
+static mat3d bradford_chromatic_adaptation_matrix(vec3d source_whitepoint, vec3d destination_whitepoint) {
+    const vec3d source_response = mat3d_mul_vec3d(&BRADFORD, source_whitepoint);
+    const vec3d destination_response = mat3d_mul_vec3d(&BRADFORD, destination_whitepoint);
+    mat3d scaled_bradford = BRADFORD;
+    for(int i = 0; i < 3; ++i) {
+        const double response_scale = destination_response.v[i] / source_response.v[i];
+        for(int j = 0; j < 3; ++j) {
+            scaled_bradford.m[i*3 + j] *= response_scale;
+        }
+    }
+    return mat3d_multiply(&BRADFORD_INVERSE, &scaled_bradford);
+}
+
+/* Kde plasma applies night light by moving the whitepoint of the output to the night light whitepoint with bradford chromatic adaptation
+   and dimming the output by the luminance of that whitepoint (kwin drm_output.cpp, applyNightLight - verified against kde plasma 6.7).
+   The chromatic adaptation acts on the image in the color volume that the image is encoded in, so the inverse is conjugated by |container_primaries|,
+   which is assumed to have a D65 whitepoint before the night light whitepoint change */
+static void compute_inverse_night_light_matrix(int temperature, gsr_night_light_compensation compensation, const gsr_color_chromaticities *container_primaries, float inverse_matrix[9]) {
     memset(inverse_matrix, 0, sizeof(float) * 9);
-    inverse_matrix[0] = 1.0 / fmax(factors.v[0], 0.0001);
-    inverse_matrix[4] = 1.0 / fmax(factors.v[1], 0.0001);
-    inverse_matrix[8] = 1.0 / fmax(factors.v[2], 0.0001);
+    inverse_matrix[0] = 1.0f;
+    inverse_matrix[4] = 1.0f;
+    inverse_matrix[8] = 1.0f;
+
+    const vec3d factors = night_light_channel_factors(temperature);
+
+    gsr_color_chromaticities container_primaries_d65 = *container_primaries;
+    container_primaries_d65.white_x = SRGB_CHROMATICITIES.white_x;
+    container_primaries_d65.white_y = SRGB_CHROMATICITIES.white_y;
+
+    mat3d srgb_to_xyz, container_to_xyz, xyz_to_container;
+    if(!rgb_to_xyz_matrix(&SRGB_CHROMATICITIES, &srgb_to_xyz))
+        return;
+    if(!rgb_to_xyz_matrix(&container_primaries_d65, &container_to_xyz))
+        return;
+    if(!mat3d_invert(&container_to_xyz, &xyz_to_container))
+        return;
+
+    vec3d night_light_whitepoint = mat3d_mul_vec3d(&srgb_to_xyz, factors);
+    const double luminance = fmax(night_light_whitepoint.v[1], 0.0001);
+    for(int i = 0; i < 3; ++i) {
+        night_light_whitepoint.v[i] /= luminance;
+    }
+
+    const vec3d d65_whitepoint = chromaticity_to_xyz(SRGB_CHROMATICITIES.white_x, SRGB_CHROMATICITIES.white_y);
+    const mat3d inverse_adaptation = bradford_chromatic_adaptation_matrix(night_light_whitepoint, d65_whitepoint);
+
+    const mat3d adaptation_in_container = mat3d_multiply(&xyz_to_container, &inverse_adaptation);
+    const mat3d inverse_tint = mat3d_multiply(&adaptation_in_container, &container_to_xyz);
+
+    const double luminance_scale = compensation == GSR_NIGHT_LIGHT_COMPENSATION_TINT ? 1.0 / luminance : 1.0;
+    for(int i = 0; i < 9; ++i) {
+        inverse_matrix[i] = inverse_tint.m[i] * luminance_scale;
+    }
 }
 
 static bool dbus_get_night_light_property(DBusConnection *connection, const char *property_name, int expected_type, DBusBasicValue *value) {
@@ -151,7 +295,8 @@ gsr_kde_night_light* gsr_kde_night_light_create(void) {
     if(!self)
         return NULL;
 
-    self->cached_temperature = -1;
+    self->cached_temperature[0] = -1;
+    self->cached_temperature[1] = -1;
 
     if(pthread_create(&self->thread, NULL, night_light_poll_thread, self) != 0) {
         free(self);
@@ -173,7 +318,7 @@ void gsr_kde_night_light_destroy(gsr_kde_night_light *self) {
     free(self);
 }
 
-bool gsr_kde_night_light_get_inverse_matrix(gsr_kde_night_light *self, float inverse_matrix[9]) {
+bool gsr_kde_night_light_get_inverse_matrix(gsr_kde_night_light *self, gsr_night_light_compensation compensation, const gsr_color_chromaticities *container_primaries, float inverse_matrix[9]) {
     if(!self)
         return false;
 
@@ -181,12 +326,17 @@ bool gsr_kde_night_light_get_inverse_matrix(gsr_kde_night_light *self, float inv
     if(temperature <= 0)
         return false;
 
-    if(self->cached_temperature != temperature) {
-        compute_inverse_night_light_matrix(temperature, self->cached_inverse_matrix);
-        self->cached_temperature = temperature;
+    if(!container_primaries)
+        container_primaries = &SRGB_CHROMATICITIES;
+
+    const int cache_index = compensation;
+    if(self->cached_temperature[cache_index] != temperature || memcmp(&self->cached_container_primaries[cache_index], container_primaries, sizeof(*container_primaries)) != 0) {
+        compute_inverse_night_light_matrix(temperature, compensation, container_primaries, self->cached_inverse_matrix[cache_index]);
+        self->cached_temperature[cache_index] = temperature;
+        self->cached_container_primaries[cache_index] = *container_primaries;
     }
 
-    memcpy(inverse_matrix, self->cached_inverse_matrix, sizeof(self->cached_inverse_matrix));
+    memcpy(inverse_matrix, self->cached_inverse_matrix[cache_index], sizeof(self->cached_inverse_matrix[cache_index]));
     return true;
 }
 
@@ -204,8 +354,10 @@ void gsr_kde_night_light_destroy(gsr_kde_night_light *self) {
     (void)self;
 }
 
-bool gsr_kde_night_light_get_inverse_matrix(gsr_kde_night_light *self, float inverse_matrix[9]) {
+bool gsr_kde_night_light_get_inverse_matrix(gsr_kde_night_light *self, gsr_night_light_compensation compensation, const gsr_color_chromaticities *container_primaries, float inverse_matrix[9]) {
     (void)self;
+    (void)compensation;
+    (void)container_primaries;
     (void)inverse_matrix;
     return false;
 }

@@ -27,8 +27,17 @@ typedef enum {
 } gsr_monitor_rotation;
 
 typedef struct {
+    float red_x, red_y;
+    float green_x, green_y;
+    float blue_x, blue_y;
+    float white_x, white_y;
+} gsr_color_chromaticities;
+
+typedef struct {
     float sdr_white_luminance; /* cd/m² (nits) */
     float max_peak_luminance;  /* cd/m² (nits) */
+    gsr_color_chromaticities primaries; /* The color volume that the monitor image is encoded in, valid when |primaries_valid| is true */
+    bool primaries_valid;
 } gsr_monitor_hdr_info;
 
 typedef enum {

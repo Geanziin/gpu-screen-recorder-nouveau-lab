@@ -53,10 +53,14 @@ typedef struct {
     bool tone_mapping_message_shown;
 
     int drm_card_fd;
-    uint32_t gamma_lut_connector_id;
-    uint32_t gamma_lut_crtc_id;
+    uint32_t crtc_connector_id;
+    uint32_t crtc_id;
     uint32_t gamma_lut_property_id;
+    uint32_t ctm_property_id;
+    uint32_t degamma_lut_property_id;
     uint64_t gamma_lut_blob_id;
+    uint64_t gamma_lut_uploaded_blob_id;
+    bool crtc_color_ops_active;
 
     bool night_light_message_shown;
     bool hdr_luminance_message_shown;
@@ -292,10 +296,12 @@ static bool drm_plane_is_hdr(const gsr_kms_response_item *drm_fd) {
     return drm_fd->has_hdr_metadata && hdr_metadata_is_supported_format(&drm_fd->hdr_metadata);
 }
 
-static void gsr_capture_kms_resolve_gamma_lut_property(gsr_capture_kms *self, uint32_t connector_id) {
-    self->gamma_lut_connector_id = connector_id;
-    self->gamma_lut_crtc_id = 0;
+static void gsr_capture_kms_resolve_crtc_color_properties(gsr_capture_kms *self, uint32_t connector_id) {
+    self->crtc_connector_id = connector_id;
+    self->crtc_id = 0;
     self->gamma_lut_property_id = 0;
+    self->ctm_property_id = 0;
+    self->degamma_lut_property_id = 0;
 
     drmModeConnector *connector = drmModeGetConnectorCurrent(self->drm_card_fd, connector_id);
     if(!connector)
@@ -304,16 +310,16 @@ static void gsr_capture_kms_resolve_gamma_lut_property(gsr_capture_kms *self, ui
     if(connector->encoder_id) {
         drmModeEncoder *encoder = drmModeGetEncoder(self->drm_card_fd, connector->encoder_id);
         if(encoder) {
-            self->gamma_lut_crtc_id = encoder->crtc_id;
+            self->crtc_id = encoder->crtc_id;
             drmModeFreeEncoder(encoder);
         }
     }
     drmModeFreeConnector(connector);
 
-    if(self->gamma_lut_crtc_id == 0)
+    if(self->crtc_id == 0)
         return;
 
-    drmModeObjectProperties *properties = drmModeObjectGetProperties(self->drm_card_fd, self->gamma_lut_crtc_id, DRM_MODE_OBJECT_CRTC);
+    drmModeObjectProperties *properties = drmModeObjectGetProperties(self->drm_card_fd, self->crtc_id, DRM_MODE_OBJECT_CRTC);
     if(!properties)
         return;
 
@@ -324,53 +330,62 @@ static void gsr_capture_kms_resolve_gamma_lut_property(gsr_capture_kms *self, ui
 
         if(strcmp(property->name, "GAMMA_LUT") == 0)
             self->gamma_lut_property_id = property->prop_id;
+        else if(strcmp(property->name, "CTM") == 0)
+            self->ctm_property_id = property->prop_id;
+        else if(strcmp(property->name, "DEGAMMA_LUT") == 0)
+            self->degamma_lut_property_id = property->prop_id;
 
         drmModeFreeProperty(property);
-        if(self->gamma_lut_property_id)
-            break;
     }
     drmModeFreeObjectProperties(properties);
 }
 
-static uint64_t gsr_capture_kms_get_gamma_lut_blob_id(gsr_capture_kms *self) {
-    if(self->gamma_lut_crtc_id == 0 || self->gamma_lut_property_id == 0)
-        return 0;
+static void gsr_capture_kms_read_crtc_color_ops(gsr_capture_kms *self) {
+    self->gamma_lut_blob_id = 0;
+    self->crtc_color_ops_active = false;
 
-    uint64_t blob_id = 0;
-    drmModeObjectProperties *properties = drmModeObjectGetProperties(self->drm_card_fd, self->gamma_lut_crtc_id, DRM_MODE_OBJECT_CRTC);
+    if(self->crtc_id == 0)
+        return;
+
+    drmModeObjectProperties *properties = drmModeObjectGetProperties(self->drm_card_fd, self->crtc_id, DRM_MODE_OBJECT_CRTC);
     if(!properties)
-        return 0;
+        return;
 
     for(uint32_t i = 0; i < properties->count_props; ++i) {
+        if(properties->prop_values[i] == 0)
+            continue;
+
         if(properties->props[i] == self->gamma_lut_property_id) {
-            blob_id = properties->prop_values[i];
-            break;
+            self->gamma_lut_blob_id = properties->prop_values[i];
+            self->crtc_color_ops_active = true;
+        } else if(properties->props[i] == self->ctm_property_id || properties->props[i] == self->degamma_lut_property_id) {
+            self->crtc_color_ops_active = true;
         }
     }
     drmModeFreeObjectProperties(properties);
-    return blob_id;
 }
 
-static void gsr_capture_kms_update_gamma_lut(gsr_capture_kms *self, gsr_color_conversion *color_conversion) {
+static void gsr_capture_kms_update_crtc_color_ops(gsr_capture_kms *self, gsr_color_conversion *color_conversion) {
     if(self->drm_card_fd <= 0)
         return;
 
-    if(self->drm_fd->connector_id != self->gamma_lut_connector_id)
-        gsr_capture_kms_resolve_gamma_lut_property(self, self->drm_fd->connector_id);
+    if(self->drm_fd->connector_id != self->crtc_connector_id)
+        gsr_capture_kms_resolve_crtc_color_properties(self, self->drm_fd->connector_id);
 
-    const uint64_t blob_id = gsr_capture_kms_get_gamma_lut_blob_id(self);
-    if(blob_id == self->gamma_lut_blob_id)
+    gsr_capture_kms_read_crtc_color_ops(self);
+
+    if(self->gamma_lut_blob_id == self->gamma_lut_uploaded_blob_id)
         return;
 
-    self->gamma_lut_blob_id = blob_id;
-    if(blob_id == 0) {
+    self->gamma_lut_uploaded_blob_id = self->gamma_lut_blob_id;
+    if(self->gamma_lut_uploaded_blob_id == 0) {
         gsr_color_conversion_set_gamma_lut(color_conversion, NULL, 0);
         return;
     }
 
-    drmModePropertyBlobRes *blob = drmModeGetPropertyBlob(self->drm_card_fd, blob_id);
+    drmModePropertyBlobRes *blob = drmModeGetPropertyBlob(self->drm_card_fd, self->gamma_lut_uploaded_blob_id);
     if(!blob) {
-        self->gamma_lut_blob_id = 0;
+        self->gamma_lut_uploaded_blob_id = 0;
         gsr_color_conversion_set_gamma_lut(color_conversion, NULL, 0);
         return;
     }
@@ -386,7 +401,7 @@ static void gsr_capture_kms_update_gamma_lut(gsr_capture_kms *self, gsr_color_co
         }
         gsr_color_conversion_set_gamma_lut(color_conversion, rgb_values, num_entries);
     } else {
-        self->gamma_lut_blob_id = 0;
+        self->gamma_lut_uploaded_blob_id = 0;
         gsr_color_conversion_set_gamma_lut(color_conversion, NULL, 0);
     }
 
@@ -394,42 +409,57 @@ static void gsr_capture_kms_update_gamma_lut(gsr_capture_kms *self, gsr_color_co
     drmModeFreePropertyBlob(blob);
 }
 
-static void gsr_capture_kms_get_monitor_luminances(gsr_capture_kms *self, const gsr_kms_response_item *drm_fd, float *sdr_white_luminance, float *hdr_peak_luminance) {
-    *sdr_white_luminance = 0.0f;
-    *hdr_peak_luminance = hdr_metadata_get_max_luminance(&drm_fd->hdr_metadata);
+static void gsr_capture_kms_get_monitor_hdr_info(gsr_capture_kms *self, const gsr_kms_response_item *drm_fd, gsr_monitor_hdr_info *monitor_hdr_info) {
+    if(!gsr_window_get_monitor_hdr_info(self->params.egl->window, self->params.display_to_capture, monitor_hdr_info))
+        memset(monitor_hdr_info, 0, sizeof(*monitor_hdr_info));
 
-    gsr_monitor_hdr_info monitor_hdr_info;
-    if(gsr_window_get_monitor_hdr_info(self->params.egl->window, self->params.display_to_capture, &monitor_hdr_info)) {
-        if(monitor_hdr_info.sdr_white_luminance > 0.0f)
-            *sdr_white_luminance = monitor_hdr_info.sdr_white_luminance;
-        if(monitor_hdr_info.max_peak_luminance > 0.0f)
-            *hdr_peak_luminance = monitor_hdr_info.max_peak_luminance;
+    if(monitor_hdr_info->max_peak_luminance <= 0.0f)
+        monitor_hdr_info->max_peak_luminance = hdr_metadata_get_max_luminance(&drm_fd->hdr_metadata);
+
+    if(monitor_hdr_info->max_peak_luminance <= 0.0f)
+        monitor_hdr_info->max_peak_luminance = HDR_PEAK_LUMINANCE_FALLBACK;
+
+    if(monitor_hdr_info->sdr_white_luminance <= 0.0f)
+        monitor_hdr_info->sdr_white_luminance = SDR_WHITE_LUMINANCE_REFERENCE;
+
+    if(monitor_hdr_info->sdr_white_luminance > monitor_hdr_info->max_peak_luminance)
+        monitor_hdr_info->sdr_white_luminance = monitor_hdr_info->max_peak_luminance;
+}
+
+static void mat3_multiply(const float a[9], const float b[9], float result[9]) {
+    for(int row = 0; row < 3; ++row) {
+        for(int column = 0; column < 3; ++column) {
+            result[row*3 + column] =
+                a[row*3 + 0] * b[0*3 + column] +
+                a[row*3 + 1] * b[1*3 + column] +
+                a[row*3 + 2] * b[2*3 + column];
+        }
     }
-
-    if(*hdr_peak_luminance <= 0.0f)
-        *hdr_peak_luminance = HDR_PEAK_LUMINANCE_FALLBACK;
-
-    if(*sdr_white_luminance <= 0.0f)
-        *sdr_white_luminance = SDR_WHITE_LUMINANCE_REFERENCE;
-
-    if(*sdr_white_luminance > *hdr_peak_luminance)
-        *sdr_white_luminance = *hdr_peak_luminance;
 }
 
 static void gsr_capture_kms_update_hdr_color_transforms(gsr_capture_kms *self, gsr_color_conversion *color_conversion, const gsr_kms_response_item *drm_fd) {
     const bool plane_is_hdr = drm_plane_is_hdr(drm_fd);
-    gsr_color_conversion_enable_gamma_lut(color_conversion, plane_is_hdr && self->gamma_lut_blob_id != 0);
+
+    gsr_monitor_hdr_info monitor_hdr_info;
+    gsr_capture_kms_get_monitor_hdr_info(self, drm_fd, &monitor_hdr_info);
+    const float sdr_white_luminance = monitor_hdr_info.sdr_white_luminance;
+    const float hdr_peak_luminance = monitor_hdr_info.max_peak_luminance;
+
+    /* For hdr the night light luminance dimming is normalized away by the reference luminance from the compositor, which the compositor
+       dims by the same amount. The hdr image is encoded in the color volume of the monitor reported by the compositor rather than sRGB */
+    const gsr_night_light_compensation night_light_compensation = plane_is_hdr ? GSR_NIGHT_LIGHT_COMPENSATION_TINT_KEEP_LUMINANCE : GSR_NIGHT_LIGHT_COMPENSATION_TINT;
+    const gsr_color_chromaticities *night_light_container_primaries = plane_is_hdr && monitor_hdr_info.primaries_valid ? &monitor_hdr_info.primaries : NULL;
 
     float night_light_matrix[9];
-    const bool night_light = self->params.kde_night_light && gsr_kde_night_light_get_inverse_matrix(self->params.kde_night_light, night_light_matrix);
+    const bool night_light = self->params.kde_night_light && gsr_kde_night_light_get_inverse_matrix(self->params.kde_night_light, night_light_compensation, night_light_container_primaries, night_light_matrix);
     if(night_light && !self->night_light_message_shown) {
         self->night_light_message_shown = true;
         fprintf(stderr, "gsr info: gsr_capture_kms_update_hdr_color_transforms: night light is active, removing the night light tint from the capture\n");
     }
 
-    float sdr_white_luminance = 0.0f;
-    float hdr_peak_luminance = 0.0f;
-    gsr_capture_kms_get_monitor_luminances(self, drm_fd, &sdr_white_luminance, &hdr_peak_luminance);
+    /* The compositor applies the night light tint at scanout with the crtc gamma lut when it offloads its color transforms to the crtc
+       ("prefer efficiency" color accuracy on kde plasma), so the gamma lut is applied to the captured image to get the same image that the monitor displays */
+    gsr_color_conversion_enable_gamma_lut(color_conversion, (plane_is_hdr || night_light) && self->gamma_lut_uploaded_blob_id != 0);
 
     /* Hdr passthrough: the compositor composites sdr white at the monitors sdr white luminance while the video should have
        sdr white at the reference luminance (203 nits), so the luminance of the video is scaled to match that */
@@ -466,10 +496,13 @@ static void gsr_capture_kms_update_hdr_color_transforms(gsr_capture_kms *self, g
             0.016391f, 0.088013f, 0.895595f
         };
         float color_matrix[9];
+        if(night_light) {
+            mat3_multiply(BT709_TO_BT2020, night_light_matrix, color_matrix);
+        } else {
+            memcpy(color_matrix, BT709_TO_BT2020, sizeof(color_matrix));
+        }
         for(int i = 0; i < 9; ++i) {
-            color_matrix[i] = BT709_TO_BT2020[i] * (SDR_WHITE_LUMINANCE_REFERENCE / 10000.0f);
-            if(night_light)
-                color_matrix[i] *= night_light_matrix[(i % 3) * 4];
+            color_matrix[i] *= SDR_WHITE_LUMINANCE_REFERENCE / 10000.0f;
         }
         gsr_color_conversion_set_color_matrix(color_conversion, color_matrix, GSR_COLOR_MATRIX_TRANSFER_GAMMA22_TO_PQ);
     } else if(night_light || luminance_scale != 1.0f) {
@@ -519,10 +552,9 @@ static void gsr_kms_set_hdr_metadata(gsr_capture_kms *self, const gsr_kms_respon
     self->hdr_metadata_set = true;
     self->hdr_metadata = drm_fd->hdr_metadata;
 
-    float sdr_white_luminance = 0.0f;
-    float hdr_peak_luminance = 0.0f;
-    gsr_capture_kms_get_monitor_luminances(self, drm_fd, &sdr_white_luminance, &hdr_peak_luminance);
-    self->hdr_video_max_luminance = hdr_peak_luminance * (SDR_WHITE_LUMINANCE_REFERENCE / sdr_white_luminance);
+    gsr_monitor_hdr_info monitor_hdr_info;
+    gsr_capture_kms_get_monitor_hdr_info(self, drm_fd, &monitor_hdr_info);
+    self->hdr_video_max_luminance = monitor_hdr_info.max_peak_luminance * (SDR_WHITE_LUMINANCE_REFERENCE / monitor_hdr_info.sdr_white_luminance);
 }
 
 static vec2i swap_vec2i(vec2i value) {
@@ -779,7 +811,7 @@ static void gsr_capture_kms_update_connector_ids(gsr_capture_kms *self) {
     if(self->is_x11)
         return;
 
-    self->gamma_lut_connector_id = 0;
+    self->crtc_connector_id = 0;
 
     self->monitor_id.num_connector_ids = 0;
     const gsr_connection_type connection_type = self->is_x11 ? GSR_CONNECTION_X11 : GSR_CONNECTION_DRM;
@@ -831,8 +863,8 @@ static void gsr_capture_kms_pre_capture(gsr_capture *cap, gsr_capture_metadata *
     if(!self->drm_fd)
         return;
 
-    if(drm_plane_is_hdr(self->drm_fd))
-        gsr_capture_kms_update_gamma_lut(self, color_conversion);
+    if(self->params.kde_night_light || drm_plane_is_hdr(self->drm_fd))
+        gsr_capture_kms_update_crtc_color_ops(self, color_conversion);
 
     if(self->params.hdr) {
         if(drm_plane_is_hdr(self->drm_fd))
