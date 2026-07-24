@@ -283,56 +283,39 @@ static AVCodecContext* create_audio_codec_context(int fps, gsr_audio_codec audio
     return codec_context;
 }
 
+static int video_quality_to_h264_equivalent_qp(gsr_video_quality video_quality) {
+    switch(video_quality) {
+        case GSR_VIDEO_QUALITY_MEDIUM:    return 35;
+        case GSR_VIDEO_QUALITY_HIGH:      return 30;
+        case GSR_VIDEO_QUALITY_VERY_HIGH: return 25;
+        case GSR_VIDEO_QUALITY_ULTRA:     return 22;
+    }
+    return 22;
+}
+
+/* AV1/VP9 use the 0-255 qindex quantizer scale and VP8 uses 0-127. Unlike h264 qp the quantizer step size
+   is not exponential in qindex, so the mapping to an equivalent h264 qp is not linear in the quantizer range.
+   qindex = h264 qp * 4 matches the qindex = crf * 4 scale used by libvpx/libaom, where crf is roughly equivalent to h264 qp. */
+static int video_quality_to_codec_quality_value(AVCodecID codec_id, gsr_video_quality video_quality) {
+    const int h264_qp = video_quality_to_h264_equivalent_qp(video_quality);
+    switch(codec_id) {
+        case AV_CODEC_ID_H264:
+        case AV_CODEC_ID_HEVC:
+            return h264_qp;
+        case AV_CODEC_ID_AV1:
+        case AV_CODEC_ID_VP9:
+            return h264_qp * 4;
+        case AV_CODEC_ID_VP8:
+            return h264_qp * 2;
+        default:
+            return h264_qp;
+    }
+}
+
 static int vbr_get_quality_parameter(AVCodecContext *codec_context, gsr_video_quality video_quality, bool hdr) {
     // 8 bit / 10 bit = 80%
     const float qp_multiply = hdr ? 8.0f/10.0f : 1.0f;
-    if(codec_context->codec_id == AV_CODEC_ID_AV1) {
-        switch(video_quality) {
-            case GSR_VIDEO_QUALITY_MEDIUM:
-                return 160 * qp_multiply;
-            case GSR_VIDEO_QUALITY_HIGH:
-                return 130 * qp_multiply;
-            case GSR_VIDEO_QUALITY_VERY_HIGH:
-                return 110 * qp_multiply;
-            case GSR_VIDEO_QUALITY_ULTRA:
-                return 90 * qp_multiply;
-        }
-    } else if(codec_context->codec_id == AV_CODEC_ID_H264) {
-        switch(video_quality) {
-            case GSR_VIDEO_QUALITY_MEDIUM:
-                return 35 * qp_multiply;
-            case GSR_VIDEO_QUALITY_HIGH:
-                return 30 * qp_multiply;
-            case GSR_VIDEO_QUALITY_VERY_HIGH:
-                return 25 * qp_multiply;
-            case GSR_VIDEO_QUALITY_ULTRA:
-                return 22 * qp_multiply;
-        }
-    } else if(codec_context->codec_id == AV_CODEC_ID_HEVC) {
-        switch(video_quality) {
-            case GSR_VIDEO_QUALITY_MEDIUM:
-                return 35 * qp_multiply;
-            case GSR_VIDEO_QUALITY_HIGH:
-                return 30 * qp_multiply;
-            case GSR_VIDEO_QUALITY_VERY_HIGH:
-                return 25 * qp_multiply;
-            case GSR_VIDEO_QUALITY_ULTRA:
-                return 22 * qp_multiply;
-        }
-    } else if(codec_context->codec_id == AV_CODEC_ID_VP8 || codec_context->codec_id == AV_CODEC_ID_VP9) {
-        switch(video_quality) {
-            case GSR_VIDEO_QUALITY_MEDIUM:
-                return 35 * qp_multiply;
-            case GSR_VIDEO_QUALITY_HIGH:
-                return 30 * qp_multiply;
-            case GSR_VIDEO_QUALITY_VERY_HIGH:
-                return 25 * qp_multiply;
-            case GSR_VIDEO_QUALITY_ULTRA:
-                return 22 * qp_multiply;
-        }
-    }
-    assert(false);
-    return 22 * qp_multiply;
+    return video_quality_to_codec_quality_value(codec_context->codec_id, video_quality) * qp_multiply;
 }
 
 static AVCodecContext *create_video_codec_context(AVPixelFormat pix_fmt, const AVCodec *codec, const gsr_egl &egl, const args_parser &arg_parser, int width, int height) {
@@ -425,55 +408,11 @@ static AVCodecContext *create_video_codec_context(AVPixelFormat pix_fmt, const A
     if (codec_context->codec_id == AV_CODEC_ID_MPEG1VIDEO)
         codec_context->mb_decision = 2;
 
-    if(!use_software_video_encoder && (egl.gpu_info.vendor != GSR_GPU_VENDOR_NVIDIA || video_codec_is_vulkan(arg_parser.video_codec)) && arg_parser.bitrate_mode != GSR_BITRATE_MODE_CBR) {
+    const bool uses_vaapi_encoder = !use_software_video_encoder && egl.gpu_info.vendor != GSR_GPU_VENDOR_NVIDIA && !video_codec_is_vulkan(arg_parser.video_codec);
+    if(uses_vaapi_encoder && arg_parser.bitrate_mode != GSR_BITRATE_MODE_CBR) {
         // 8 bit / 10 bit = 80%, and increase it even more
         const float quality_multiply = hdr ? (8.0f/10.0f * 0.7f) : 1.0f;
-        if(codec_context->codec_id == AV_CODEC_ID_AV1 || codec_context->codec_id == AV_CODEC_ID_H264 || codec_context->codec_id == AV_CODEC_ID_HEVC) {
-            switch(arg_parser.video_quality) {
-                case GSR_VIDEO_QUALITY_MEDIUM:
-                    codec_context->global_quality = 130 * quality_multiply;
-                    break;
-                case GSR_VIDEO_QUALITY_HIGH:
-                    codec_context->global_quality = 110 * quality_multiply;
-                    break;
-                case GSR_VIDEO_QUALITY_VERY_HIGH:
-                    codec_context->global_quality = 95 * quality_multiply;
-                    break;
-                case GSR_VIDEO_QUALITY_ULTRA:
-                    codec_context->global_quality = 85 * quality_multiply;
-                    break;
-            }
-        } else if(codec_context->codec_id == AV_CODEC_ID_VP8) {
-            switch(arg_parser.video_quality) {
-                case GSR_VIDEO_QUALITY_MEDIUM:
-                    codec_context->global_quality = 35 * quality_multiply;
-                    break;
-                case GSR_VIDEO_QUALITY_HIGH:
-                    codec_context->global_quality = 30 * quality_multiply;
-                    break;
-                case GSR_VIDEO_QUALITY_VERY_HIGH:
-                    codec_context->global_quality = 25 * quality_multiply;
-                    break;
-                case GSR_VIDEO_QUALITY_ULTRA:
-                    codec_context->global_quality = 10 * quality_multiply;
-                    break;
-            }
-        } else if(codec_context->codec_id == AV_CODEC_ID_VP9) {
-            switch(arg_parser.video_quality) {
-                case GSR_VIDEO_QUALITY_MEDIUM:
-                    codec_context->global_quality = 35 * quality_multiply;
-                    break;
-                case GSR_VIDEO_QUALITY_HIGH:
-                    codec_context->global_quality = 30 * quality_multiply;
-                    break;
-                case GSR_VIDEO_QUALITY_VERY_HIGH:
-                    codec_context->global_quality = 25 * quality_multiply;
-                    break;
-                case GSR_VIDEO_QUALITY_ULTRA:
-                    codec_context->global_quality = 10 * quality_multiply;
-                    break;
-            }
-        }
+        codec_context->global_quality = video_quality_to_codec_quality_value(codec_context->codec_id, arg_parser.video_quality) * quality_multiply;
     }
 
     av_opt_set_int(codec_context->priv_data, "b_ref_mode", 0, 0);
@@ -614,20 +553,7 @@ static void dict_set_profile(AVCodecContext *codec_context, gsr_gpu_vendor vendo
 static void video_software_set_qp(AVCodecContext *codec_context, gsr_video_quality video_quality, bool hdr, AVDictionary **options) {
     // 8 bit / 10 bit = 80%
     const float qp_multiply = hdr ? 8.0f/10.0f : 1.0f;
-    switch(video_quality) {
-        case GSR_VIDEO_QUALITY_MEDIUM:
-            av_dict_set_int(options, "qp", 35 * qp_multiply, 0);
-            break;
-        case GSR_VIDEO_QUALITY_HIGH:
-            av_dict_set_int(options, "qp", 30 * qp_multiply, 0);
-            break;
-        case GSR_VIDEO_QUALITY_VERY_HIGH:
-            av_dict_set_int(options, "qp", 25 * qp_multiply, 0);
-            break;
-        case GSR_VIDEO_QUALITY_ULTRA:
-            av_dict_set_int(options, "qp", 22 * qp_multiply, 0);
-            break;
-    }
+    av_dict_set_int(options, "qp", video_quality_to_codec_quality_value(codec_context->codec_id, video_quality) * qp_multiply, 0);
 }
 
 static void open_video_software(AVCodecContext *codec_context, const args_parser &arg_parser) {
@@ -689,23 +615,10 @@ static void video_set_rc(gsr_video_codec video_codec, gsr_gpu_vendor vendor, gsr
     }
 }
 
-static void video_hardware_set_qp(AVCodecContext *codec_context, gsr_video_quality video_quality, gsr_gpu_vendor vendor, bool hdr, AVDictionary **options) {
+static void video_hardware_set_qp(AVCodecContext *codec_context, gsr_video_quality video_quality, bool hdr, AVDictionary **options) {
     // 8 bit / 10 bit = 80%
     const float qp_multiply = hdr ? 8.0f/10.0f : 1.0f;
-    switch(video_quality) {
-        case GSR_VIDEO_QUALITY_MEDIUM:
-            av_dict_set_int(options, "qp", 35 * qp_multiply, 0);
-            break;
-        case GSR_VIDEO_QUALITY_HIGH:
-            av_dict_set_int(options, "qp", 30 * qp_multiply, 0);
-            break;
-        case GSR_VIDEO_QUALITY_VERY_HIGH:
-            av_dict_set_int(options, "qp", 25 * qp_multiply, 0);
-            break;
-        case GSR_VIDEO_QUALITY_ULTRA:
-            av_dict_set_int(options, "qp", 22 * qp_multiply, 0);
-            break;
-    }
+    av_dict_set_int(options, "qp", video_quality_to_codec_quality_value(codec_context->codec_id, video_quality) * qp_multiply, 0);
 }
 
 static void open_video_hardware(AVCodecContext *codec_context, bool low_power, const gsr_egl &egl, const args_parser &arg_parser) {
@@ -714,7 +627,7 @@ static void open_video_hardware(AVCodecContext *codec_context, bool low_power, c
     AVDictionary *options = nullptr;
 
     if(arg_parser.bitrate_mode == GSR_BITRATE_MODE_QP)
-        video_hardware_set_qp(codec_context, arg_parser.video_quality, egl.gpu_info.vendor, hdr, &options);
+        video_hardware_set_qp(codec_context, arg_parser.video_quality, hdr, &options);
 
     video_set_rc(arg_parser.video_codec, egl.gpu_info.vendor, arg_parser.bitrate_mode, &options);
 
