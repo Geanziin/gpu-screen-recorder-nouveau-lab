@@ -191,6 +191,10 @@ static void gsr_pipewire_audio_create_link(gsr_pipewire_audio *self, const gsr_p
         if(output_node->type != requested_link->output_type)
             continue;
 
+        /* Virtual nodes arent applications, dont care about them when capturing applications (or when using inverted application capture) */
+        if(output_node->is_virtual && requested_link->output_type == GSR_PIPEWIRE_AUDIO_NODE_TYPE_STREAM_OUTPUT)
+            continue;
+
         const bool requested_link_matches_app = requested_link_matches_name_case_insensitive_any_type(self, requested_link, output_node->name);
         if(requested_link->inverted) {
             if(requested_link_matches_app)
@@ -437,10 +441,14 @@ static void registry_event_global(void *data, uint32_t id, uint32_t permissions,
             if(!array_ensure_capacity((void**)&self->stream_nodes, self->num_stream_nodes, &self->stream_nodes_capacity_items, sizeof(gsr_pipewire_audio_node)))
                 return;
 
+            const char *node_virtual = spa_dict_lookup(props, PW_KEY_NODE_VIRTUAL);
+            const bool is_virtual = (node_virtual && (strcmp(node_virtual, "true") == 0 || strcmp(node_virtual, "1") == 0)) || string_ends_with(media_class, "/Virtual");
+
             char *node_name_copy = strdup(node_name);
             if(node_name_copy) {
                 self->stream_nodes[self->num_stream_nodes].id = id;
                 self->stream_nodes[self->num_stream_nodes].name = node_name_copy;
+                self->stream_nodes[self->num_stream_nodes].is_virtual = is_virtual;
                 if(is_stream_output)
                     self->stream_nodes[self->num_stream_nodes].type = GSR_PIPEWIRE_AUDIO_NODE_TYPE_STREAM_OUTPUT;
                 else if(is_stream_input)
@@ -839,7 +847,7 @@ void gsr_pipewire_audio_for_each_app(gsr_pipewire_audio *self, gsr_pipewire_audi
     pw_thread_loop_lock(self->thread_loop);
     for(int i = 0; i < (int)self->num_stream_nodes; ++i) {
         const gsr_pipewire_audio_node *node = &self->stream_nodes[i];
-        if(node->type != GSR_PIPEWIRE_AUDIO_NODE_TYPE_STREAM_OUTPUT)
+        if(node->type != GSR_PIPEWIRE_AUDIO_NODE_TYPE_STREAM_OUTPUT || node->is_virtual)
             continue;
 
         bool duplicate_app = false;

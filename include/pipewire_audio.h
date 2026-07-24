@@ -18,6 +18,7 @@ typedef struct {
     uint32_t id;
     char *name;
     gsr_pipewire_audio_node_type type;
+    bool is_virtual;
 } gsr_pipewire_audio_node;
 
 typedef enum {
