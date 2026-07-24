@@ -3754,7 +3754,6 @@ int main(int argc, char **argv) {
     // Linux nvidia driver 580.105.08 added the environment variable CUDA_DISABLE_PERF_BOOST to disable the p2 power level issue,
     // where running cuda (which includes nvenc) causes the gpu to be forcefully set to p2 power level which on many nvidia gpus
     // decreases gpu performance in games. On my GTX 1080 it decreased game performance by 10% for absolutely no reason.
-    // TODO: This only seems to allow the gpu to go to lower power level states, but not higher than p2.
     setenv("CUDA_DISABLE_PERF_BOOST", "1", true);
     // Stop nvidia driver from buffering frames
     setenv("__GL_MaxFramesAllowed", "1", true);

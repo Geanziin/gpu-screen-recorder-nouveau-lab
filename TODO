@@ -429,3 +429,5 @@ Region capture works incorrectly on gnome with hidpi, especially with 150% scali
 Take color pipeline into consideration in kms hdr capture. Right now kde only uses that on intel.
 
 Maybe use 3D LUT for hdr tonemapping instead of per fragment math.
+
+Update cuda to the use the same device as the opengl context (egl device).

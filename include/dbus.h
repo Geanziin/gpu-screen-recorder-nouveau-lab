@@ -34,7 +34,7 @@ typedef struct {
 bool gsr_dbus_init(gsr_dbus *self, const char *screencast_restore_token);
 void gsr_dbus_deinit(gsr_dbus *self);
 
-/* The follow functions should be called in order to setup ScreenCast properly */
+/* The following functions should be called in order to setup ScreenCast properly */
 /* These functions that return an int return the response status code */
 int gsr_dbus_screencast_create_session(gsr_dbus *self, char **session_handle);
 /*
