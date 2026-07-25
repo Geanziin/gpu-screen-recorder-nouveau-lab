@@ -409,7 +409,7 @@ static const struct pw_stream_events stream_events = {
 static inline struct spa_pod *build_format(struct spa_pod_builder *b,
                        const gsr_pipewire_video_video_info *ovi,
                        uint32_t format, const uint64_t *modifiers,
-                       size_t modifier_count)
+                       size_t modifier_count, bool implicit_modifier)
 {
     struct spa_pod_frame format_frame;
 
@@ -419,7 +419,15 @@ static inline struct spa_pod *build_format(struct spa_pod_builder *b,
 
     spa_pod_builder_add(b, SPA_FORMAT_VIDEO_format, SPA_POD_Id(format), 0);
 
-    if (modifier_count > 0) {
+    if (implicit_modifier) {
+        /* A single fixed modifier without DONT_FIXATE, so the compositor doesn't have to fixate the modifier.
+         * This works around compositors (xdg-desktop-portal-hyprland) that fail to converge explicit modifier
+         * fixation and fall back to shared memory. DRM_FORMAT_MOD_INVALID means the modifier is implicit
+         * (chosen by the driver), which is imported by the DRM_FORMAT_MOD_INVALID fallback in create_egl_image_with_fallback.
+         */
+        spa_pod_builder_prop(b, SPA_FORMAT_VIDEO_modifier, SPA_POD_PROP_FLAG_MANDATORY);
+        spa_pod_builder_long(b, DRM_FORMAT_MOD_INVALID);
+    } else if (modifier_count > 0) {
         struct spa_pod_frame modifier_frame;
 
         spa_pod_builder_prop(b, SPA_FORMAT_VIDEO_modifier, SPA_POD_PROP_FLAG_MANDATORY | SPA_POD_PROP_FLAG_DONT_FIXATE);
@@ -500,17 +508,28 @@ static bool gsr_pipewire_video_build_format_params(gsr_pipewire_video *self, str
     *num_params = 0;
 
     if(check_pw_version(&self->server_version, 0, 3, 33)) {
+        /* Implicit modifier dma-buf formats (fixed modifier, no fixation needed) offered first. Preferred over the
+           explicit modifier formats to work around compositors that fail to converge explicit modifier fixation and
+           fall back to shared memory (which gpu-screen-recorder doesn't support for portal capture). */
         for(size_t i = 0; i < GSR_PIPEWIRE_VIDEO_NUM_VIDEO_FORMATS; i++) {
             if(self->supported_video_formats[i].modifiers_size == 0)
                 continue;
-            params[*num_params] = build_format(pod_builder, &self->video_info, self->supported_video_formats[i].format, self->modifiers + self->supported_video_formats[i].modifiers_index, self->supported_video_formats[i].modifiers_size);
+            params[*num_params] = build_format(pod_builder, &self->video_info, self->supported_video_formats[i].format, NULL, 0, true);
+            ++(*num_params);
+        }
+
+        /* Explicit modifier dma-buf formats, for compositors that only do explicit modifier negotiation */
+        for(size_t i = 0; i < GSR_PIPEWIRE_VIDEO_NUM_VIDEO_FORMATS; i++) {
+            if(self->supported_video_formats[i].modifiers_size == 0)
+                continue;
+            params[*num_params] = build_format(pod_builder, &self->video_info, self->supported_video_formats[i].format, self->modifiers + self->supported_video_formats[i].modifiers_index, self->supported_video_formats[i].modifiers_size, false);
             ++(*num_params);
         }
     }
 
     /* Fallback formats without modifiers, needed for negotiation when the compositor doesn't support dma-buf modifier negotiation */
     for(size_t i = 0; i < GSR_PIPEWIRE_VIDEO_NUM_VIDEO_FORMATS; i++) {
-        params[*num_params] = build_format(pod_builder, &self->video_info, self->supported_video_formats[i].format, NULL, 0);
+        params[*num_params] = build_format(pod_builder, &self->video_info, self->supported_video_formats[i].format, NULL, 0, false);
         ++(*num_params);
     }
 
@@ -523,9 +542,9 @@ static void renegotiate_format(void *data, uint64_t expirations) {
 
     pw_thread_loop_lock(self->thread_loop);
 
-    struct spa_pod *params[GSR_PIPEWIRE_VIDEO_NUM_VIDEO_FORMATS * 2];
+    struct spa_pod *params[GSR_PIPEWIRE_VIDEO_NUM_VIDEO_FORMATS * 3];
     uint32_t num_video_formats = 0;
-    uint8_t params_buffer[8192];
+    uint8_t params_buffer[16384];
     struct spa_pod_builder pod_builder = SPA_POD_BUILDER_INIT(params_buffer, sizeof(params_buffer));
     if (!gsr_pipewire_video_build_format_params(self, &pod_builder, params, &num_video_formats)) {
         fprintf(stderr, "gsr error: renegotiate_format: failed to build formats\n");
@@ -611,9 +630,9 @@ static void gsr_pipewire_video_remove_modifier(gsr_pipewire_video *self, uint64_
 }
 
 static bool gsr_pipewire_video_setup_stream(gsr_pipewire_video *self) {
-    struct spa_pod *params[GSR_PIPEWIRE_VIDEO_NUM_VIDEO_FORMATS * 2];
+    struct spa_pod *params[GSR_PIPEWIRE_VIDEO_NUM_VIDEO_FORMATS * 3];
     uint32_t num_video_formats = 0;
-    uint8_t params_buffer[8192];
+    uint8_t params_buffer[16384];
     struct spa_pod_builder pod_builder = SPA_POD_BUILDER_INIT(params_buffer, sizeof(params_buffer));
 
     self->thread_loop = pw_thread_loop_new("gsr screen capture", NULL);
