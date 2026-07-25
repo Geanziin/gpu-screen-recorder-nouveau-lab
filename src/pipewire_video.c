@@ -382,6 +382,12 @@ static void on_state_changed_cb(void *user_data, enum pw_stream_state prev_state
          (void*)self->stream, pw_stream_state_as_string(prev_state), pw_stream_state_as_string(new_state),
          error ? error : "none");
 
+    if(new_state == PW_STREAM_STATE_ERROR && error && strstr(error, "alloc buffers")) {
+        fprintf(stderr, "gsr error: pipewire: the desktop portal failed to provide dmabuf (GPU) video frames. This happens when the "
+            "compositor only provides the frames as shared memory (CPU), which gpu-screen-recorder intentionally doesn't support for portal capture. "
+            "Capture the monitor directly (for example '-w screen' or '-w <monitor-name>', see 'gpu-screen-recorder --list-capture-options') instead of '-w portal'.\n");
+    }
+
     pthread_mutex_lock(&self->mutex);
     if(new_state == PW_STREAM_STATE_PAUSED) {
         self->paused_start_secs = clock_get_monotonic_seconds();
