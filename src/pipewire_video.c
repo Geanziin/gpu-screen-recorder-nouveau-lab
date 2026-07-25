@@ -571,6 +571,8 @@ static bool spa_video_format_get_modifiers(gsr_pipewire_video *self, const enum 
         return false;
     }
 
+    fprintf(stderr, "num modifiers for format %d: %d\n", (int)format, *num_modifiers);
+
     if(*num_modifiers < max_modifiers) {
         modifiers[*num_modifiers] = DRM_FORMAT_MOD_INVALID;
         *num_modifiers += 1;
