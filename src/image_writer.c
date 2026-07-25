@@ -12,6 +12,7 @@
 #include <dlfcn.h>
 
 #define TJPF_RGBA 7
+#define TJSAMP_444 0
 #define TJSAMP_420 2
 
 typedef void* tjhandle;
@@ -33,34 +34,44 @@ static bool write_buffer_to_file(const char *filepath, const unsigned char *data
     return success;
 }
 
-static bool write_jpeg_with_libturbojpeg(const char *filepath, int width, int height, const void *data, int quality) {
-    void *libturbojpeg_lib = dlopen("libturbojpeg.so.0", RTLD_LAZY);
-    if(!libturbojpeg_lib)
+static void gsr_image_writer_init_libturbojpeg(gsr_image_writer *self) {
+    self->turbojpeg_lib = dlopen("libturbojpeg.so.0", RTLD_LAZY);
+    if(!self->turbojpeg_lib)
+        return;
+
+    const FUNC_tjInitCompress tjInitCompress_func = (FUNC_tjInitCompress)dlsym(self->turbojpeg_lib, "tjInitCompress");
+    self->tjCompress2_func = dlsym(self->turbojpeg_lib, "tjCompress2");
+    self->tjDestroy_func = dlsym(self->turbojpeg_lib, "tjDestroy");
+    self->tjFree_func = dlsym(self->turbojpeg_lib, "tjFree");
+    if(!tjInitCompress_func || !self->tjCompress2_func || !self->tjDestroy_func || !self->tjFree_func) {
+        dlclose(self->turbojpeg_lib);
+        self->turbojpeg_lib = NULL;
+        return;
+    }
+
+    self->turbojpeg_compressor = tjInitCompress_func();
+    if(!self->turbojpeg_compressor) {
+        dlclose(self->turbojpeg_lib);
+        self->turbojpeg_lib = NULL;
+    }
+}
+
+static bool write_jpeg_with_libturbojpeg(gsr_image_writer *self, const char *filepath, const void *data, int quality) {
+    if(!self->turbojpeg_compressor)
         return false;
+
+    const FUNC_tjCompress2 tjCompress2_func = (FUNC_tjCompress2)self->tjCompress2_func;
+    const FUNC_tjFree tjFree_func = (FUNC_tjFree)self->tjFree_func;
+    const int chroma_subsampling = quality >= JPEG_YUV444_QUALITY_THRESHOLD ? TJSAMP_444 : TJSAMP_420;
 
     bool success = false;
-    const FUNC_tjInitCompress tjInitCompress_func = (FUNC_tjInitCompress)dlsym(libturbojpeg_lib, "tjInitCompress");
-    const FUNC_tjCompress2 tjCompress2_func = (FUNC_tjCompress2)dlsym(libturbojpeg_lib, "tjCompress2");
-    const FUNC_tjDestroy tjDestroy_func = (FUNC_tjDestroy)dlsym(libturbojpeg_lib, "tjDestroy");
-    const FUNC_tjFree tjFree_func = (FUNC_tjFree)dlsym(libturbojpeg_lib, "tjFree");
-    if(!tjInitCompress_func || !tjCompress2_func || !tjDestroy_func || !tjFree_func) {
-        dlclose(libturbojpeg_lib);
-        return false;
-    }
+    unsigned char *jpeg_data = NULL;
+    unsigned long jpeg_size = 0;
+    if(tjCompress2_func(self->turbojpeg_compressor, data, self->width, self->width * 4, self->height, TJPF_RGBA, &jpeg_data, &jpeg_size, chroma_subsampling, quality, 0) == 0)
+        success = write_buffer_to_file(filepath, jpeg_data, jpeg_size);
 
-    tjhandle compressor = tjInitCompress_func();
-    if(compressor) {
-        unsigned char *jpeg_data = NULL;
-        unsigned long jpeg_size = 0;
-        if(tjCompress2_func(compressor, data, width, width * 4, height, TJPF_RGBA, &jpeg_data, &jpeg_size, TJSAMP_420, quality, 0) == 0)
-            success = write_buffer_to_file(filepath, jpeg_data, jpeg_size);
-
-        if(jpeg_data)
-            tjFree_func(jpeg_data);
-        tjDestroy_func(compressor);
-    }
-
-    dlclose(libturbojpeg_lib);
+    if(jpeg_data)
+        tjFree_func(jpeg_data);
     return success;
 }
 
@@ -75,10 +86,23 @@ bool gsr_image_writer_init_opengl(gsr_image_writer *self, gsr_egl *egl, int widt
         fprintf(stderr, "gsr error: gsr_image_writer_init: failed to create texture\n");
         return false;
     }
+
+    gsr_image_writer_init_libturbojpeg(self);
     return true;
 }
 
 void gsr_image_writer_deinit(gsr_image_writer *self) {
+    if(self->turbojpeg_compressor) {
+        const FUNC_tjDestroy tjDestroy_func = (FUNC_tjDestroy)self->tjDestroy_func;
+        tjDestroy_func(self->turbojpeg_compressor);
+        self->turbojpeg_compressor = NULL;
+    }
+
+    if(self->turbojpeg_lib) {
+        dlclose(self->turbojpeg_lib);
+        self->turbojpeg_lib = NULL;
+    }
+
     if(self->texture) {
         self->egl->glDeleteTextures(1, &self->texture);
         self->texture = 0;
@@ -94,7 +118,7 @@ static bool gsr_image_writer_write_memory_to_file(gsr_image_writer *self, const 
     bool success = false;
     switch(image_format) {
         case GSR_IMAGE_FORMAT_JPEG:
-            success = write_jpeg_with_libturbojpeg(filepath, self->width, self->height, data, quality);
+            success = write_jpeg_with_libturbojpeg(self, filepath, data, quality);
             if(!success)
                 success = stbi_write_jpg(filepath, self->width, self->height, 4, data, quality);
             break;

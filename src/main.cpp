@@ -2233,7 +2233,7 @@ static gsr_capture* create_capture_impl(const args_parser &arg_parser, gsr_egl *
 
 static gsr_color_range image_format_to_color_range(gsr_image_format image_format, int image_quality) {
     switch(image_format) {
-        case GSR_IMAGE_FORMAT_JPEG: return image_quality >= 91 ? GSR_COLOR_RANGE_FULL : GSR_COLOR_RANGE_LIMITED;
+        case GSR_IMAGE_FORMAT_JPEG: return image_quality >= JPEG_YUV444_QUALITY_THRESHOLD ? GSR_COLOR_RANGE_FULL : GSR_COLOR_RANGE_LIMITED;
         case GSR_IMAGE_FORMAT_PNG:  return GSR_COLOR_RANGE_FULL;
     }
     assert(false);
@@ -2247,7 +2247,7 @@ static int video_quality_to_image_quality_value(gsr_video_quality video_quality)
         case GSR_VIDEO_QUALITY_HIGH:
             return 85;
         case GSR_VIDEO_QUALITY_VERY_HIGH:
-            return 91; // Quality above 90 makes the jpeg image encoder (stb_image_writer) use yuv444 instead of yuv420, which greatly improves small colored text quality on dark background
+            return JPEG_YUV444_QUALITY_THRESHOLD; // Quality above 90 makes the jpeg image encoder (stb_image_writer) use yuv444 instead of yuv420, which greatly improves small colored text quality on dark background
         case GSR_VIDEO_QUALITY_ULTRA:
             return 97;
     }

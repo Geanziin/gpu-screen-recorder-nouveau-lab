@@ -5,6 +5,9 @@
 
 typedef struct gsr_egl gsr_egl;
 
+/* Quality at which yuv444 (no chroma subsampling) is used instead of yuv420 to preserve color detail at high quality */
+#define JPEG_YUV444_QUALITY_THRESHOLD 91
+
 typedef enum {
     GSR_IMAGE_FORMAT_JPEG,
     GSR_IMAGE_FORMAT_PNG
@@ -15,6 +18,12 @@ typedef struct {
     int width;
     int height;
     unsigned int texture;
+
+    void *turbojpeg_lib;
+    void *turbojpeg_compressor;
+    void *tjCompress2_func;
+    void *tjFree_func;
+    void *tjDestroy_func;
 } gsr_image_writer;
 
 bool gsr_image_writer_init_opengl(gsr_image_writer *self, gsr_egl *egl, int width, int height);
