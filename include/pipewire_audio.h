@@ -19,7 +19,10 @@ typedef struct {
     char *name;
     gsr_pipewire_audio_node_type type;
     bool is_virtual;
+    bool is_application; /* The node has application properties (application.id, application.name or application.process.binary), so it's an application and not a device or a module stream */
 } gsr_pipewire_audio_node;
+
+typedef struct gsr_pipewire_audio_node_binding gsr_pipewire_audio_node_binding;
 
 typedef enum {
     GSR_PIPEWIRE_AUDIO_PORT_DIRECTION_INPUT,
@@ -82,6 +85,10 @@ typedef struct {
     gsr_pipewire_audio_node *stream_nodes;
     size_t num_stream_nodes;
     size_t stream_nodes_capacity_items;
+
+    gsr_pipewire_audio_node_binding **node_bindings;
+    size_t num_node_bindings;
+    size_t node_bindings_capacity_items;
 
     gsr_pipewire_audio_port *ports;
     size_t num_ports;

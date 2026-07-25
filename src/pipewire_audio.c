@@ -81,6 +81,10 @@ static bool requested_link_matches_name_case_insensitive_any_type(const gsr_pipe
     return false;
 }
 
+static bool gsr_pipewire_audio_node_is_application(const gsr_pipewire_audio_node *node) {
+    return node->type == GSR_PIPEWIRE_AUDIO_NODE_TYPE_STREAM_OUTPUT && node->is_application && !node->is_virtual;
+}
+
 static bool requested_link_has_type(const gsr_pipewire_audio_requested_link *requested_link, gsr_pipewire_audio_requested_type type) {
     for(int i = 0; i < requested_link->num_outputs; ++i) {
         if(requested_link->outputs[i].type == type)
@@ -191,8 +195,7 @@ static void gsr_pipewire_audio_create_link(gsr_pipewire_audio *self, const gsr_p
         if(output_node->type != requested_link->output_type)
             continue;
 
-        /* Virtual nodes arent applications, dont care about them when capturing applications (or when using inverted application capture) */
-        if(output_node->is_virtual && requested_link->output_type == GSR_PIPEWIRE_AUDIO_NODE_TYPE_STREAM_OUTPUT)
+        if(requested_link->output_type == GSR_PIPEWIRE_AUDIO_NODE_TYPE_STREAM_OUTPUT && !gsr_pipewire_audio_node_is_application(output_node))
             continue;
 
         const bool requested_link_matches_app = requested_link_matches_name_case_insensitive_any_type(self, requested_link, output_node->name);
@@ -414,6 +417,137 @@ static bool array_ensure_capacity(void **array, size_t size, size_t *capacity_it
     return true;
 }
 
+struct gsr_pipewire_audio_node_binding {
+    gsr_pipewire_audio *self;
+    struct pw_proxy *proxy;
+    struct spa_hook object_listener;
+    struct spa_hook proxy_listener;
+    uint32_t node_id;
+};
+
+static gsr_pipewire_audio_node* gsr_pipewire_audio_get_node_by_id(gsr_pipewire_audio *self, uint32_t node_id) {
+    for(size_t i = 0; i < self->num_stream_nodes; ++i) {
+        if(self->stream_nodes[i].id == node_id)
+            return &self->stream_nodes[i];
+    }
+    return NULL;
+}
+
+static void gsr_pipewire_audio_add_node(gsr_pipewire_audio *self, uint32_t id, const char *node_name, gsr_pipewire_audio_node_type type, bool is_virtual, bool is_application) {
+    if(!array_ensure_capacity((void**)&self->stream_nodes, self->num_stream_nodes, &self->stream_nodes_capacity_items, sizeof(gsr_pipewire_audio_node)))
+        return;
+
+    char *node_name_copy = strdup(node_name);
+    if(!node_name_copy)
+        return;
+
+    self->stream_nodes[self->num_stream_nodes].id = id;
+    self->stream_nodes[self->num_stream_nodes].name = node_name_copy;
+    self->stream_nodes[self->num_stream_nodes].type = type;
+    self->stream_nodes[self->num_stream_nodes].is_virtual = is_virtual;
+    self->stream_nodes[self->num_stream_nodes].is_application = is_application;
+    ++self->num_stream_nodes;
+
+    gsr_pipewire_audio_create_links(self);
+}
+
+static bool node_properties_is_virtual(const char *node_virtual, const char *media_class) {
+    if(node_virtual && (strcmp(node_virtual, "true") == 0 || strcmp(node_virtual, "1") == 0))
+        return true;
+    return media_class && string_ends_with(media_class, "/Virtual");
+}
+
+static void on_node_info_cb(void *data, const struct pw_node_info *info) {
+    gsr_pipewire_audio_node_binding *node_binding = data;
+    gsr_pipewire_audio *self = node_binding->self;
+    if(!info || !info->props || !self->running)
+        return;
+
+    const char *node_name = spa_dict_lookup(info->props, PW_KEY_NODE_NAME);
+    if(!node_name)
+        return;
+
+    const char *media_class = spa_dict_lookup(info->props, PW_KEY_MEDIA_CLASS);
+    const char *node_virtual = spa_dict_lookup(info->props, PW_KEY_NODE_VIRTUAL);
+    const bool is_virtual = node_properties_is_virtual(node_virtual, media_class);
+
+    /* application.id is optional and not all applications set it (firefox for example doesn't).
+       Nodes not created by an application (loopback and filter streams for example) have none of these properties. */
+    const bool is_application = spa_dict_lookup(info->props, PW_KEY_APP_ID) != NULL
+        || spa_dict_lookup(info->props, PW_KEY_APP_NAME) != NULL
+        || spa_dict_lookup(info->props, PW_KEY_APP_PROCESS_BINARY) != NULL;
+
+    gsr_pipewire_audio_node *existing_node = gsr_pipewire_audio_get_node_by_id(self, node_binding->node_id);
+    if(existing_node) {
+        existing_node->is_virtual = is_virtual;
+        if(is_application)
+            existing_node->is_application = true;
+    } else {
+        gsr_pipewire_audio_add_node(self, node_binding->node_id, node_name, GSR_PIPEWIRE_AUDIO_NODE_TYPE_STREAM_OUTPUT, is_virtual, is_application);
+    }
+}
+
+static const struct pw_node_events node_events = {
+    PW_VERSION_NODE_EVENTS,
+    .info = on_node_info_cb,
+};
+
+static void on_node_proxy_removed_cb(void *data) {
+    gsr_pipewire_audio_node_binding *node_binding = data;
+    pw_proxy_destroy(node_binding->proxy);
+}
+
+static void gsr_pipewire_audio_forget_node_binding(gsr_pipewire_audio *self, const gsr_pipewire_audio_node_binding *node_binding) {
+    for(size_t i = 0; i < self->num_node_bindings; ++i) {
+        if(self->node_bindings[i] == node_binding) {
+            self->node_bindings[i] = self->node_bindings[self->num_node_bindings - 1];
+            --self->num_node_bindings;
+            break;
+        }
+    }
+}
+
+static void on_node_proxy_destroy_cb(void *data) {
+    gsr_pipewire_audio_node_binding *node_binding = data;
+    spa_hook_remove(&node_binding->object_listener);
+    spa_hook_remove(&node_binding->proxy_listener);
+    gsr_pipewire_audio_forget_node_binding(node_binding->self, node_binding);
+    free(node_binding);
+}
+
+static const struct pw_proxy_events node_proxy_events = {
+    PW_VERSION_PROXY_EVENTS,
+    .removed = on_node_proxy_removed_cb,
+    .destroy = on_node_proxy_destroy_cb,
+};
+
+/* The registry only broadcasts a small set of the node properties (node.name, media.class, application.name, etc).
+   Binding to the node is required to get the other properties (node.virtual, application.id, etc) from the node info event. */
+static void gsr_pipewire_audio_bind_node(gsr_pipewire_audio *self, uint32_t id) {
+    if(!array_ensure_capacity((void**)&self->node_bindings, self->num_node_bindings, &self->node_bindings_capacity_items, sizeof(gsr_pipewire_audio_node_binding*)))
+        return;
+
+    gsr_pipewire_audio_node_binding *node_binding = calloc(1, sizeof(gsr_pipewire_audio_node_binding));
+    if(!node_binding)
+        return;
+
+    struct pw_proxy *proxy = pw_registry_bind(self->registry, id, PW_TYPE_INTERFACE_Node, PW_VERSION_NODE, 0);
+    if(!proxy) {
+        fprintf(stderr, "gsr error: gsr_pipewire_audio_bind_node: failed to bind to node %u\n", id);
+        free(node_binding);
+        return;
+    }
+
+    node_binding->self = self;
+    node_binding->proxy = proxy;
+    node_binding->node_id = id;
+    pw_proxy_add_object_listener(proxy, &node_binding->object_listener, &node_events, node_binding);
+    pw_proxy_add_listener(proxy, &node_binding->proxy_listener, &node_proxy_events, node_binding);
+
+    self->node_bindings[self->num_node_bindings] = node_binding;
+    ++self->num_node_bindings;
+}
+
 static void registry_event_global(void *data, uint32_t id, uint32_t permissions,
                   const char *type, uint32_t version,
                   const struct spa_dict *props)
@@ -433,32 +567,15 @@ static void registry_event_global(void *data, uint32_t id, uint32_t permissions,
         const bool is_stream_input = media_class && strcmp(media_class, "Stream/Input/Audio") == 0;
         const bool is_sink = media_class && string_starts_with(media_class, "Audio/Sink"); // Matches Audio/Sink/Virtual as well
         const bool is_source = media_class && string_starts_with(media_class, "Audio/Source"); // Matches Audio/Source/Virtual as well
-        if(node_name && (is_stream_output || is_stream_input || is_sink || is_source)) {
-            //const char *application_binary = spa_dict_lookup(props, PW_KEY_APP_PROCESS_BINARY);
-            //const char *application_name = spa_dict_lookup(props, PW_KEY_APP_NAME);
-            //fprintf(stderr, "  node name: %s, app binary: %s, app name: %s\n", node_name, application_binary, application_name);
+        if(node_name && is_stream_output) {
+            /* Stream output nodes (application audio) are added when the full node info is received instead */
+            gsr_pipewire_audio_bind_node(self, id);
+        } else if(node_name && (is_stream_input || is_sink || is_source)) {
+            gsr_pipewire_audio_node_type node_type = GSR_PIPEWIRE_AUDIO_NODE_TYPE_SINK_OR_SOURCE;
+            if(is_stream_input)
+                node_type = GSR_PIPEWIRE_AUDIO_NODE_TYPE_STREAM_INPUT;
 
-            if(!array_ensure_capacity((void**)&self->stream_nodes, self->num_stream_nodes, &self->stream_nodes_capacity_items, sizeof(gsr_pipewire_audio_node)))
-                return;
-
-            const char *node_virtual = spa_dict_lookup(props, PW_KEY_NODE_VIRTUAL);
-            const bool is_virtual = (node_virtual && (strcmp(node_virtual, "true") == 0 || strcmp(node_virtual, "1") == 0)) || string_ends_with(media_class, "/Virtual");
-
-            char *node_name_copy = strdup(node_name);
-            if(node_name_copy) {
-                self->stream_nodes[self->num_stream_nodes].id = id;
-                self->stream_nodes[self->num_stream_nodes].name = node_name_copy;
-                self->stream_nodes[self->num_stream_nodes].is_virtual = is_virtual;
-                if(is_stream_output)
-                    self->stream_nodes[self->num_stream_nodes].type = GSR_PIPEWIRE_AUDIO_NODE_TYPE_STREAM_OUTPUT;
-                else if(is_stream_input)
-                    self->stream_nodes[self->num_stream_nodes].type = GSR_PIPEWIRE_AUDIO_NODE_TYPE_STREAM_INPUT;
-                else if(is_sink || is_source)
-                    self->stream_nodes[self->num_stream_nodes].type = GSR_PIPEWIRE_AUDIO_NODE_TYPE_SINK_OR_SOURCE;
-                ++self->num_stream_nodes;
-
-                gsr_pipewire_audio_create_links(self);
-            }
+            gsr_pipewire_audio_add_node(self, id, node_name, node_type, node_properties_is_virtual(NULL, media_class), false);
         }
     } else if(strcmp(type, PW_TYPE_INTERFACE_Port) == 0) {
         const char *port_name = spa_dict_lookup(props, PW_KEY_PORT_NAME);
@@ -682,6 +799,17 @@ void gsr_pipewire_audio_deinit(gsr_pipewire_audio *self) {
         self->metadata_proxy = NULL;
     }
 
+    /* pw_proxy_destroy removes the node binding from node_bindings (in the proxy destroy event) */
+    while(self->num_node_bindings > 0) {
+        pw_proxy_destroy(self->node_bindings[0]->proxy);
+    }
+
+    if(self->node_bindings) {
+        free(self->node_bindings);
+        self->node_bindings = NULL;
+        self->node_bindings_capacity_items = 0;
+    }
+
     spa_hook_remove(&self->registry_listener);
     spa_hook_remove(&self->core_listener);
 
@@ -847,7 +975,7 @@ void gsr_pipewire_audio_for_each_app(gsr_pipewire_audio *self, gsr_pipewire_audi
     pw_thread_loop_lock(self->thread_loop);
     for(int i = 0; i < (int)self->num_stream_nodes; ++i) {
         const gsr_pipewire_audio_node *node = &self->stream_nodes[i];
-        if(node->type != GSR_PIPEWIRE_AUDIO_NODE_TYPE_STREAM_OUTPUT || node->is_virtual)
+        if(!gsr_pipewire_audio_node_is_application(node))
             continue;
 
         bool duplicate_app = false;
