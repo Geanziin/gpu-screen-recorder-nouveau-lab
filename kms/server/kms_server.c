@@ -509,7 +509,7 @@ int main(int argc, char **argv) {
     }
 
     const char *domain_socket_path = argv[1];
-    socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    socket_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if(socket_fd == -1) {
         fprintf(stderr, "kms server error: failed to create socket, error: %s\n", strerror(errno));
         return 2;

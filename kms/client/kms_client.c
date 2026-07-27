@@ -302,7 +302,7 @@ int gsr_kms_client_init(gsr_kms_client *self, const char *card_path) {
         goto err;
     }
 
-    self->initial_socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    self->initial_socket_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if(self->initial_socket_fd == -1) {
         fprintf(stderr, "gsr error: gsr_kms_client_init: socket failed, error: %s\n", strerror(errno));
         goto err;
