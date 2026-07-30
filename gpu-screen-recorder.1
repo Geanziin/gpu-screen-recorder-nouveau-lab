@@ -462,107 +462,102 @@ Use
 to send signals (e.g.,
 .BR "pkill -SIGUSR1 -f ""^gpu-screen-recorder""" ).
 .SH EXAMPLES
-Record monitor at 60 FPS with desktop audio:
-.PP
+.B Record monitor at 60 FPS with desktop audio:
 .nf
 .RS
 gpu-screen-recorder -w screen -f 60 -a default_output -o video.mp4
 .RE
 .fi
 .PP
-Record monitor at 60 FPS with desktop audio and microphone:
-.PP
+.B Record monitor at 60 FPS with desktop audio and microphone:
 .nf
 .RS
 gpu-screen-recorder -w screen -f 60 -a "default_output|default_input" -o video.mp4
 .RE
 .fi
 .PP
-Record specific window (X11 only):
-.PP
+.B Record specific window (X11 only):
 .nf
 .RS
 gpu-screen-recorder -w $(xdotool selectwindow) -f 60 -o video.mp4
 .RE
 .fi
 .PP
-Instant replay (last 60 seconds):
-.PP
+.B Instant replay (last 60 seconds):
 .nf
 .RS
 gpu-screen-recorder -w screen -c mp4 -r 60 -o ~/Videos
 .RE
 .fi
 .PP
-Instant replay with constant framerate (recommended for predicable ram usage):
-.PP
+.B Instant replay with constant framerate (recommended for predicable ram usage):
 .nf
 .RS
 gpu-screen-recorder -w screen -c mp4 -r 60 -bm cbr -q 40000 -o ~/Videos
 .RE
 .fi
 .PP
-Record region using slop:
-.PP
+.B Record region using slop:
 .nf
 .RS
 gpu-screen-recorder -w $(slop) -o video.mp4
 .RE
 .fi
 .PP
-Record region using slurp:
-.PP
+.B Record region using slurp:
 .nf
 .RS
 gpu-screen-recorder -w $(slurp -f "%wx%h+%x+%y") -o video.mp4
 .RE
 .fi
 .PP
-Instant replay and launch a script when saving replay:
-.PP
+.B Instant replay and launch a script when saving replay:
 .nf
 .RS
 gpu-screen-recorder -w screen -c mp4 -r 60 -sc ./script.sh -o ~/Videos
 .RE
 .fi
 .PP
-Stream to Twitch with constant bitrate mode:
-.PP
+.B Stream to Twitch with constant bitrate mode:
 .nf
 .RS
 gpu-screen-recorder -w screen -c flv -a default_output -bm cbr -q 8000 -o "rtmp://live.twitch.tv/app/stream_key"
 .RE
 .fi
 .PP
-Take screenshot:
-.PP
+.B Take screenshot:
 .nf
 .RS
 gpu-screen-recorder -w screen -o screenshot.jpg
 .PP
 .RE
 .fi
-Record screen and camera:
-.PP
+.B Record screen and camera:
 .nf
 .RS
 gpu-screen-recorder -w "screen|/dev/video0" -o video.mp4
 .PP
 .RE
 .fi
-Record screen and camera. The camera is located at the bottom right and flipped horizontally:
-.PP
+.B Record screen and camera. The camera is located at the bottom right and flipped horizontally:
 .nf
 .RS
 gpu-screen-recorder -w "screen|/dev/video0;halign=end;valign=end;hflip=true;width=30%;height=30%" -o video.mp4
 .PP
 .RE
 .fi
-Record two monitors, side by side (assuming the first monitor has a resolution of 1920x1080)
-.PP
+.B Record two monitors, side by side (assuming the first monitor has a resolution of 1920x1080):
 .nf
 .RS
 gpu-screen-recorder -w "DP-1|DP-2;x=1920" -o video.mp4
+.RE
+.fi
+.PP
+.B Stream whip with an authorization key:
+.nf
+.RS
+gpu-screen-recorder -w screen -bm cbr -q 3500 -ffmpeg-opts "authorization=streamtest;ts_buffer_size=131072" -c whip -o https://b.siobud.com/api/whip
+.PP
 .RE
 .fi
 .SH FILES
