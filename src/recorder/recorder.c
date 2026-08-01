@@ -76,6 +76,15 @@ struct gsr_recorder {
     char replay_recording_filepath[PATH_MAX];
     bool replay_recording;
 
+    double fps_start_time;
+    int fps_counter;
+    int damage_fps_counter;
+    bool paused;
+    double record_start_time;
+    int64_t video_pts_counter;
+    int64_t video_prev_pts;
+    bool hdr_metadata_set;
+
     volatile sig_atomic_t running;
     volatile sig_atomic_t toggle_pause;
     volatile sig_atomic_t toggle_replay_recording;
@@ -94,34 +103,7 @@ struct gsr_recorder {
 
 static void gsr_recorder_stop_recording(gsr_recorder *self);
 
-gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_recorder_callbacks *callbacks, int *error) {
-    *error = GSR_ERROR_GENERIC;
-
-    gsr_recorder *self = calloc(1, sizeof(gsr_recorder));
-    if(!self) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_recorder_create: failed to allocate recorder");
-        return NULL;
-    }
-
-    self->settings = *params->settings;
-    if(callbacks)
-        self->callbacks = *callbacks;
-    self->windowing = params->windowing;
-    self->egl = &params->windowing->egl;
-    self->window = params->windowing->window;
-    self->capture_deps = params->capture_deps;
-    self->capture_sources = params->capture_sources;
-    self->audio_input_tracks = params->audio_input_tracks;
-    self->running = 1;
-    self->audio_max_frame_size = 1024;
-    int error_code = GSR_ERROR_GENERIC;
-    self->hdr = video_codec_is_hdr(params->settings->video_codec);
-    self->plugin_filepaths = params->plugin_filepaths;
-    self->num_plugin_filepaths = params->num_plugin_filepaths;
-#ifdef GSR_APP_AUDIO
-    self->pipewire_audio = params->pipewire_audio;
-#endif
-
+static int recorder_setup_container(gsr_recorder *self) {
     // The output format is automatically guessed by the file extension
     avformat_alloc_output_context2(&self->av_format_context, NULL, self->settings.container_format, self->settings.filename);
     if (!self->av_format_context) {
@@ -130,11 +112,9 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
         } else {
             gsr_log(GSR_LOG_LEVEL_ERROR, "Failed to deduce container format from file extension. Use the '-c' option to specify container format");
             args_parser_print_usage();
-            error_code = GSR_ERROR_GENERIC;
-            goto fail;
+            return GSR_ERROR_GENERIC;
         }
-        error_code = GSR_ERROR_GENERIC;
-        goto fail;
+        return GSR_ERROR_GENERIC;
     }
 
     set_format_context_options(self->av_format_context);
@@ -157,11 +137,14 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
     self->uses_amix = gsr_audio_input_tracks_should_use_amix(self->audio_input_tracks);
     self->settings.audio_codec = select_audio_codec_with_fallback(self->settings.audio_codec, self->file_extension, self->uses_amix);
 
+    return GSR_ERROR_OK;
+}
+
+static int recorder_setup_video_sources(gsr_recorder *self) {
     self->video_size = (vec2i){0, 0};
     const int video_sources_result = gsr_video_sources_create(&self->video_sources_data, &self->settings, self->egl, self->capture_deps, false, self->capture_sources, &self->video_size);
     if(video_sources_result != GSR_ERROR_OK) {
-        error_code = video_sources_result;
-        goto fail;
+        return video_sources_result;
     }
 
     self->video_sources = &self->video_sources_data;
@@ -175,25 +158,26 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
         gsr_audio_input silent_audio_input;
         memset(&silent_audio_input, 0, sizeof(silent_audio_input));
         if(!gsr_merged_audio_inputs_add(&silent_audio_track, &silent_audio_input) || !gsr_audio_input_tracks_add(self->audio_input_tracks, &silent_audio_track)) {
-            error_code = GSR_ERROR_GENERIC;
-            goto fail;
+            return GSR_ERROR_GENERIC;
         }
     }
 
     self->video_stream = NULL;
 
+    return GSR_ERROR_OK;
+}
+
+static int recorder_setup_video_encoder(gsr_recorder *self) {
     if(self->settings.video_encoder == GSR_VIDEO_ENCODER_HW_CPU && self->settings.video_codec != (gsr_video_codec)GSR_VIDEO_CODEC_AUTO && self->settings.video_codec != GSR_VIDEO_CODEC_H264) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "-encoder cpu was specified but a codec other than h264 was specified. -encoder cpu supports only h264 at the moment");
-        error_code = GSR_ERROR_GENERIC;
-        goto fail;
+        return GSR_ERROR_GENERIC;
     }
 
     self->low_power = false;
     const AVCodec *video_codec_f = NULL;
     const int select_video_codec_result = select_video_codec_with_fallback(self->video_size, &self->settings, self->file_extension, self->egl, &self->low_power, &video_codec_f);
     if(select_video_codec_result != GSR_ERROR_OK) {
-        error_code = select_video_codec_result;
-        goto fail;
+        return select_video_codec_result;
     }
 
     const enum AVPixelFormat video_pix_fmt = get_pixel_format(self->settings.video_codec, self->egl->gpu_info.vendor, self->settings.video_encoder == GSR_VIDEO_ENCODER_HW_CPU);
@@ -204,8 +188,7 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
     self->video_frame = av_frame_alloc();
     if(!self->video_frame) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "Failed to allocate video frame");
-        error_code = GSR_ERROR_GENERIC;
-        goto fail;
+        return GSR_ERROR_GENERIC;
     }
     self->video_frame->format = self->video_codec_context->pix_fmt;
     self->video_frame->width = self->video_size.x;
@@ -219,28 +202,24 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
     const size_t estimated_replay_buffer_packets = calculate_estimated_replay_buffer_packets(self->settings.replay_buffer_size_secs, self->settings.fps, self->settings.audio_codec, self->audio_input_tracks);
     self->recording_clock = gsr_recording_clock_create();
     if(!self->recording_clock) {
-        error_code = GSR_ERROR_GENERIC;
-        goto fail;
+        return GSR_ERROR_GENERIC;
     }
 
     self->encoder_initialized = true;
     if(!gsr_encoder_init(&self->encoder, self->settings.replay_storage, estimated_replay_buffer_packets, self->settings.replay_buffer_size_secs, self->settings.filename)) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create encoder");
-        error_code = GSR_ERROR_GENERIC;
-        goto fail;
+        return GSR_ERROR_GENERIC;
     }
 
     self->video_encoder = create_video_encoder(self->egl, &self->settings);
     if(!self->video_encoder) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create video encoder");
-        error_code = GSR_ERROR_GENERIC;
-        goto fail;
+        return GSR_ERROR_GENERIC;
     }
 
     if(!gsr_video_encoder_start(self->video_encoder, self->video_codec_context, self->video_frame)) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "failed to start video encoder");
-        error_code = GSR_ERROR_GENERIC;
-        goto fail;
+        return GSR_ERROR_GENERIC;
     }
 
     self->video_size.x = self->video_codec_context->width;
@@ -250,8 +229,7 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
     memset(&self->plugins, 0, sizeof(self->plugins));
 
     if(gsr_load_plugins(&self->plugins, self->plugin_filepaths, self->num_plugin_filepaths, &self->settings, self->egl, self->video_size) != GSR_ERROR_OK) {
-        error_code = GSR_ERROR_GENERIC;
-        goto fail;
+        return GSR_ERROR_GENERIC;
 
     }
 
@@ -265,8 +243,7 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
     self->color_conversion_initialized = true;
     if(gsr_color_conversion_init(&self->color_conversion, &color_conversion_params) != 0) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "main: failed to create color conversion");
-        error_code = GSR_ERROR_GENERIC;
-        goto fail;
+        return GSR_ERROR_GENERIC;
     }
 
     gsr_color_conversion_clear(&self->color_conversion);
@@ -275,13 +252,11 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
 
     if(self->settings.video_encoder == GSR_VIDEO_ENCODER_HW_CPU) {
         if(!open_video_software(self->video_codec_context, &self->settings)) {
-            error_code = GSR_ERROR_GENERIC;
-            goto fail;
+            return GSR_ERROR_GENERIC;
         }
     } else {
         if(!open_video_hardware(self->video_codec_context, self->low_power, self->egl, &self->settings)) {
-            error_code = GSR_ERROR_GENERIC;
-            goto fail;
+            return GSR_ERROR_GENERIC;
         }
     }
 
@@ -295,9 +270,12 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
         }
     }
 
+    return GSR_ERROR_OK;
+}
+
+static int recorder_setup_audio(gsr_recorder *self) {
     if(gsr_audio_capture_init(&self->audio_capture, &self->encoder, self->recording_clock, &self->running) != GSR_ERROR_OK) {
-        error_code = GSR_ERROR_GENERIC;
-        goto fail;
+        return GSR_ERROR_GENERIC;
 
     }
 
@@ -308,8 +286,7 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
         const bool use_amix = gsr_audio_inputs_should_use_amix(merged_audio_inputs);
         AVCodecContext *audio_codec_context = create_audio_codec_context(self->settings.fps, self->settings.audio_codec, use_amix, self->settings.audio_bitrate);
         if(!audio_codec_context) {
-            error_code = GSR_ERROR_GENERIC;
-            goto fail;
+            return GSR_ERROR_GENERIC;
         }
 
         AVStream *audio_stream = NULL;
@@ -323,8 +300,7 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
             av_dict_set(&audio_stream->metadata, "title", merged_audio_inputs->track_name, 0);
 
         if(!open_audio(audio_codec_context, self->settings.ffmpeg_audio_opts)) {
-            error_code = GSR_ERROR_GENERIC;
-            goto fail;
+            return GSR_ERROR_GENERIC;
 
         }
         if(audio_stream)
@@ -344,14 +320,12 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
         if(use_amix) {
             if(merged_audio_inputs->num_items > GSR_MAX_AUDIO_SOURCES_PER_TRACK) {
                 gsr_log(GSR_LOG_LEVEL_ERROR, "too many audio sources for one audio track, the maximum is %d", GSR_MAX_AUDIO_SOURCES_PER_TRACK);
-                error_code = GSR_ERROR_GENERIC;
-                goto fail;
+                return GSR_ERROR_GENERIC;
             }
 
             if(gsr_audio_init_filter_graph(audio_codec_context, &graph, &sink, src_filter_ctx, merged_audio_inputs->num_items) < 0) {
                 gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create audio filter");
-                error_code = GSR_ERROR_GENERIC;
-                goto fail;
+                return GSR_ERROR_GENERIC;
             }
         }
 
@@ -383,14 +357,12 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
         }
 
         if(audio_track_result != GSR_ERROR_OK) {
-            error_code = audio_track_result;
-            goto fail;
+            return audio_track_result;
 
         }
 
         if(!gsr_audio_capture_add_track(&self->audio_capture, &audio_track)) {
-            error_code = GSR_ERROR_GENERIC;
-            goto fail;
+            return GSR_ERROR_GENERIC;
 
         }
         ++audio_stream_index;
@@ -401,17 +373,67 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
 
     //av_dump_format(self->av_format_context, 0, filename, 1);
 
+    return GSR_ERROR_OK;
+}
+
+static int recorder_open_output(gsr_recorder *self) {
     if(!self->settings.is_replaying && !(self->av_format_context->oformat->flags & AVFMT_NOFILE)) {
         const int ret = avio_open(&self->av_format_context->pb, self->settings.filename, AVIO_FLAG_WRITE);
         if(ret < 0) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "Could not open '%s': %s", self->settings.filename, gsr_av_error_to_string(ret));
-            error_code = GSR_ERROR_GENERIC;
-            goto fail;
+            return GSR_ERROR_GENERIC;
         }
     }
 
     if(!self->settings.is_replaying)
         av_write_header(self->av_format_context, self->settings.ffmpeg_opts);
+
+    return GSR_ERROR_OK;
+}
+
+gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_recorder_callbacks *callbacks, int *error) {
+    *error = GSR_ERROR_GENERIC;
+
+    gsr_recorder *self = calloc(1, sizeof(gsr_recorder));
+    if(!self) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_recorder_create: failed to allocate recorder");
+        return NULL;
+    }
+
+    self->settings = *params->settings;
+    if(callbacks)
+        self->callbacks = *callbacks;
+    self->windowing = params->windowing;
+    self->egl = &params->windowing->egl;
+    self->window = params->windowing->window;
+    self->capture_deps = params->capture_deps;
+    self->capture_sources = params->capture_sources;
+    self->audio_input_tracks = params->audio_input_tracks;
+    self->running = 1;
+    self->audio_max_frame_size = 1024;
+    int error_code = GSR_ERROR_GENERIC;
+    self->hdr = video_codec_is_hdr(params->settings->video_codec);
+    self->plugin_filepaths = params->plugin_filepaths;
+    self->num_plugin_filepaths = params->num_plugin_filepaths;
+#ifdef GSR_APP_AUDIO
+    self->pipewire_audio = params->pipewire_audio;
+#endif
+
+    const struct {
+        int (*setup)(gsr_recorder *self);
+    } setup_phases[] = {
+        { recorder_setup_container },
+        { recorder_setup_video_sources },
+        { recorder_setup_video_encoder },
+        { recorder_setup_audio },
+        { recorder_open_output },
+    };
+
+    for(size_t i = 0; i < sizeof(setup_phases)/sizeof(setup_phases[0]); ++i) {
+        error_code = setup_phases[i].setup(self);
+        if(error_code != GSR_ERROR_OK)
+            goto fail;
+    }
 
     *error = GSR_ERROR_OK;
     return self;
@@ -421,14 +443,320 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
     gsr_recorder_destroy(self);
     return NULL;
 }
+static void recorder_process_events(gsr_recorder *self) {
+while(gsr_window_process_event(self->window)) {
+    if(self->capture_deps->x11_cursor_display && self->settings.record_cursor)
+        gsr_cursor_on_event(&self->capture_deps->x11_cursor, gsr_window_get_event_data(self->window));
+
+    gsr_damage_on_event(&self->damage, gsr_window_get_event_data(self->window));
+    for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
+gsr_video_source *video_source = &self->video_sources->items[video_source_index];
+        gsr_capture_on_event(video_source->capture, self->egl);
+    }
+}
+
+if(self->capture_deps->x11_cursor_display && self->settings.record_cursor)
+    gsr_cursor_tick(&self->capture_deps->x11_cursor, DefaultRootWindow(self->capture_deps->x11_cursor_display));
+}
+
+static bool recorder_tick_video_sources(gsr_recorder *self) {
+gsr_damage_tick(&self->damage);
+
+self->should_stop_error = false;
+bool damaged = false;
+
+if(self->use_damage_tracking)
+    damaged = gsr_damage_is_damaged(&self->damage);
+
+for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
+gsr_video_source *video_source = &self->video_sources->items[video_source_index];
+    gsr_capture_tick(video_source->capture);
+
+    if(gsr_capture_should_stop(video_source->capture, &self->should_stop_error)) {
+        self->running = 0;
+        break;
+    }
+
+    if(video_source->capture_source->type == GSR_CAPTURE_SOURCE_TYPE_FOCUSED_WINDOW) {
+        assert(video_source->capture->get_window_id);
+        const Window damage_target_window = video_source->capture->get_window_id(video_source->capture);
+
+        if((int64_t)damage_target_window != video_source->capture_source->window_id) {
+            gsr_damage_stop_tracking_window(&self->damage, video_source->capture_source->window_id);
+            if(damage_target_window != 0)
+                gsr_damage_start_tracking_window(&self->damage, damage_target_window);
+        }
+
+        video_source->capture_source->window_id = damage_target_window;
+    }
+
+    if(video_source->capture->is_damaged)
+        damaged |= video_source->capture->is_damaged(video_source->capture);
+    else if(!self->use_damage_tracking)
+        damaged = true;
+}
+
+damaged |= gsr_plugins_is_damaged(&self->plugins);
+
+// TODO: Readd wayland sync warning when removing this
+if(self->settings.framerate_mode != GSR_FRAMERATE_MODE_CONTENT)
+    damaged = true;
+
+if(damaged)
+    ++self->damage_fps_counter;
+
+    return damaged;
+}
+
+static void recorder_update_fps_counters(gsr_recorder *self, bool damaged) {
+++self->fps_counter;
+const double time_now = clock_get_monotonic_seconds();
+//const double frame_timer_elapsed = time_now - frame_timer_start;
+const double elapsed = time_now - self->fps_start_time;
+if (elapsed >= 1.0) {
+    if(self->settings.verbose) {
+        fprintf(stderr, "update fps: %d, damage fps: %d\n", self->fps_counter, self->damage_fps_counter);
+    }
+    self->fps_start_time = time_now;
+    self->fps_counter = 0;
+    self->damage_fps_counter = 0;
+}
+}
+
+static void recorder_capture_and_encode_frame(gsr_recorder *self, bool damaged) {
+const double this_video_frame_time = gsr_recording_clock_get_time(self->recording_clock);
+const int64_t expected_frames = floor((this_video_frame_time - self->record_start_time) / self->target_fps);
+const int64_t num_missed_frames = expected_frames - self->video_pts_counter;
+
+if(damaged && num_missed_frames >= 1 && !self->paused) {
+    // TODO: Dont do this if no damage?
+    self->egl->glClear(0);
+
+    gsr_damage_clear(&self->damage);
+    gsr_plugins_clear_damage(&self->plugins);
+    gsr_capture_deps_cleanup_kms_fds(self->capture_deps);
+
+    gsr_capture_deps_update_kms(self->capture_deps);
+
+    bool capture_has_synchronous_task = false;
+    for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
+gsr_video_source *video_source = &self->video_sources->items[video_source_index];
+        if(video_source->capture->clear_damage)
+            video_source->capture->clear_damage(video_source->capture);
+
+        if(video_source->capture->capture_has_synchronous_task) {
+            capture_has_synchronous_task = video_source->capture->capture_has_synchronous_task(video_source->capture);
+            if(capture_has_synchronous_task) {
+                self->paused = true;
+                gsr_recording_clock_set_paused(self->recording_clock, true);
+            }
+        }
+    }
+
+    for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
+gsr_video_source *video_source = &self->video_sources->items[video_source_index];
+        if(video_source->capture->pre_capture)
+            video_source->capture->pre_capture(video_source->capture, &video_source->metadata, self->output_color_conversion);
+    }
+
+    if(self->output_color_conversion->schedule_clear) {
+        self->output_color_conversion->schedule_clear = false;
+        gsr_color_conversion_clear(self->output_color_conversion);
+    }
+
+    for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
+gsr_video_source *video_source = &self->video_sources->items[video_source_index];
+        gsr_capture_capture(video_source->capture, &video_source->metadata, self->output_color_conversion);
+    }
+
+    gsr_capture_deps_cleanup_kms_fds(self->capture_deps);
+
+    if(self->plugins.num_plugins > 0) {
+        gsr_plugins_draw(&self->plugins);
+        gsr_color_conversion_draw(&self->color_conversion, self->plugins.texture,
+            (vec2i){0, 0}, self->video_size,
+            (vec2i){0, 0}, self->video_size,
+            self->video_size, GSR_ROT_0, GSR_FLIP_NONE, GSR_SOURCE_COLOR_RGB, false);
+    }
+
+    if(capture_has_synchronous_task) {
+        self->paused = false;
+        gsr_recording_clock_set_paused(self->recording_clock, false);
+    }
+
+    gsr_egl_swap_buffers(self->egl);
+    gsr_video_encoder_copy_textures_to_frame(self->video_encoder, self->video_frame, self->output_color_conversion);
+
+    for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
+gsr_video_source *video_source = &self->video_sources->items[video_source_index];
+        if(self->hdr && !self->hdr_metadata_set && !self->settings.is_replaying && add_hdr_metadata_to_video_stream(video_source->capture, self->video_stream))
+            self->hdr_metadata_set = true;
+    }
+
+    // TODO: Check if duplicate frame can be saved just by writing it with a different pts instead of sending it again
+    const int num_frames_to_encode = self->settings.framerate_mode == GSR_FRAMERATE_MODE_CONSTANT ? num_missed_frames : 1;
+    for(int i = 0; i < num_frames_to_encode; ++i) {
+        if(self->settings.framerate_mode == GSR_FRAMERATE_MODE_CONSTANT) {
+            self->video_frame->pts = self->video_pts_counter + i;
+        } else {
+            self->video_frame->pts = (this_video_frame_time - self->record_start_time) * (double)AV_TIME_BASE;
+            const bool same_pts = self->video_frame->pts == self->video_prev_pts;
+            self->video_prev_pts = self->video_frame->pts;
+            if(same_pts)
+                continue;
+        }
+
+        if(self->force_iframe_frame) {
+            self->video_frame->pict_type = AV_PICTURE_TYPE_I;
+        }
+
+        int ret = avcodec_send_frame(self->video_codec_context, self->video_frame);
+        if(ret == 0) {
+            // TODO: Move to separate thread because this could write to network (for example when livestreaming)
+            gsr_encoder_receive_packets(&self->encoder, self->video_codec_context, self->video_frame->pts, GSR_VIDEO_STREAM_INDEX);
+        } else {
+            gsr_log(GSR_LOG_LEVEL_ERROR, "avcodec_send_frame failed, error: %s", gsr_av_error_to_string(ret));
+        }
+
+        if(self->force_iframe_frame) {
+            self->force_iframe_frame = false;
+            self->video_frame->pict_type = AV_PICTURE_TYPE_NONE;
+        }
+    }
+
+    self->video_pts_counter += num_missed_frames;
+}
+}
+
+static void recorder_apply_pause_toggle(gsr_recorder *self) {
+    if(self->toggle_pause == 1 && !self->settings.is_replaying) {
+        self->paused = !self->paused;
+        gsr_recording_clock_set_paused(self->recording_clock, self->paused);
+        gsr_log(GSR_LOG_LEVEL_INFO, self->paused ? "Paused" : "Unpaused");
+        self->toggle_pause = 0;
+    }
+}
+
+static void recorder_apply_replay_recording_toggle(gsr_recorder *self) {
+    if(self->toggle_replay_recording && !self->settings.replay_recording_directory) {
+        self->toggle_replay_recording = 0;
+        if(self->callbacks.recording_started)
+            self->callbacks.recording_started(NULL, self->callbacks.userdata);
+    }
+
+    if(self->toggle_replay_recording && self->settings.replay_recording_directory) {
+        self->toggle_replay_recording = 0;
+        const bool new_replay_recording_state = !self->replay_recording;
+        if(new_replay_recording_state) {
+            gsr_audio_capture_lock_filter(&self->audio_capture);
+            self->num_replay_recording_items = 0;
+            const bool filepath_created = gsr_create_new_recording_filepath_from_timestamp(self->replay_recording_filepath, sizeof(self->replay_recording_filepath), self->settings.replay_recording_directory, "Video", self->file_extension, self->settings.date_folders);
+            if(filepath_created && gsr_recording_output_start(&self->replay_recording_output, self->replay_recording_filepath, &self->settings, self->video_codec_context, &self->audio_capture, self->hdr, self->video_sources)) {
+                const size_t video_recording_destination_id = gsr_encoder_add_recording_destination(&self->encoder, self->video_codec_context, self->replay_recording_output.av_format_context, self->replay_recording_output.video_stream, self->video_frame->pts);
+                if(self->settings.write_first_frame_ts && video_recording_destination_id != (size_t)-1) {
+                    char ts_filepath[PATH_MAX + 4];
+                    snprintf(ts_filepath, sizeof(ts_filepath), "%s.ts", self->replay_recording_filepath);
+                    gsr_encoder_set_recording_destination_first_frame_ts_filepath(&self->encoder, video_recording_destination_id, ts_filepath);
+                }
+
+                if(video_recording_destination_id != (size_t)-1 && self->num_replay_recording_items < GSR_MAX_RECORDING_DESTINATIONS) {
+                    self->replay_recording_items[self->num_replay_recording_items] = video_recording_destination_id;
+                    ++self->num_replay_recording_items;
+                }
+
+                for(size_t i = 0; i < self->replay_recording_output.num_audio_streams; ++i) {
+                    const gsr_recording_audio_stream *audio_stream = &self->replay_recording_output.audio_streams[i];
+                    const size_t audio_recording_destination_id = gsr_encoder_add_recording_destination(&self->encoder, audio_stream->audio_track->codec_context, self->replay_recording_output.av_format_context, audio_stream->stream, audio_stream->audio_track->pts);
+                    if(audio_recording_destination_id != (size_t)-1 && self->num_replay_recording_items < GSR_MAX_RECORDING_DESTINATIONS) {
+                        self->replay_recording_items[self->num_replay_recording_items] = audio_recording_destination_id;
+                        ++self->num_replay_recording_items;
+                    }
+                }
+
+                self->replay_recording = true;
+                self->force_iframe_frame = true;
+                gsr_log(GSR_LOG_LEVEL_INFO, "Started recording");
+                if(self->callbacks.recording_started)
+                    self->callbacks.recording_started(self->replay_recording_filepath, self->callbacks.userdata);
+            } else {
+                if(self->callbacks.recording_started)
+                    self->callbacks.recording_started(NULL, self->callbacks.userdata);
+            }
+            gsr_audio_capture_unlock_filter(&self->audio_capture);
+        } else if(self->replay_recording_output.av_format_context) {
+            for(size_t i = 0; i < self->num_replay_recording_items; ++i) {
+                gsr_encoder_remove_recording_destination(&self->encoder, self->replay_recording_items[i]);
+            }
+            self->num_replay_recording_items = 0;
+
+            if(gsr_recording_output_stop(&self->replay_recording_output)) {
+                gsr_log(GSR_LOG_LEVEL_INFO, "Stopped recording");
+                if(self->callbacks.recording_stopped)
+                    self->callbacks.recording_stopped(self->replay_recording_filepath, self->callbacks.userdata);
+            } else {
+                if(self->callbacks.recording_stopped)
+                    self->callbacks.recording_stopped(NULL, self->callbacks.userdata);
+            }
+
+            self->replay_recording = false;
+            self->replay_recording_filepath[0] = '\0';
+        }
+    }
+}
+
+static void recorder_poll_replay_save(gsr_recorder *self) {
+    bool replay_save_result = false;
+    const char *replay_save_output_filepath = NULL;
+    if(gsr_replay_save_poll(&self->replay_save, &replay_save_result, &replay_save_output_filepath)) {
+        if(self->callbacks.replay_saved)
+            self->callbacks.replay_saved(replay_save_output_filepath[0] == '\0' || !replay_save_result ? NULL : replay_save_output_filepath, self->callbacks.userdata);
+    }
+
+    if(self->save_replay_seconds != 0 && !gsr_replay_save_is_running(&self->replay_save) && self->settings.is_replaying) {
+        int current_save_replay_seconds = self->save_replay_seconds;
+        if(current_save_replay_seconds > 0)
+            current_save_replay_seconds += self->settings.keyint;
+
+        self->save_replay_seconds = 0;
+        const bool replay_start_result = gsr_replay_save_start(&self->replay_save, self->video_codec_context, GSR_VIDEO_STREAM_INDEX, &self->audio_capture, &self->encoder, &self->settings, self->file_extension, self->hdr, self->video_sources, current_save_replay_seconds);
+        if(!replay_start_result && self->callbacks.replay_saved)
+            self->callbacks.replay_saved(NULL, self->callbacks.userdata);
+
+        if(self->settings.restart_replay_on_save && current_save_replay_seconds == GSR_SAVE_REPLAY_SECONDS_FULL) {
+            pthread_mutex_lock(&self->encoder.replay_mutex);
+            gsr_replay_buffer_clear(self->encoder.replay_buffer);
+            pthread_mutex_unlock(&self->encoder.replay_mutex);
+        }
+    }
+}
+
+static void recorder_sleep_until_next_frame(gsr_recorder *self) {
+    const double time_at_frame_end = gsr_recording_clock_get_time(self->recording_clock);
+    const double time_elapsed_total = time_at_frame_end - self->record_start_time;
+    const int64_t frames_elapsed = floor(time_elapsed_total / self->target_fps);
+    const double time_at_next_frame = (frames_elapsed + 1) * self->target_fps;
+    double time_to_next_frame = time_at_next_frame - time_elapsed_total;
+    if(time_to_next_frame > self->target_fps)
+        time_to_next_frame = self->target_fps;
+    const int64_t end_num_missed_frames = frames_elapsed - self->video_pts_counter;
+
+    if(time_to_next_frame > 0.0 && end_num_missed_frames <= 0)
+        av_usleep(time_to_next_frame * 1000.0 * 1000.0);
+    else {
+        if(self->paused)
+            av_usleep(20.0 * 1000.0); // 20 milliseconds
+        else if(self->settings.framerate_mode == GSR_FRAMERATE_MODE_CONTENT)
+            av_usleep(2.8 * 1000.0); // 2.8 milliseconds
+    }
+}
 
 int gsr_recorder_run(gsr_recorder *self) {
-    double fps_start_time = clock_get_monotonic_seconds();
-    //double frame_timer_start = fps_start_time;
-    int fps_counter = 0;
-    int damage_fps_counter = 0;
+    self->fps_start_time = clock_get_monotonic_seconds();
+    //double frame_timer_start = self->fps_start_time;
+    self->fps_counter = 0;
+    self->damage_fps_counter = 0;
 
-    bool paused = false;
+    self->paused = false;
     self->replay_recording = false;
 
     memset(&self->replay_recording_output, 0, sizeof(self->replay_recording_output));
@@ -438,7 +766,7 @@ int gsr_recorder_run(gsr_recorder *self) {
     self->force_iframe_frame = false;
 
     gsr_recording_clock_start(self->recording_clock);
-    const double record_start_time = gsr_recording_clock_get_start_time(self->recording_clock);
+    self->record_start_time = gsr_recording_clock_get_start_time(self->recording_clock);
 
     if(gsr_audio_capture_start(&self->audio_capture, self->audio_max_frame_size, self->uses_amix) != GSR_ERROR_OK)
         return GSR_ERROR_GENERIC;
@@ -447,10 +775,10 @@ int gsr_recorder_run(gsr_recorder *self) {
     //const double update_fps = fps + 190;
     self->should_stop_error = false;
 
-    int64_t video_pts_counter = 0;
-    int64_t video_prev_pts = 0;
+    self->video_pts_counter = 0;
+    self->video_prev_pts = 0;
 
-    bool hdr_metadata_set = false;
+    self->hdr_metadata_set = false;
     self->hdr = video_codec_is_hdr(self->settings.video_codec);
 
     
@@ -481,294 +809,14 @@ int gsr_recorder_run(gsr_recorder *self) {
     }
 
     while(self->running) {
-        while(gsr_window_process_event(self->window)) {
-            if(self->capture_deps->x11_cursor_display && self->settings.record_cursor)
-                gsr_cursor_on_event(&self->capture_deps->x11_cursor, gsr_window_get_event_data(self->window));
-
-            gsr_damage_on_event(&self->damage, gsr_window_get_event_data(self->window));
-            for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
-        gsr_video_source *video_source = &self->video_sources->items[video_source_index];
-                gsr_capture_on_event(video_source->capture, self->egl);
-            }
-        }
-
-        if(self->capture_deps->x11_cursor_display && self->settings.record_cursor)
-            gsr_cursor_tick(&self->capture_deps->x11_cursor, DefaultRootWindow(self->capture_deps->x11_cursor_display));
-
-        gsr_damage_tick(&self->damage);
-
-        self->should_stop_error = false;
-        bool damaged = false;
-
-        if(self->use_damage_tracking)
-            damaged = gsr_damage_is_damaged(&self->damage);
-
-        for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
-        gsr_video_source *video_source = &self->video_sources->items[video_source_index];
-            gsr_capture_tick(video_source->capture);
-
-            if(gsr_capture_should_stop(video_source->capture, &self->should_stop_error)) {
-                self->running = 0;
-                break;
-            }
-
-            if(video_source->capture_source->type == GSR_CAPTURE_SOURCE_TYPE_FOCUSED_WINDOW) {
-                assert(video_source->capture->get_window_id);
-                const Window damage_target_window = video_source->capture->get_window_id(video_source->capture);
-
-                if((int64_t)damage_target_window != video_source->capture_source->window_id) {
-                    gsr_damage_stop_tracking_window(&self->damage, video_source->capture_source->window_id);
-                    if(damage_target_window != 0)
-                        gsr_damage_start_tracking_window(&self->damage, damage_target_window);
-                }
-
-                video_source->capture_source->window_id = damage_target_window;
-            }
-
-            if(video_source->capture->is_damaged)
-                damaged |= video_source->capture->is_damaged(video_source->capture);
-            else if(!self->use_damage_tracking)
-                damaged = true;
-        }
-
-        damaged |= gsr_plugins_is_damaged(&self->plugins);
-
-        // TODO: Readd wayland sync warning when removing this
-        if(self->settings.framerate_mode != GSR_FRAMERATE_MODE_CONTENT)
-            damaged = true;
-
-        if(damaged)
-            ++damage_fps_counter;
-
-        ++fps_counter;
-        const double time_now = clock_get_monotonic_seconds();
-        //const double frame_timer_elapsed = time_now - frame_timer_start;
-        const double elapsed = time_now - fps_start_time;
-        if (elapsed >= 1.0) {
-            if(self->settings.verbose) {
-                fprintf(stderr, "update fps: %d, damage fps: %d\n", fps_counter, damage_fps_counter);
-            }
-            fps_start_time = time_now;
-            fps_counter = 0;
-            damage_fps_counter = 0;
-        }
-
-        const double this_video_frame_time = gsr_recording_clock_get_time(self->recording_clock);
-        const int64_t expected_frames = floor((this_video_frame_time - record_start_time) / self->target_fps);
-        const int64_t num_missed_frames = expected_frames - video_pts_counter;
-
-        if(damaged && num_missed_frames >= 1 && !paused) {
-            // TODO: Dont do this if no damage?
-            self->egl->glClear(0);
-
-            gsr_damage_clear(&self->damage);
-            gsr_plugins_clear_damage(&self->plugins);
-            gsr_capture_deps_cleanup_kms_fds(self->capture_deps);
-
-            gsr_capture_deps_update_kms(self->capture_deps);
-
-            bool capture_has_synchronous_task = false;
-            for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
-        gsr_video_source *video_source = &self->video_sources->items[video_source_index];
-                if(video_source->capture->clear_damage)
-                    video_source->capture->clear_damage(video_source->capture);
-
-                if(video_source->capture->capture_has_synchronous_task) {
-                    capture_has_synchronous_task = video_source->capture->capture_has_synchronous_task(video_source->capture);
-                    if(capture_has_synchronous_task) {
-                        paused = true;
-                        gsr_recording_clock_set_paused(self->recording_clock, true);
-                    }
-                }
-            }
-
-            for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
-        gsr_video_source *video_source = &self->video_sources->items[video_source_index];
-                if(video_source->capture->pre_capture)
-                    video_source->capture->pre_capture(video_source->capture, &video_source->metadata, self->output_color_conversion);
-            }
-
-            if(self->output_color_conversion->schedule_clear) {
-                self->output_color_conversion->schedule_clear = false;
-                gsr_color_conversion_clear(self->output_color_conversion);
-            }
-
-            for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
-        gsr_video_source *video_source = &self->video_sources->items[video_source_index];
-                gsr_capture_capture(video_source->capture, &video_source->metadata, self->output_color_conversion);
-            }
-
-            gsr_capture_deps_cleanup_kms_fds(self->capture_deps);
-
-            if(self->plugins.num_plugins > 0) {
-                gsr_plugins_draw(&self->plugins);
-                gsr_color_conversion_draw(&self->color_conversion, self->plugins.texture,
-                    (vec2i){0, 0}, self->video_size,
-                    (vec2i){0, 0}, self->video_size,
-                    self->video_size, GSR_ROT_0, GSR_FLIP_NONE, GSR_SOURCE_COLOR_RGB, false);
-            }
-
-            if(capture_has_synchronous_task) {
-                paused = false;
-                gsr_recording_clock_set_paused(self->recording_clock, false);
-            }
-
-            gsr_egl_swap_buffers(self->egl);
-            gsr_video_encoder_copy_textures_to_frame(self->video_encoder, self->video_frame, self->output_color_conversion);
-
-            for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
-        gsr_video_source *video_source = &self->video_sources->items[video_source_index];
-                if(self->hdr && !hdr_metadata_set && !self->settings.is_replaying && add_hdr_metadata_to_video_stream(video_source->capture, self->video_stream))
-                    hdr_metadata_set = true;
-            }
-
-            // TODO: Check if duplicate frame can be saved just by writing it with a different pts instead of sending it again
-            const int num_frames_to_encode = self->settings.framerate_mode == GSR_FRAMERATE_MODE_CONSTANT ? num_missed_frames : 1;
-            for(int i = 0; i < num_frames_to_encode; ++i) {
-                if(self->settings.framerate_mode == GSR_FRAMERATE_MODE_CONSTANT) {
-                    self->video_frame->pts = video_pts_counter + i;
-                } else {
-                    self->video_frame->pts = (this_video_frame_time - record_start_time) * (double)AV_TIME_BASE;
-                    const bool same_pts = self->video_frame->pts == video_prev_pts;
-                    video_prev_pts = self->video_frame->pts;
-                    if(same_pts)
-                        continue;
-                }
-
-                if(self->force_iframe_frame) {
-                    self->video_frame->pict_type = AV_PICTURE_TYPE_I;
-                }
-
-                int ret = avcodec_send_frame(self->video_codec_context, self->video_frame);
-                if(ret == 0) {
-                    // TODO: Move to separate thread because this could write to network (for example when livestreaming)
-                    gsr_encoder_receive_packets(&self->encoder, self->video_codec_context, self->video_frame->pts, GSR_VIDEO_STREAM_INDEX);
-                } else {
-                    gsr_log(GSR_LOG_LEVEL_ERROR, "avcodec_send_frame failed, error: %s", gsr_av_error_to_string(ret));
-                }
-
-                if(self->force_iframe_frame) {
-                    self->force_iframe_frame = false;
-                    self->video_frame->pict_type = AV_PICTURE_TYPE_NONE;
-                }
-            }
-
-            video_pts_counter += num_missed_frames;
-        }
-
-        if(self->toggle_pause == 1 && !self->settings.is_replaying) {
-            paused = !paused;
-            gsr_recording_clock_set_paused(self->recording_clock, paused);
-            gsr_log(GSR_LOG_LEVEL_INFO, paused ? "Paused" : "Unpaused");
-            self->toggle_pause = 0;
-        }
-
-        if(self->toggle_replay_recording && !self->settings.replay_recording_directory) {
-            self->toggle_replay_recording = 0;
-            if(self->callbacks.recording_started)
-                self->callbacks.recording_started(NULL, self->callbacks.userdata);
-        }
-
-        if(self->toggle_replay_recording && self->settings.replay_recording_directory) {
-            self->toggle_replay_recording = 0;
-            const bool new_replay_recording_state = !self->replay_recording;
-            if(new_replay_recording_state) {
-                gsr_audio_capture_lock_filter(&self->audio_capture);
-                self->num_replay_recording_items = 0;
-                const bool filepath_created = gsr_create_new_recording_filepath_from_timestamp(self->replay_recording_filepath, sizeof(self->replay_recording_filepath), self->settings.replay_recording_directory, "Video", self->file_extension, self->settings.date_folders);
-                if(filepath_created && gsr_recording_output_start(&self->replay_recording_output, self->replay_recording_filepath, &self->settings, self->video_codec_context, &self->audio_capture, self->hdr, self->video_sources)) {
-                    const size_t video_recording_destination_id = gsr_encoder_add_recording_destination(&self->encoder, self->video_codec_context, self->replay_recording_output.av_format_context, self->replay_recording_output.video_stream, self->video_frame->pts);
-                    if(self->settings.write_first_frame_ts && video_recording_destination_id != (size_t)-1) {
-                        char ts_filepath[PATH_MAX + 4];
-                        snprintf(ts_filepath, sizeof(ts_filepath), "%s.ts", self->replay_recording_filepath);
-                        gsr_encoder_set_recording_destination_first_frame_ts_filepath(&self->encoder, video_recording_destination_id, ts_filepath);
-                    }
-
-                    if(video_recording_destination_id != (size_t)-1 && self->num_replay_recording_items < GSR_MAX_RECORDING_DESTINATIONS) {
-                        self->replay_recording_items[self->num_replay_recording_items] = video_recording_destination_id;
-                        ++self->num_replay_recording_items;
-                    }
-
-                    for(size_t i = 0; i < self->replay_recording_output.num_audio_streams; ++i) {
-                        const gsr_recording_audio_stream *audio_stream = &self->replay_recording_output.audio_streams[i];
-                        const size_t audio_recording_destination_id = gsr_encoder_add_recording_destination(&self->encoder, audio_stream->audio_track->codec_context, self->replay_recording_output.av_format_context, audio_stream->stream, audio_stream->audio_track->pts);
-                        if(audio_recording_destination_id != (size_t)-1 && self->num_replay_recording_items < GSR_MAX_RECORDING_DESTINATIONS) {
-                            self->replay_recording_items[self->num_replay_recording_items] = audio_recording_destination_id;
-                            ++self->num_replay_recording_items;
-                        }
-                    }
-
-                    self->replay_recording = true;
-                    self->force_iframe_frame = true;
-                    gsr_log(GSR_LOG_LEVEL_INFO, "Started recording");
-                    if(self->callbacks.recording_started)
-                        self->callbacks.recording_started(self->replay_recording_filepath, self->callbacks.userdata);
-                } else {
-                    if(self->callbacks.recording_started)
-                        self->callbacks.recording_started(NULL, self->callbacks.userdata);
-                }
-                gsr_audio_capture_unlock_filter(&self->audio_capture);
-            } else if(self->replay_recording_output.av_format_context) {
-                for(size_t i = 0; i < self->num_replay_recording_items; ++i) {
-                    gsr_encoder_remove_recording_destination(&self->encoder, self->replay_recording_items[i]);
-                }
-                self->num_replay_recording_items = 0;
-
-                if(gsr_recording_output_stop(&self->replay_recording_output)) {
-                    gsr_log(GSR_LOG_LEVEL_INFO, "Stopped recording");
-                    if(self->callbacks.recording_stopped)
-                        self->callbacks.recording_stopped(self->replay_recording_filepath, self->callbacks.userdata);
-                } else {
-                    if(self->callbacks.recording_stopped)
-                        self->callbacks.recording_stopped(NULL, self->callbacks.userdata);
-                }
-
-                self->replay_recording = false;
-                self->replay_recording_filepath[0] = '\0';
-            }
-        }
-
-        bool replay_save_result = false;
-        const char *replay_save_output_filepath = NULL;
-        if(gsr_replay_save_poll(&self->replay_save, &replay_save_result, &replay_save_output_filepath)) {
-            if(self->callbacks.replay_saved)
-                self->callbacks.replay_saved(replay_save_output_filepath[0] == '\0' || !replay_save_result ? NULL : replay_save_output_filepath, self->callbacks.userdata);
-        }
-
-        if(self->save_replay_seconds != 0 && !gsr_replay_save_is_running(&self->replay_save) && self->settings.is_replaying) {
-            int current_save_replay_seconds = self->save_replay_seconds;
-            if(current_save_replay_seconds > 0)
-                current_save_replay_seconds += self->settings.keyint;
-
-            self->save_replay_seconds = 0;
-            const bool replay_start_result = gsr_replay_save_start(&self->replay_save, self->video_codec_context, GSR_VIDEO_STREAM_INDEX, &self->audio_capture, &self->encoder, &self->settings, self->file_extension, self->hdr, self->video_sources, current_save_replay_seconds);
-            if(!replay_start_result && self->callbacks.replay_saved)
-                self->callbacks.replay_saved(NULL, self->callbacks.userdata);
-
-            if(self->settings.restart_replay_on_save && current_save_replay_seconds == GSR_SAVE_REPLAY_SECONDS_FULL) {
-                pthread_mutex_lock(&self->encoder.replay_mutex);
-                gsr_replay_buffer_clear(self->encoder.replay_buffer);
-                pthread_mutex_unlock(&self->encoder.replay_mutex);
-            }
-        }
-
-        const double time_at_frame_end = gsr_recording_clock_get_time(self->recording_clock);
-        const double time_elapsed_total = time_at_frame_end - record_start_time;
-        const int64_t frames_elapsed = floor(time_elapsed_total / self->target_fps);
-        const double time_at_next_frame = (frames_elapsed + 1) * self->target_fps;
-        double time_to_next_frame = time_at_next_frame - time_elapsed_total;
-        if(time_to_next_frame > self->target_fps)
-            time_to_next_frame = self->target_fps;
-        const int64_t end_num_missed_frames = frames_elapsed - video_pts_counter;
-
-        if(time_to_next_frame > 0.0 && end_num_missed_frames <= 0)
-            av_usleep(time_to_next_frame * 1000.0 * 1000.0);
-        else {
-            if(paused)
-                av_usleep(20.0 * 1000.0); // 20 milliseconds
-            else if(self->settings.framerate_mode == GSR_FRAMERATE_MODE_CONTENT)
-                av_usleep(2.8 * 1000.0); // 2.8 milliseconds
-        }
+        recorder_process_events(self);
+        const bool damaged = recorder_tick_video_sources(self);
+        recorder_update_fps_counters(self, damaged);
+        recorder_capture_and_encode_frame(self, damaged);
+        recorder_apply_pause_toggle(self);
+        recorder_apply_replay_recording_toggle(self);
+        recorder_poll_replay_save(self);
+        recorder_sleep_until_next_frame(self);
     }
 
     gsr_recorder_stop_recording(self);
