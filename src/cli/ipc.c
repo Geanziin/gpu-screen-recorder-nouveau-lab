@@ -412,13 +412,32 @@ static bool ipc_socket_filepath_in_use(const char *socket_filepath) {
     return in_use;
 }
 
-static bool ipc_bind(gsr_ipc *self, const struct sockaddr_un *addr) {
-    const mode_t prev_mask = umask(0777 & ~GSR_IPC_SOCKET_MODE);
-    int bind_result = bind(self->socket_fd, (const struct sockaddr*)addr, sizeof(*addr));
-    if(bind_result == -1 && errno == EADDRINUSE && !ipc_socket_filepath_in_use(self->socket_filepath)) {
-        unlink(self->socket_filepath);
-        bind_result = bind(self->socket_fd, (const struct sockaddr*)addr, sizeof(*addr));
+/* Removes the socket that a GPU Screen Recorder instance that was killed left behind, so the same ipc socket path can be used again */
+static bool ipc_remove_unused_socket(const char *socket_filepath) {
+    struct stat file_stat;
+    if(lstat(socket_filepath, &file_stat) == -1)
+        return true;
+
+    if(!S_ISSOCK(file_stat.st_mode)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_ipc_init: can't use \"%s\" as the ipc socket path because a file that isn't a socket already exists there", socket_filepath);
+        return false;
     }
+
+    if(ipc_socket_filepath_in_use(socket_filepath)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_ipc_init: another program is already listening on \"%s\"", socket_filepath);
+        return false;
+    }
+
+    unlink(socket_filepath);
+    return true;
+}
+
+static bool ipc_bind(gsr_ipc *self, const struct sockaddr_un *addr) {
+    if(!ipc_remove_unused_socket(self->socket_filepath))
+        return false;
+
+    const mode_t prev_mask = umask(0777 & ~GSR_IPC_SOCKET_MODE);
+    const int bind_result = bind(self->socket_fd, (const struct sockaddr*)addr, sizeof(*addr));
     const int bind_error = errno;
     umask(prev_mask);
 
