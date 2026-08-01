@@ -38,6 +38,7 @@ src = [
     'src/recorder/windowing.c',
     'src/recorder/capture_source.c',
     'src/recorder/capture_setup.c',
+    'src/recorder/audio_input.c',
     'src/egl.c',
     'src/cuda.c',
     'src/window_texture.c',

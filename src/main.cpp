@@ -6,6 +6,7 @@ extern "C" {
 #include "../include/recorder/windowing.h"
 #include "../include/recorder/capture_source.h"
 #include "../include/recorder/capture_setup.h"
+#include "../include/recorder/audio_input.h"
 #include "../include/recorder/error.h"
 #include "../include/capture/nvfbc.h"
 #include "../include/capture/xcomposite.h"
@@ -77,23 +78,6 @@ extern "C" {
 #ifndef GSR_VERSION
 #define GSR_VERSION "unknown"
 #endif
-
-enum class AudioInputType {
-    DEVICE,
-    APPLICATION
-};
-
-struct AudioInput {
-    std::string name;
-    AudioInputType type = AudioInputType::DEVICE;
-    bool inverted = false;
-};
-
-struct MergedAudioInputs {
-    std::optional<std::string> custom_name;
-    std::string track_name;
-    std::vector<AudioInput> audio_inputs;
-};
 
 // TODO: If options are not supported then they are returned (allocated) in the options. This should be free'd.
 
@@ -213,7 +197,7 @@ static void run_recording_saved_script_async(const char *script_file, const char
 
 struct AudioDeviceData {
     SoundDevice sound_device;
-    AudioInput audio_input;
+    gsr_audio_input audio_input;
     AVFilterContext *src_filter_ctx = nullptr;
     AVFrame *frame = nullptr;
     std::thread thread; // TODO: Instead of having a thread for each track, have one thread for all threads and read the data with non-blocking read
@@ -539,53 +523,6 @@ static bool save_replay_async(AVCodecContext *video_codec_context, int video_str
     });
 
     return true;
-}
-
-static const gsr_audio_device* get_audio_device_by_name(const gsr_audio_devices *audio_devices, const char *name) {
-    for(size_t i = 0; i < audio_devices->num_items; ++i) {
-        if(strcmp(audio_devices->items[i].name, name) == 0)
-            return &audio_devices->items[i];
-    }
-    return nullptr;
-}
-
-static bool parse_audio_input_arg_callback(const char *sub, size_t size, void *userdata) {
-    MergedAudioInputs *result = (MergedAudioInputs*)userdata;
-    if(size == 0)
-        return true;
-
-    AudioInput audio_input;
-    audio_input.name.assign(sub, size);
-
-    if(gsr_string_starts_with(audio_input.name.data(), audio_input.name.size(), "name:")) {
-        result->custom_name = audio_input.name.substr(5);
-    } else if(gsr_string_starts_with(audio_input.name.data(), audio_input.name.size(), "app:")) {
-        audio_input.name.erase(audio_input.name.begin(), audio_input.name.begin() + 4);
-        audio_input.type = AudioInputType::APPLICATION;
-        audio_input.inverted = false;
-        result->audio_inputs.push_back(std::move(audio_input));
-    } else if(gsr_string_starts_with(audio_input.name.data(), audio_input.name.size(), "app-inverse:")) {
-        audio_input.name.erase(audio_input.name.begin(), audio_input.name.begin() + 12);
-        audio_input.type = AudioInputType::APPLICATION;
-        audio_input.inverted = true;
-        result->audio_inputs.push_back(std::move(audio_input));
-    } else if(gsr_string_starts_with(audio_input.name.data(), audio_input.name.size(), "device:")) {
-        audio_input.name.erase(audio_input.name.begin(), audio_input.name.begin() + 7);
-        audio_input.type = AudioInputType::DEVICE;
-        result->audio_inputs.push_back(std::move(audio_input));
-    } else {
-        audio_input.type = AudioInputType::DEVICE;
-        result->audio_inputs.push_back(std::move(audio_input));
-    }
-
-    return true;
-}
-
-static MergedAudioInputs parse_audio_input_arg(const char *str) {
-    MergedAudioInputs result;
-    result.track_name = str;
-    gsr_string_split(str, '|', parse_audio_input_arg_callback, &result);
-    return result;
 }
 
 static int init_filter_graph(AVCodecContext* audio_codec_context, AVFilterGraph** graph, AVFilterContext** sink, std::vector<AVFilterContext*>& src_filter_ctx, size_t num_sources) {
@@ -1207,203 +1144,15 @@ static void capture_image_to_file(args_parser &arg_parser, gsr_egl *egl, gsr_win
     _exit(should_stop_error ? 3 : 0);
 }
 
-static void match_app_audio_input_to_available_apps(const std::vector<AudioInput> &requested_audio_inputs, const std::vector<std::string> &app_audio_names) {
-    for(const AudioInput &request_audio_input : requested_audio_inputs) {
-        if(request_audio_input.type != AudioInputType::APPLICATION || request_audio_input.inverted)
-            continue;
-
-        bool match = false;
-        for(const std::string &app_name : app_audio_names) {
-            if(strcasecmp(app_name.c_str(), request_audio_input.name.c_str()) == 0) {
-                match = true;
-                break;
-            }
-        }
-
-        if(!match) {
-            gsr_log(GSR_LOG_LEVEL_WARNING, "no audio application with the name \"%s\" was found, expected one of the following:", request_audio_input.name.c_str());
-            for(const std::string &app_name : app_audio_names) {
-                fprintf(stderr, "  * %s\n", app_name.c_str());
-            }
-            fprintf(stderr, "  assuming this is intentional (if you are trying to record audio for applications that haven't started yet).\n");
-        }
-    }
-}
-
-struct AudioTrackDescription {
-    std::optional<std::string> custom_name;
-    std::vector<std::string> devices;
-    std::vector<std::string> applications;
-    bool app_inverse = false;
-
-    std::string to_title() const {
-        if(custom_name.has_value()){
-            return custom_name.value();
-        }
-        std::string title;
-        if(!devices.empty()) {
-            title += "Devices: ";
-            for(size_t i = 0; i < devices.size(); ++i) {
-                if(i > 0)
-                    title += ", ";
-                title += devices[i];
-            }
-        }
-
-        if(!applications.empty()) {
-            if(!title.empty())
-                title += ". ";
-
-            if(app_inverse)
-                title += "All applications except: ";
-            else
-                title += "Applications: ";
-
-            for(size_t i = 0; i < applications.size(); ++i) {
-                if(i > 0)
-                    title += ", ";
-                title += applications[i];
-            }
-        }
-        return title;
-    }
-};
-
 // Manually check if the audio inputs we give exist. This is only needed for pipewire, not pulseaudio.
 // Pipewire instead DEFAULTS TO THE DEFAULT AUDIO INPUT. THAT'S RETARDED.
 // OH, YOU MISSPELLED THE AUDIO INPUT? FUCK YOU
-static std::vector<MergedAudioInputs> parse_audio_inputs(const gsr_audio_devices *audio_devices, const Arg *audio_input_arg) {
-    std::vector<MergedAudioInputs> requested_audio_inputs;
-
-    for(int i = 0; i < audio_input_arg->num_values; ++i) {
-        const char *audio_input = audio_input_arg->values[i];
-        if(!audio_input || audio_input[0] == '\0')
-            continue;
-
-        MergedAudioInputs merged_inputs = parse_audio_input_arg(audio_input);
-        requested_audio_inputs.push_back(merged_inputs);
-        AudioTrackDescription audio_track_description;
-        if(merged_inputs.custom_name.has_value()){
-            audio_track_description.custom_name = merged_inputs.custom_name;
-        }
-
-        for(AudioInput &request_audio_input : requested_audio_inputs.back().audio_inputs) {
-            if(request_audio_input.type == AudioInputType::APPLICATION) {
-                audio_track_description.applications.push_back(request_audio_input.name);
-                audio_track_description.app_inverse = request_audio_input.inverted;
-                continue;
-            }
-
-            bool match = false;
-
-            if(request_audio_input.name == "default_output") {
-                if(audio_devices->default_output[0] == '\0') {
-                    gsr_log(GSR_LOG_LEVEL_ERROR, "-a default_output was specified but no default audio output is specified in the audio server");
-                    _exit(2);
-                }
-                match = true;
-                audio_track_description.devices.push_back("Default output");
-            } else if(request_audio_input.name == "default_input") {
-                if(audio_devices->default_input[0] == '\0') {
-                    gsr_log(GSR_LOG_LEVEL_ERROR, "-a default_input was specified but no default audio input is specified in the audio server");
-                    _exit(2);
-                }
-                match = true;
-                audio_track_description.devices.push_back("Default input");
-            } else {
-                const gsr_audio_device *audio_device = get_audio_device_by_name(audio_devices, request_audio_input.name.c_str());
-                if(audio_device) {
-                    match = true;
-                    audio_track_description.devices.push_back(audio_device->description);
-                }
-            }
-
-            if(!match) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "Audio device '%s' is not a valid audio device, expected one of:", request_audio_input.name.c_str());
-                if(audio_devices->default_output[0] != '\0')
-                    fprintf(stderr, "    default_output (Default output)\n");
-                if(audio_devices->default_input[0] != '\0')
-                    fprintf(stderr, "    default_input (Default input)\n");
-                for(size_t j = 0; j < audio_devices->num_items; ++j) {
-                    fprintf(stderr, "    %s (%s)\n", audio_devices->items[j].name, audio_devices->items[j].description);
-                }
-                _exit(50);
-            }
-        }
-
-        requested_audio_inputs.back().track_name = audio_track_description.to_title();
-    }
-
-    return requested_audio_inputs;
-}
-
-static bool audio_inputs_has_app_audio(const std::vector<AudioInput> &audio_inputs) {
-    for(const auto &audio_input : audio_inputs) {
-        if(audio_input.type == AudioInputType::APPLICATION)
-            return true;
-    }
-    return false;
-}
-
-static bool merged_audio_inputs_has_app_audio(const std::vector<MergedAudioInputs> &merged_audio_inputs) {
-    for(const auto &merged_audio_input : merged_audio_inputs) {
-        if(audio_inputs_has_app_audio(merged_audio_input.audio_inputs))
-            return true;
-    }
-    return false;
-}
-
 // Should use amix if more than 1 audio device and 0 application audio, merged
-static bool audio_inputs_should_use_amix(const std::vector<AudioInput> &audio_inputs) {
-    int num_audio_devices = 0;
-    int num_app_audio = 0;
-
-    for(const auto &audio_input : audio_inputs) {
-        if(audio_input.type == AudioInputType::DEVICE)
-            ++num_audio_devices;
-        else if(audio_input.type == AudioInputType::APPLICATION)
-            ++num_app_audio;
-    }
-
-    return num_audio_devices > 1 && num_app_audio == 0;
-}
-
-static bool merged_audio_inputs_should_use_amix(const std::vector<MergedAudioInputs> &merged_audio_inputs) {
-    for(const auto &merged_audio_input : merged_audio_inputs) {
-        if(audio_inputs_should_use_amix(merged_audio_input.audio_inputs))
-            return true;
-    }
-    return false;
-}
-
-static void validate_merged_audio_inputs_app_audio(const std::vector<MergedAudioInputs> &merged_audio_inputs, const std::vector<std::string> &app_audio_names) {
-    for(const auto &merged_audio_input : merged_audio_inputs) {
-        int num_app_audio = 0;
-        int num_app_inverted_audio = 0;
-
-        for(const auto &audio_input : merged_audio_input.audio_inputs) {
-            if(audio_input.type == AudioInputType::APPLICATION) {
-                if(audio_input.inverted)
-                    ++num_app_inverted_audio;
-                else
-                    ++num_app_audio;
-            }
-        }
-
-        match_app_audio_input_to_available_apps(merged_audio_input.audio_inputs, app_audio_names);
-
-        if(num_app_audio > 0 && num_app_inverted_audio > 0) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "argument -a was provided with both app: and app-inverse:, only one of them can be used for one audio track");
-            _exit(2);
-        }
-    }
-}
-
 /* Returns -1 if none is available */
-static std::vector<AudioDeviceData> create_device_audio_inputs(const std::vector<AudioInput> &audio_inputs, AVCodecContext *audio_codec_context, int num_channels, double num_audio_frames_shift, std::vector<AVFilterContext*> &src_filter_ctx, bool use_amix) {
+static std::vector<AudioDeviceData> create_device_audio_inputs(const gsr_merged_audio_inputs *merged_audio_inputs, AVCodecContext *audio_codec_context, int num_channels, double num_audio_frames_shift, std::vector<AVFilterContext*> &src_filter_ctx, bool use_amix) {
     std::vector<AudioDeviceData> audio_track_audio_devices;
-    for(size_t i = 0; i < audio_inputs.size(); ++i) {
-        const auto &audio_input = audio_inputs[i];
+    for(size_t i = 0; i < merged_audio_inputs->num_items; ++i) {
+        const gsr_audio_input &audio_input = merged_audio_inputs->items[i];
         AVFilterContext *src_ctx = nullptr;
         if(use_amix)
             src_ctx = src_filter_ctx[i];
@@ -1412,13 +1161,14 @@ static std::vector<AudioDeviceData> create_device_audio_inputs(const std::vector
         audio_device.audio_input = audio_input;
         audio_device.src_filter_ctx = src_ctx;
 
-        if(audio_input.name.empty()) {
+        if(audio_input.name[0] == '\0') {
             audio_device.sound_device.handle = NULL;
             audio_device.sound_device.frames = 0;
         } else {
-            const std::string description = "gsr-" + audio_input.name;
-            if(sound_device_get_by_name(&audio_device.sound_device, description.c_str(), audio_input.name.c_str(), description.c_str(), num_channels, audio_codec_context->frame_size, audio_codec_context_get_audio_format(audio_codec_context)) != 0) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "failed to get \"%s\" audio device", audio_input.name.c_str());
+            char description[GSR_AUDIO_INPUT_NAME_MAX_SIZE + 8];
+            snprintf(description, sizeof(description), "gsr-%s", audio_input.name);
+            if(sound_device_get_by_name(&audio_device.sound_device, description, audio_input.name, description, num_channels, audio_codec_context->frame_size, audio_codec_context_get_audio_format(audio_codec_context)) != 0) {
+                gsr_log(GSR_LOG_LEVEL_ERROR, "failed to get \"%s\" audio device", audio_input.name);
                 _exit(1);
             }
         }
@@ -1434,7 +1184,7 @@ static std::vector<AudioDeviceData> create_device_audio_inputs(const std::vector
 }
 
 #ifdef GSR_APP_AUDIO
-static AudioDeviceData create_application_audio_audio_input(const MergedAudioInputs &merged_audio_inputs, AVCodecContext *audio_codec_context, int num_channels, double num_audio_frames_shift, gsr_pipewire_audio *pipewire_audio) {
+static AudioDeviceData create_application_audio_audio_input(const gsr_merged_audio_inputs &merged_audio_inputs, AVCodecContext *audio_codec_context, int num_channels, double num_audio_frames_shift, gsr_pipewire_audio *pipewire_audio) {
     AudioDeviceData audio_device;
     audio_device.frame = create_audio_frame(audio_codec_context);
     if(!audio_device.frame)
@@ -1457,16 +1207,18 @@ static AudioDeviceData create_application_audio_audio_input(const MergedAudioInp
     }
 
     std::vector<const char*> audio_devices_sources;
-    for(const auto &audio_input : merged_audio_inputs.audio_inputs) {
-        if(audio_input.type == AudioInputType::DEVICE)
-            audio_devices_sources.push_back(audio_input.name.c_str());
+    for(size_t i = 0; i < merged_audio_inputs.num_items; ++i) {
+        const gsr_audio_input &audio_input = merged_audio_inputs.items[i];
+        if(audio_input.type == GSR_AUDIO_INPUT_TYPE_DEVICE)
+            audio_devices_sources.push_back(audio_input.name);
     }
 
     bool app_audio_inverted = false;
     std::vector<const char*> app_names;
-    for(const auto &audio_input : merged_audio_inputs.audio_inputs) {
-        if(audio_input.type == AudioInputType::APPLICATION) {
-            app_names.push_back(audio_input.name.c_str());
+    for(size_t i = 0; i < merged_audio_inputs.num_items; ++i) {
+        const gsr_audio_input &audio_input = merged_audio_inputs.items[i];
+        if(audio_input.type == GSR_AUDIO_INPUT_TYPE_APPLICATION) {
+            app_names.push_back(audio_input.name);
             app_audio_inverted = audio_input.inverted;
         }
     }
@@ -1520,15 +1272,15 @@ static void av_write_header(AVFormatContext *av_format_context, const char *ffmp
     av_dict_free(&options);
 }
 
-static size_t calculate_estimated_replay_buffer_packets(int64_t replay_buffer_size_secs, int fps, gsr_audio_codec audio_codec, const std::vector<MergedAudioInputs> &audio_inputs) {
+static size_t calculate_estimated_replay_buffer_packets(int64_t replay_buffer_size_secs, int fps, gsr_audio_codec audio_codec, const gsr_audio_input_tracks *audio_inputs) {
     if(replay_buffer_size_secs == -1)
         return 0;
 
     int audio_fps = 0;
-    if(!audio_inputs.empty())
+    if(audio_inputs->num_items > 0)
         audio_fps = GSR_AUDIO_SAMPLE_RATE / audio_codec_get_frame_size(audio_codec);
 
-    return replay_buffer_size_secs * (fps + audio_fps * audio_inputs.size());
+    return replay_buffer_size_secs * (fps + audio_fps * audio_inputs->num_items);
 }
 
 static void set_display_server_environment_variables() {
@@ -1712,11 +1464,15 @@ int main(int argc, char **argv) {
     if(audio_input_arg->num_values > 0)
         get_pulseaudio_inputs(&audio_devices);
 
-    std::vector<MergedAudioInputs> requested_audio_inputs = parse_audio_inputs(&audio_devices, audio_input_arg);
+    gsr_audio_input_tracks requested_audio_inputs;
+    const int parse_audio_inputs_result = gsr_audio_input_tracks_parse(&requested_audio_inputs, audio_input_arg->values, audio_input_arg->num_values, &audio_devices);
     gsr_audio_devices_deinit(&audio_devices);
+    if(parse_audio_inputs_result != GSR_ERROR_OK)
+        _exit(gsr_error_to_exit_code(parse_audio_inputs_result));
 
-    const bool uses_app_audio = merged_audio_inputs_has_app_audio(requested_audio_inputs);
-    std::vector<std::string> app_audio_names;
+    const bool uses_app_audio = gsr_audio_input_tracks_has_app_audio(&requested_audio_inputs);
+    gsr_app_audio_names app_audio_names;
+    memset(&app_audio_names, 0, sizeof(app_audio_names));
 #ifdef GSR_APP_AUDIO
     gsr_pipewire_audio pipewire_audio;
     memset(&pipewire_audio, 0, sizeof(pipewire_audio));
@@ -1732,8 +1488,8 @@ int main(int argc, char **argv) {
         }
 
         gsr_pipewire_audio_for_each_app(&pipewire_audio, [](const char *app_name, void *userdata) {
-            std::vector<std::string> *app_audio_names = (std::vector<std::string>*)userdata;
-            app_audio_names->push_back(app_name);
+            gsr_app_audio_names *app_audio_names = (gsr_app_audio_names*)userdata;
+            gsr_app_audio_names_add(app_audio_names, app_name);
             return true;
         }, &app_audio_names);
     }
@@ -1744,7 +1500,10 @@ int main(int argc, char **argv) {
     }
 #endif
 
-    validate_merged_audio_inputs_app_audio(requested_audio_inputs, app_audio_names);
+    const int validate_app_audio_result = gsr_audio_input_tracks_validate_app_audio(&requested_audio_inputs, &app_audio_names);
+    gsr_app_audio_names_deinit(&app_audio_names);
+    if(validate_app_audio_result != GSR_ERROR_OK)
+        _exit(gsr_error_to_exit_code(validate_app_audio_result));
 
     gsr_windowing windowing;
     gsr_windowing_params windowing_params;
@@ -1836,7 +1595,7 @@ int main(int argc, char **argv) {
     const bool force_no_audio_offset = arg_parser.settings.is_livestream || arg_parser.settings.is_output_piped || (file_extension != "mp4" && file_extension != "mkv" && file_extension != "webm");
     const double target_fps = 1.0 / (double)arg_parser.settings.fps;
 
-    const bool uses_amix = merged_audio_inputs_should_use_amix(requested_audio_inputs);
+    const bool uses_amix = gsr_audio_input_tracks_should_use_amix(&requested_audio_inputs);
     arg_parser.settings.audio_codec = select_audio_codec_with_fallback(arg_parser.settings.audio_codec, file_extension.c_str(), uses_amix);
 
     vec2i video_size = {0, 0};
@@ -1849,11 +1608,14 @@ int main(int argc, char **argv) {
 
     // (Some?) livestreaming services require at least one audio track to work.
     // If not audio is provided then create one silent audio track.
-    if(arg_parser.settings.is_livestream && requested_audio_inputs.empty()) {
+    if(arg_parser.settings.is_livestream && requested_audio_inputs.num_items == 0) {
         gsr_log(GSR_LOG_LEVEL_INFO, "live streaming but no audio track was added. Adding a silent audio track");
-        MergedAudioInputs mai;
-        mai.audio_inputs.push_back({""});
-        requested_audio_inputs.push_back(std::move(mai));
+        gsr_merged_audio_inputs silent_audio_track;
+        memset(&silent_audio_track, 0, sizeof(silent_audio_track));
+        gsr_audio_input silent_audio_input;
+        memset(&silent_audio_input, 0, sizeof(silent_audio_input));
+        if(!gsr_merged_audio_inputs_add(&silent_audio_track, &silent_audio_input) || !gsr_audio_input_tracks_add(&requested_audio_inputs, &silent_audio_track))
+            _exit(1);
     }
 
     AVStream *video_stream = nullptr;
@@ -1889,7 +1651,7 @@ int main(int argc, char **argv) {
     video_frame->colorspace = video_codec_context->colorspace;
     video_frame->chroma_location = video_codec_context->chroma_sample_location;
 
-    const size_t estimated_replay_buffer_packets = calculate_estimated_replay_buffer_packets(arg_parser.settings.replay_buffer_size_secs, arg_parser.settings.fps, arg_parser.settings.audio_codec, requested_audio_inputs);
+    const size_t estimated_replay_buffer_packets = calculate_estimated_replay_buffer_packets(arg_parser.settings.replay_buffer_size_secs, arg_parser.settings.fps, arg_parser.settings.audio_codec, &requested_audio_inputs);
     gsr_encoder encoder;
     if(!gsr_encoder_init(&encoder, arg_parser.settings.replay_storage, estimated_replay_buffer_packets, arg_parser.settings.replay_buffer_size_secs, arg_parser.settings.filename)) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create encoder");
@@ -1956,8 +1718,9 @@ int main(int argc, char **argv) {
 
     int audio_max_frame_size = 1024;
     int audio_stream_index = VIDEO_STREAM_INDEX + 1;
-    for(const MergedAudioInputs &merged_audio_inputs : requested_audio_inputs) {
-        const bool use_amix = audio_inputs_should_use_amix(merged_audio_inputs.audio_inputs);
+    for(size_t audio_track_index = 0; audio_track_index < requested_audio_inputs.num_items; ++audio_track_index) {
+        const gsr_merged_audio_inputs &merged_audio_inputs = requested_audio_inputs.items[audio_track_index];
+        const bool use_amix = gsr_audio_inputs_should_use_amix(&merged_audio_inputs);
         AVCodecContext *audio_codec_context = create_audio_codec_context(arg_parser.settings.fps, arg_parser.settings.audio_codec, use_amix, arg_parser.settings.audio_bitrate);
         if(!audio_codec_context)
             _exit(1);
@@ -1969,8 +1732,8 @@ int main(int argc, char **argv) {
                 gsr_log(GSR_LOG_LEVEL_ERROR, "added too many audio sources");
         }
 
-        if(audio_stream && !merged_audio_inputs.track_name.empty() && !arg_parser.settings.exclude_metadata)
-            av_dict_set(&audio_stream->metadata, "title", merged_audio_inputs.track_name.c_str(), 0);
+        if(audio_stream && !merged_audio_inputs.track_name[0] == '\0' && !arg_parser.settings.exclude_metadata)
+            av_dict_set(&audio_stream->metadata, "title", merged_audio_inputs.track_name, 0);
 
         if(!open_audio(audio_codec_context, arg_parser.settings.ffmpeg_audio_opts))
             _exit(1);
@@ -1989,7 +1752,7 @@ int main(int argc, char **argv) {
         AVFilterGraph *graph = nullptr;
         AVFilterContext *sink = nullptr;
         if(use_amix) {
-            int err = init_filter_graph(audio_codec_context, &graph, &sink, src_filter_ctx, merged_audio_inputs.audio_inputs.size());
+            int err = init_filter_graph(audio_codec_context, &graph, &sink, src_filter_ctx, merged_audio_inputs.num_items);
             if(err < 0) {
                 gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create audio filter");
                 _exit(1);
@@ -2005,13 +1768,13 @@ int main(int argc, char **argv) {
         const double num_audio_frames_shift = audio_startup_time_seconds / timeout_sec;
 
         std::vector<AudioDeviceData> audio_track_audio_devices;
-        if(audio_inputs_has_app_audio(merged_audio_inputs.audio_inputs)) {
+        if(gsr_audio_inputs_has_app_audio(&merged_audio_inputs)) {
             assert(!use_amix);
 #ifdef GSR_APP_AUDIO
             audio_track_audio_devices.push_back(create_application_audio_audio_input(merged_audio_inputs, audio_codec_context, num_channels, num_audio_frames_shift, &pipewire_audio));
 #endif
         } else {
-            audio_track_audio_devices = create_device_audio_inputs(merged_audio_inputs.audio_inputs, audio_codec_context, num_channels, num_audio_frames_shift, src_filter_ctx, use_amix);
+            audio_track_audio_devices = create_device_audio_inputs(&merged_audio_inputs, audio_codec_context, num_channels, num_audio_frames_shift, src_filter_ctx, use_amix);
         }
 
         AudioTrack audio_track;
