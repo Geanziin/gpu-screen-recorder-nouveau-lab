@@ -57,15 +57,23 @@ typedef struct {
     } typed_value;
 } Arg;
 
+/* These return the exit code that gpu-screen-recorder should exit with */
 typedef struct {
-    void (*version)(void *userdata);
-    void (*info)(void *userdata);
-    void (*list_audio_devices)(void *userdata);
-    void (*list_application_audio)(void *userdata);
-    void (*list_v4l2_devices)(void *userdata);
-    void (*list_capture_options)(const char *card_path, void *userdata);
-    void (*list_monitors)(void *userdata);
+    int (*version)(void *userdata);
+    int (*info)(void *userdata);
+    int (*list_audio_devices)(void *userdata);
+    int (*list_application_audio)(void *userdata);
+    int (*list_v4l2_devices)(void *userdata);
+    int (*list_capture_options)(const char *card_path, void *userdata);
+    int (*list_monitors)(void *userdata);
 } args_handlers;
+
+typedef enum {
+    ARGS_PARSE_RESULT_ERROR,
+    ARGS_PARSE_RESULT_OK,
+    /* One of the |args_handlers| ran and |command_exit_code| is set */
+    ARGS_PARSE_RESULT_COMMAND_HANDLED
+} args_parse_result;
 
 typedef struct {
     Arg args[NUM_ARGS];
@@ -73,7 +81,7 @@ typedef struct {
 } args_parser;
 
 /* |argv| is stored as a reference */
-bool args_parser_parse(args_parser *self, int argc, char **argv, const args_handlers *args_handlers, void *userdata);
+args_parse_result args_parser_parse(args_parser *self, int argc, char **argv, const args_handlers *args_handlers, void *userdata, int *command_exit_code);
 void args_parser_deinit(args_parser *self);
 
 bool args_parser_validate_with_gl_info(args_parser *self, gsr_egl *egl);

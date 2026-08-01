@@ -474,62 +474,62 @@ static bool args_parser_set_values(args_parser *self) {
     return true;
 }
 
-bool args_parser_parse(args_parser *self, int argc, char **argv, const args_handlers *arg_handlers, void *userdata) {
+args_parse_result args_parser_parse(args_parser *self, int argc, char **argv, const args_handlers *arg_handlers, void *userdata, int *command_exit_code) {
     assert(arg_handlers);
     memset(self, 0, sizeof(*self));
 
     if(argc <= 1) {
         usage_full();
-        return false;
+        return ARGS_PARSE_RESULT_ERROR;
     }
 
     if(argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
         usage_full();
-        return false;
+        return ARGS_PARSE_RESULT_ERROR;
     }
 
     if(argc == 2 && strcmp(argv[1], "--info") == 0) {
-        arg_handlers->info(userdata);
-        return true;
+        *command_exit_code = arg_handlers->info(userdata);
+        return ARGS_PARSE_RESULT_COMMAND_HANDLED;
     }
 
     if(argc == 2 && strcmp(argv[1], "--list-audio-devices") == 0) {
-        arg_handlers->list_audio_devices(userdata);
-        return true;
+        *command_exit_code = arg_handlers->list_audio_devices(userdata);
+        return ARGS_PARSE_RESULT_COMMAND_HANDLED;
     }
 
     if(argc == 2 && strcmp(argv[1], "--list-application-audio") == 0) {
-        arg_handlers->list_application_audio(userdata);
-        return true;
+        *command_exit_code = arg_handlers->list_application_audio(userdata);
+        return ARGS_PARSE_RESULT_COMMAND_HANDLED;
     }
 
     if(argc == 2 && strcmp(argv[1], "--list-v4l2-devices") == 0) {
-        arg_handlers->list_v4l2_devices(userdata);
-        return true;
+        *command_exit_code = arg_handlers->list_v4l2_devices(userdata);
+        return ARGS_PARSE_RESULT_COMMAND_HANDLED;
     }
 
     if(strcmp(argv[1], "--list-capture-options") == 0) {
         if(argc == 2) {
-            arg_handlers->list_capture_options(NULL, userdata);
-            return true;
+            *command_exit_code = arg_handlers->list_capture_options(NULL, userdata);
+            return ARGS_PARSE_RESULT_COMMAND_HANDLED;
         } else if(argc == 3 || argc == 4) {
             const char *card_path = argv[2];
-            arg_handlers->list_capture_options(card_path, userdata);
-            return true;
+            *command_exit_code = arg_handlers->list_capture_options(card_path, userdata);
+            return ARGS_PARSE_RESULT_COMMAND_HANDLED;
         } else {
             gsr_log(GSR_LOG_LEVEL_ERROR, "expected --list-capture-options to be called with either no extra arguments or 1 extra argument (card path)");
-            return false;
+            return ARGS_PARSE_RESULT_ERROR;
         }
     }
 
     if(strcmp(argv[1], "--list-monitors") == 0) {
-        arg_handlers->list_monitors(userdata);
-        return true;
+        *command_exit_code = arg_handlers->list_monitors(userdata);
+        return ARGS_PARSE_RESULT_COMMAND_HANDLED;
     }
 
     if(argc == 2 && strcmp(argv[1], "--version") == 0) {
-        arg_handlers->version(userdata);
-        return true;
+        *command_exit_code = arg_handlers->version(userdata);
+        return ARGS_PARSE_RESULT_COMMAND_HANDLED;
     }
 
     int arg_index = 0;
@@ -579,19 +579,19 @@ bool args_parser_parse(args_parser *self, int argc, char **argv, const args_hand
         if(!arg) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "invalid argument '%s'", arg_name);
             usage();
-            return false;
+            return ARGS_PARSE_RESULT_ERROR;
         }
 
         if(arg->num_values > 0 && !arg->list) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "expected argument '%s' to only be specified once", arg_name);
             usage();
-            return false;
+            return ARGS_PARSE_RESULT_ERROR;
         }
 
         if(i + 1 >= argc) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "missing value for argument '%s'", arg_name);
             usage();
-            return false;
+            return ARGS_PARSE_RESULT_ERROR;
         }
 
         const char *arg_value = argv[i + 1];
@@ -607,7 +607,7 @@ bool args_parser_parse(args_parser *self, int argc, char **argv, const args_hand
                 } else {
                     gsr_log(GSR_LOG_LEVEL_ERROR, "%s should either be 'yes' or 'no', got: '%s'", arg_name, arg_value);
                     usage();
-                    return false;
+                    return ARGS_PARSE_RESULT_ERROR;
                 }
                 break;
             }
@@ -617,7 +617,7 @@ bool args_parser_parse(args_parser *self, int argc, char **argv, const args_hand
                     arg_get_expected_enum_names(arg, expected_enum_names, sizeof(expected_enum_names));
                     gsr_log(GSR_LOG_LEVEL_ERROR, "%s should either be %s, got: '%s'", arg_name, expected_enum_names, arg_value);
                     usage();
-                    return false;
+                    return ARGS_PARSE_RESULT_ERROR;
                 }
                 break;
             }
@@ -625,19 +625,19 @@ bool args_parser_parse(args_parser *self, int argc, char **argv, const args_hand
                 if(sscanf(arg_value, "%" PRIi64, &arg->typed_value.i64_value) != 1) {
                     gsr_log(GSR_LOG_LEVEL_ERROR, "%s argument \"%s\" is not an integer", arg_name, arg_value);
                     usage();
-                    return false;
+                    return ARGS_PARSE_RESULT_ERROR;
                 }
 
                 if(arg->typed_value.i64_value < arg->integer_value_min) {
                     gsr_log(GSR_LOG_LEVEL_ERROR, "%s argument is expected to be larger than %" PRIi64 ", got %" PRIi64, arg_name, arg->integer_value_min, arg->typed_value.i64_value);
                     usage();
-                    return false;
+                    return ARGS_PARSE_RESULT_ERROR;
                 }
 
                 if(arg->typed_value.i64_value > arg->integer_value_max) {
                     gsr_log(GSR_LOG_LEVEL_ERROR, "%s argument is expected to be less than %" PRIi64 ", got %" PRIi64, arg_name, arg->integer_value_max, arg->typed_value.i64_value);
                     usage();
-                    return false;
+                    return ARGS_PARSE_RESULT_ERROR;
                 }
                 break;
             }
@@ -645,19 +645,19 @@ bool args_parser_parse(args_parser *self, int argc, char **argv, const args_hand
                 if(sscanf(arg_value, "%lf", &arg->typed_value.d_value) != 1) {
                     gsr_log(GSR_LOG_LEVEL_ERROR, "%s argument \"%s\" is not an floating-point number", arg_name, arg_value);
                     usage();
-                    return false;
+                    return ARGS_PARSE_RESULT_ERROR;
                 }
 
                 if(arg->typed_value.d_value < arg->integer_value_min) {
                     gsr_log(GSR_LOG_LEVEL_ERROR, "%s argument is expected to be larger than %" PRIi64 ", got %lf", arg_name, arg->integer_value_min, arg->typed_value.d_value);
                     usage();
-                    return false;
+                    return ARGS_PARSE_RESULT_ERROR;
                 }
 
                 if(arg->typed_value.d_value > arg->integer_value_max) {
                     gsr_log(GSR_LOG_LEVEL_ERROR, "%s argument is expected to be less than %" PRIi64 ", got %lf", arg_name, arg->integer_value_max, arg->typed_value.d_value);
                     usage();
-                    return false;
+                    return ARGS_PARSE_RESULT_ERROR;
                 }
                 break;
             }
@@ -665,7 +665,7 @@ bool args_parser_parse(args_parser *self, int argc, char **argv, const args_hand
 
         if(!arg_append_value(arg, arg_value)) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "failed to append argument, out of memory");
-            return false;
+            return ARGS_PARSE_RESULT_ERROR;
         }
     }
 
@@ -674,11 +674,11 @@ bool args_parser_parse(args_parser *self, int argc, char **argv, const args_hand
         if(!arg->optional && arg->num_values == 0) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "missing argument '%s'", arg->key);
             usage();
-            return false;
+            return ARGS_PARSE_RESULT_ERROR;
         }
     }
 
-    return args_parser_set_values(self);
+    return args_parser_set_values(self) ? ARGS_PARSE_RESULT_OK : ARGS_PARSE_RESULT_ERROR;
 }
 
 void args_parser_deinit(args_parser *self) {

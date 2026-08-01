@@ -43,6 +43,8 @@ src = [
     'src/recorder/recording_clock.c',
     'src/recorder/muxer.c',
     'src/recorder/replay_save.c',
+    'src/recorder/screenshot.c',
+    'src/cli/commands.c',
     'src/egl.c',
     'src/cuda.c',
     'src/window_texture.c',

@@ -10,6 +10,8 @@ extern "C" {
 #include "../include/recorder/audio_capture.h"
 #include "../include/recorder/muxer.h"
 #include "../include/recorder/replay_save.h"
+#include "../include/recorder/screenshot.h"
+#include "../include/cli/commands.h"
 #include "../include/recorder/error.h"
 #include "../include/capture/nvfbc.h"
 #include "../include/capture/xcomposite.h"
@@ -136,539 +138,12 @@ static void save_replay_30_minutes_handler(int) {
     save_replay_seconds = 60*30;
 }
 
-static void run_recording_saved_script_async(const char *script_file, const char *video_file, const char *type) {
-    char script_file_full[PATH_MAX];
-    script_file_full[0] = '\0';
-    if(!realpath(script_file, script_file_full)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "script file not found: %s", script_file);
-        return;
-    }
-
-    const char *args[7];
-    const bool inside_flatpak = getenv("FLATPAK_ID") != NULL;
-
-    if(inside_flatpak) {
-        args[0] = "flatpak-spawn";
-        args[1] = "--host";
-        args[2] = "--";
-        args[3] = script_file_full;
-        args[4] = video_file;
-        args[5] = type;
-        args[6] = NULL;
-    } else {
-        args[0] = script_file_full;
-        args[1] = video_file;
-        args[2] = type;
-        args[3] = NULL;
-    }
-
-    pid_t pid = fork();
-    if(pid == -1) {
-        perror(script_file_full);
-        return;
-    } else if(pid == 0) { // child
-        setsid();
-        signal(SIGHUP, SIG_IGN);
-
-        pid_t second_child = fork();
-        if(second_child == 0) { // child
-            execvp(args[0], (char* const*)args);
-            perror(script_file_full);
-            _exit(127);
-        } else if(second_child != -1) { // parent
-            _exit(0);
-        }
-    } else { // parent
-        waitpid(pid, NULL, 0);
-    }
-}
-
 // TODO: Cleanup
-static void list_system_info(bool wayland) {
-    printf("display_server|%s\n", wayland ? "wayland" : "x11");
-    bool supports_app_audio = false;
-#ifdef GSR_APP_AUDIO
-    supports_app_audio = pulseaudio_server_is_pipewire();
-    if(supports_app_audio) {
-        gsr_pipewire_audio audio;
-        if(gsr_pipewire_audio_init(&audio))
-            gsr_pipewire_audio_deinit(&audio);
-        else
-            supports_app_audio = false;
-    }
-#endif
-    printf("supports_app_audio|%s\n", supports_app_audio ? "yes" : "no");
-}
-
-static void list_gpu_info(gsr_egl *egl) {
-    switch(egl->gpu_info.vendor) {
-        case GSR_GPU_VENDOR_AMD:
-            printf("vendor|amd\n");
-            break;
-        case GSR_GPU_VENDOR_INTEL:
-            printf("vendor|intel\n");
-            break;
-        case GSR_GPU_VENDOR_NVIDIA:
-            printf("vendor|nvidia\n");
-            break;
-        case GSR_GPU_VENDOR_BROADCOM:
-            printf("vendor|broadcom\n");
-            break;
-    }
-    printf("card_path|%s\n", egl->card_path);
-}
-
-static void list_supported_video_codecs(gsr_egl *egl, bool wayland) {
-    // Dont clean it up on purpose to increase shutdown speed
-    gsr_supported_video_codecs supported_video_codecs;
-    get_supported_video_codecs(egl, GSR_VIDEO_CODEC_H264, false, false, &supported_video_codecs);
-
-    gsr_supported_video_codecs supported_video_codecs_vulkan;
-    get_supported_video_codecs(egl, GSR_VIDEO_CODEC_H264_VULKAN, false, false, &supported_video_codecs_vulkan);
-
-    set_supported_video_codecs_ffmpeg(&supported_video_codecs, &supported_video_codecs_vulkan, egl->gpu_info.vendor);
-
-    if(supported_video_codecs.h264.supported)
-        puts("h264");
-    if(avcodec_find_encoder_by_name("libx264"))
-        puts("h264_software");
-    if(supported_video_codecs.hevc.supported)
-        puts("hevc");
-    if(supported_video_codecs.hevc_hdr.supported && wayland)
-        puts("hevc_hdr");
-    if(supported_video_codecs.hevc_10bit.supported)
-        puts("hevc_10bit");
-    if(supported_video_codecs.av1.supported)
-        puts("av1");
-    if(supported_video_codecs.av1_hdr.supported && wayland)
-        puts("av1_hdr");
-    if(supported_video_codecs.av1_10bit.supported)
-        puts("av1_10bit");
-    if(supported_video_codecs.vp8.supported)
-        puts("vp8");
-    if(supported_video_codecs.vp9.supported)
-        puts("vp9");
-    if(supported_video_codecs_vulkan.h264.supported)
-       puts("h264_vulkan");
-    if(supported_video_codecs_vulkan.hevc.supported)
-       puts("hevc_vulkan");
-    if(supported_video_codecs_vulkan.hevc_hdr.supported && wayland)
-        puts("hevc_hdr_vulkan");
-    if(supported_video_codecs_vulkan.hevc_10bit.supported)
-        puts("hevc_10bit_vulkan");
-    if(supported_video_codecs_vulkan.av1.supported)
-        puts("av1_vulkan");
-    if(supported_video_codecs_vulkan.av1_hdr.supported && wayland)
-        puts("av1_hdr_vulkan");
-    if(supported_video_codecs_vulkan.av1_10bit.supported)
-        puts("av1_10bit_vulkan");
-}
-
-typedef struct {
-    const gsr_window *window;
-    int num_monitors;
-} capture_options_callback;
-
-static void output_monitor_info(const gsr_monitor *monitor, void *userdata) {
-    capture_options_callback *options = (capture_options_callback*)userdata;
-    if(gsr_window_get_display_server(options->window) == GSR_DISPLAY_SERVER_WAYLAND) {
-        vec2i monitor_size = monitor->size;
-        gsr_monitor_rotation monitor_rotation = GSR_MONITOR_ROT_0;
-        vec2i monitor_position = {0, 0};
-        drm_monitor_get_display_server_data(options->window, monitor, &monitor_rotation, &monitor_position);
-        if(monitor_rotation == GSR_MONITOR_ROT_90 || monitor_rotation == GSR_MONITOR_ROT_270)
-            std::swap(monitor_size.x, monitor_size.y);
-        printf("%.*s|%dx%d\n", monitor->name_len, monitor->name, monitor_size.x, monitor_size.y);
-    } else {
-        printf("%.*s|%dx%d\n", monitor->name_len, monitor->name, monitor->size.x, monitor->size.y);
-    }
-    ++options->num_monitors;
-}
-
-static void camera_query_callback(const char *path, const gsr_capture_v4l2_supported_setup *setup, void *userdata) {
-    (void)userdata;
-    printf("%s|%ux%u@%uhz|%s\n", path, setup->resolution.width, setup->resolution.height, gsr_capture_v4l2_framerate_to_number(setup->framerate), gsr_capture_v4l2_pixfmt_to_string(setup->pixfmt));
-}
-
 // Returns the number of monitors found
-static int list_monitors(const gsr_window *window, const char *card_path) {
-    capture_options_callback options;
-    options.window = window;
-    options.num_monitors = 0;
-
-    const bool is_x11 = gsr_window_get_display_server(window) == GSR_DISPLAY_SERVER_X11;
-    const gsr_connection_type connection_type = is_x11 ? GSR_CONNECTION_X11 : GSR_CONNECTION_DRM;
-    for_each_active_monitor_output(window, card_path, connection_type, output_monitor_info, &options);
-
-    return options.num_monitors;
-}
-
-static void list_supported_capture_options(const gsr_window *window, const char *card_path, bool do_list_monitors) {
-    const bool wayland = gsr_window_get_display_server(window) == GSR_DISPLAY_SERVER_WAYLAND;
-    if(!wayland) {
-        puts("window");
-        puts("focused");
-    }
-
-    int num_monitors = 0;
-    if(do_list_monitors)
-        num_monitors = list_monitors(window, card_path);
-
-    if(num_monitors > 0)
-        puts("region");
-
-    gsr_capture_v4l2_list_devices(camera_query_callback, NULL);
-
-#ifdef GSR_PORTAL
-    // Desktop portal capture on x11 doesn't seem to be hardware accelerated
-    if(!wayland)
-        return;
-
-    gsr_dbus dbus;
-    if(!gsr_dbus_init(&dbus, NULL))
-        return;
-
-    char *session_handle = NULL;
-    if(gsr_dbus_screencast_create_session(&dbus, &session_handle) == 0)
-        puts("portal");
-
-    gsr_dbus_deinit(&dbus);
-#endif
-}
-
-static void version_command(void *userdata) {
-    (void)userdata;
-    puts(GSR_VERSION);
-    fflush(stdout);
-    _exit(0);
-}
-
-static void info_command(void *userdata) {
-    (void)userdata;
-    gsr_windowing windowing;
-    const gsr_windowing_params windowing_params = {false, false, false};
-    if(gsr_windowing_init(&windowing, &windowing_params) != GSR_ERROR_OK)
-        _exit(1);
-    if(gsr_windowing_load_egl(&windowing, &windowing_params) != GSR_ERROR_OK)
-        _exit(22);
-    const bool wayland = gsr_windowing_is_wayland(&windowing);
-
-    av_log_set_level(AV_LOG_FATAL);
-
-    puts("section=system_info");
-    list_system_info(wayland);
-    if(windowing.egl.gpu_info.is_steam_deck)
-        puts("is_steam_deck|yes");
-    else
-        puts("is_steam_deck|no");
-    printf("gsr_version|%s\n", GSR_VERSION);
-    puts("section=gpu_info");
-    list_gpu_info(&windowing.egl);
-    puts("section=video_codecs");
-    list_supported_video_codecs(&windowing.egl, wayland);
-    puts("section=image_formats");
-    puts("jpeg");
-    puts("png");
-    puts("section=capture_options");
-    list_supported_capture_options(windowing.window, windowing.egl.card_path, windowing.card_path_found);
-
-    fflush(stdout);
-
-    // Not needed as this will just slow down shutdown
-    //gsr_egl_unload(&egl);
-    //gsr_window_destroy(&window);
-    //if(dpy)
-    //    XCloseDisplay(dpy);
-
-    _exit(0);
-}
-
-static void list_audio_devices_command(void *userdata) {
-    (void)userdata;
-    gsr_audio_devices audio_devices;
-    get_pulseaudio_inputs(&audio_devices);
-
-    if(audio_devices.default_output[0] != '\0')
-        puts("default_output|Default output");
-
-    if(audio_devices.default_input[0] != '\0')
-        puts("default_input|Default input");
-
-    for(size_t i = 0; i < audio_devices.num_items; ++i) {
-        printf("%s|%s\n", audio_devices.items[i].name, audio_devices.items[i].description);
-    }
-
-    gsr_audio_devices_deinit(&audio_devices);
-    fflush(stdout);
-    _exit(0);
-}
-
-static bool app_audio_query_callback(const char *app_name, void*) {
-    puts(app_name);
-    return true;
-}
-
-static void list_application_audio_command(void *userdata) {
-    (void)userdata;
-#ifdef GSR_APP_AUDIO
-    if(pulseaudio_server_is_pipewire()) {
-        gsr_pipewire_audio audio;
-        if(gsr_pipewire_audio_init(&audio)) {
-            gsr_pipewire_audio_for_each_app(&audio, app_audio_query_callback, NULL);
-            gsr_pipewire_audio_deinit(&audio);
-        }
-    }
-#endif
-
-    fflush(stdout);
-    _exit(0);
-}
-
-static void list_v4l2_devices(void *userdata) {
-    (void)userdata;
-    gsr_capture_v4l2_list_devices(camera_query_callback, NULL);
-
-    fflush(stdout);
-    _exit(0);
-}
-
 // |card_path| can be NULL. If not NULL then |vendor| has to be valid
-static void list_capture_options_command(const char *card_path, void *userdata) {
-    (void)userdata;
-    gsr_windowing windowing;
-    const gsr_windowing_params windowing_params = {false, false, false};
-    if(gsr_windowing_init(&windowing, &windowing_params) != GSR_ERROR_OK)
-        _exit(1);
-    if(!card_path && gsr_windowing_load_egl(&windowing, &windowing_params) != GSR_ERROR_OK)
-        _exit(22);
-
-    if(card_path)
-        list_supported_capture_options(windowing.window, card_path, true);
-    else
-        list_supported_capture_options(windowing.window, windowing.egl.card_path, windowing.card_path_found);
-
-    fflush(stdout);
-
-    // Not needed as this will just slow down shutdown
-    //gsr_egl_unload(&egl);
-    //gsr_window_destroy(&window);
-    //if(dpy)
-    //    XCloseDisplay(dpy);
-
-    _exit(0);
-}
-
-static void list_monitors_command(void *userdata) {
-    (void)userdata;
-    gsr_windowing windowing;
-    const gsr_windowing_params windowing_params = {false, false, false};
-    if(gsr_windowing_init(&windowing, &windowing_params) != GSR_ERROR_OK)
-        _exit(1);
-    if(gsr_windowing_load_egl(&windowing, &windowing_params) != GSR_ERROR_OK)
-        _exit(22);
-
-    if(windowing.card_path_found)
-        list_monitors(windowing.window, windowing.egl.card_path);
-
-    fflush(stdout);
-
-    // Not needed as this will just slow down shutdown
-    //gsr_egl_unload(&egl);
-    //gsr_window_destroy(&window);
-    //if(dpy)
-    //    XCloseDisplay(dpy);
-
-    _exit(0);
-}
-
 static gsr_capture_deps capture_deps;
 
-static gsr_color_range image_format_to_color_range(gsr_image_format image_format, int image_quality) {
-    switch(image_format) {
-        case GSR_IMAGE_FORMAT_JPEG: return image_quality >= JPEG_YUV444_QUALITY_THRESHOLD ? GSR_COLOR_RANGE_FULL : GSR_COLOR_RANGE_LIMITED;
-        case GSR_IMAGE_FORMAT_PNG:  return GSR_COLOR_RANGE_FULL;
-    }
-    assert(false);
-    return GSR_COLOR_RANGE_FULL;
-}
-
-static int video_quality_to_image_quality_value(gsr_video_quality video_quality) {
-    switch(video_quality) {
-        case GSR_VIDEO_QUALITY_MEDIUM:
-            return 75;
-        case GSR_VIDEO_QUALITY_HIGH:
-            return 85;
-        case GSR_VIDEO_QUALITY_VERY_HIGH:
-            return JPEG_YUV444_QUALITY_THRESHOLD; // Quality above 90 makes the jpeg image encoder (stb_image_writer) use yuv444 instead of yuv420, which greatly improves small colored text quality on dark background
-        case GSR_VIDEO_QUALITY_ULTRA:
-            return 97;
-    }
-    assert(false);
-    return 90;
-}
-
-static void load_plugins(gsr_plugins *plugins, args_parser &arg_parser, gsr_egl *egl, vec2i video_size) {
-    const Arg *plugin_arg = args_parser_get_arg(&arg_parser, "-p");
-    assert(plugin_arg);
-
-    if(plugin_arg->num_values > 0) {
-        const gsr_color_depth color_depth = video_codec_to_bit_depth(arg_parser.settings.video_codec);
-        assert(color_depth == GSR_COLOR_DEPTH_8_BITS || color_depth == GSR_COLOR_DEPTH_10_BITS);
-
-        const gsr_plugin_init_params plugin_init_params = {
-            (unsigned int)video_size.x,
-            (unsigned int)video_size.y,
-            (unsigned int)arg_parser.settings.fps,
-            color_depth == GSR_COLOR_DEPTH_8_BITS ? GSR_PLUGIN_COLOR_DEPTH_8_BITS : GSR_PLUGIN_COLOR_DEPTH_10_BITS,
-            egl->context_type == GSR_GL_CONTEXT_TYPE_GLX ? GSR_PLUGIN_GRAPHICS_API_GLX : GSR_PLUGIN_GRAPHICS_API_EGL_ES,
-        };
-
-        if(!gsr_plugins_init(plugins, plugin_init_params, egl))
-            _exit(1);
-
-        for(int i = 0; i < plugin_arg->num_values; ++i) {
-            if(!gsr_plugins_load_plugin(plugins, plugin_arg->values[i]))
-                _exit(1);
-        }
-    }
-}
-
 // TODO: 10-bit and hdr.
-static void capture_image_to_file(args_parser &arg_parser, gsr_egl *egl, gsr_window *window, gsr_image_format image_format, gsr_capture_sources *capture_sources) {
-    const int image_quality = video_quality_to_image_quality_value(arg_parser.settings.video_quality);
-    const gsr_color_range color_range = image_format_to_color_range(image_format, image_quality);
-    arg_parser.settings.fps = 60; // We want to capture an image as soon as possible
-
-    vec2i video_size = {0, 0};
-    gsr_video_sources video_sources_data;
-    const int video_sources_result = gsr_video_sources_create(&video_sources_data, &arg_parser.settings, egl, &capture_deps, true, capture_sources, &video_size);
-    if(video_sources_result != GSR_ERROR_OK)
-        _exit(gsr_error_to_exit_code(video_sources_result));
-    gsr_video_sources *video_sources = &video_sources_data;
-    gsr_video_sources_update_with_real_video_size(video_sources, video_size);
-
-    const Arg *plugin_arg = args_parser_get_arg(&arg_parser, "-p");
-    assert(plugin_arg);
-
-    gsr_plugins plugins;
-    memset(&plugins, 0, sizeof(plugins));
-
-    if(plugin_arg->num_values > 0)
-        load_plugins(&plugins, arg_parser, egl, video_size);
-
-    gsr_image_writer image_writer;
-    if(!gsr_image_writer_init_opengl(&image_writer, egl, video_size.x, video_size.y)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "capture_image_to_file: gsr_image_write_gl_init failed");
-        _exit(1);
-    }
-
-    gsr_color_conversion_params color_conversion_params;
-    memset(&color_conversion_params, 0, sizeof(color_conversion_params));
-    color_conversion_params.color_range = color_range;
-    color_conversion_params.egl = egl;
-    color_conversion_params.load_external_image_shader = gsr_video_sources_uses_external_image(video_sources);
-
-    color_conversion_params.destination_textures[0] = image_writer.texture;
-    color_conversion_params.destination_textures_size[0] = video_size;
-    color_conversion_params.num_destination_textures = 1;
-    color_conversion_params.destination_color = GSR_DESTINATION_COLOR_RGB;
-
-    gsr_color_conversion color_conversion;
-    if(gsr_color_conversion_init(&color_conversion, &color_conversion_params) != 0) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "capture_image_to_file: failed to create color conversion");
-        _exit(1);
-    }
-
-    gsr_color_conversion_clear(&color_conversion);
-
-    gsr_color_conversion *output_color_conversion = plugins.num_plugins > 0 ? &plugins.color_conversion : &color_conversion;
-
-    bool should_stop_error = false;
-    egl->glClear(0);
-
-    while(running) {
-        while(gsr_window_process_event(window)) {
-            if(capture_deps.x11_cursor_display && arg_parser.settings.record_cursor)
-                gsr_cursor_on_event(&capture_deps.x11_cursor, gsr_window_get_event_data(window));
-
-            for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
-        gsr_video_source &video_source = video_sources->items[video_source_index];
-                gsr_capture_on_event(video_source.capture, egl);
-            }
-        }
-
-        if(capture_deps.x11_cursor_display && arg_parser.settings.record_cursor)
-            gsr_cursor_tick(&capture_deps.x11_cursor, DefaultRootWindow(capture_deps.x11_cursor_display));
-
-        gsr_capture_deps_cleanup_kms_fds(&capture_deps);
-
-        gsr_capture_deps_update_kms(&capture_deps);
-
-        should_stop_error = false;
-        for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
-        gsr_video_source &video_source = video_sources->items[video_source_index];
-            gsr_capture_tick(video_source.capture);
-            if(gsr_capture_should_stop(video_source.capture, &should_stop_error)) {
-                running = 0;
-                break;
-            }
-        }
-
-        for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
-        gsr_video_source &video_source = video_sources->items[video_source_index];
-            if(video_source.capture->pre_capture)
-                video_source.capture->pre_capture(video_source.capture, &video_source.metadata, output_color_conversion);
-        }
-
-        if(output_color_conversion->schedule_clear) {
-            output_color_conversion->schedule_clear = false;
-            gsr_color_conversion_clear(output_color_conversion);
-        }
-
-        bool all_sources_captured = true;
-        for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
-        gsr_video_source &video_source = video_sources->items[video_source_index];
-            // It can fail, for example when capturing portal and the target is a monitor that hasn't been updated.
-            // This can also happen for example if the system suspends and the monitor to capture's framebuffer is gone, or if the target window disappeared.
-            if(gsr_capture_capture(video_source.capture, &video_source.metadata, output_color_conversion) != 0)
-                all_sources_captured = false;
-        }
-
-        gsr_capture_deps_cleanup_kms_fds(&capture_deps);
-
-        if(all_sources_captured)
-            break;
-
-        if(running)
-            usleep(30 * 1000); // 30 ms
-    }
-
-    if(plugins.num_plugins > 0) {
-        gsr_plugins_draw(&plugins);
-        gsr_color_conversion_draw(&color_conversion, plugins.texture,
-            {0, 0}, video_size,
-            {0, 0}, video_size,
-            video_size, GSR_ROT_0, GSR_FLIP_NONE, GSR_SOURCE_COLOR_RGB, false);
-    }
-
-    gsr_egl_swap_buffers(egl);
-
-    if(!should_stop_error) {
-        if(!gsr_image_writer_write_to_file(&image_writer, arg_parser.settings.filename, image_format, image_quality)) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "capture_image_to_file: failed to write opengl texture to image output file %s", arg_parser.settings.filename);
-            _exit(1);
-        }
-
-        if(arg_parser.settings.recording_saved_script)
-            run_recording_saved_script_async(arg_parser.settings.recording_saved_script, arg_parser.settings.filename, "screenshot");
-    }
-
-    gsr_plugins_deinit(&plugins);
-    gsr_image_writer_deinit(&image_writer);
-    gsr_video_sources_deinit(video_sources);
-    _exit(should_stop_error ? 3 : 0);
-}
-
 // Manually check if the audio inputs we give exist. This is only needed for pipewire, not pulseaudio.
 // Pipewire instead DEFAULTS TO THE DEFAULT AUDIO INPUT. THAT'S RETARDED.
 // OH, YOU MISSPELLED THE AUDIO INPUT? FUCK YOU
@@ -677,16 +152,10 @@ static void capture_image_to_file(args_parser &arg_parser, gsr_egl *egl, gsr_win
 #ifdef GSR_APP_AUDIO
 #endif
 
-static bool get_image_format_from_filename(const char *filename, gsr_image_format *image_format) {
-    if(gsr_string_ends_with(filename, ".jpg") || gsr_string_ends_with(filename, ".jpeg")) {
-        *image_format = GSR_IMAGE_FORMAT_JPEG;
-        return true;
-    } else if(gsr_string_ends_with(filename, ".png")) {
-        *image_format = GSR_IMAGE_FORMAT_PNG;
-        return true;
-    } else {
-        return false;
-    }
+static void screenshot_saved_callback(const char *filepath, void *userdata) {
+    const char *recording_saved_script = (const char*)userdata;
+    if(recording_saved_script)
+        run_recording_saved_script_async(recording_saved_script, filepath, "screenshot");
 }
 
 static void set_display_server_environment_variables() {
@@ -835,8 +304,15 @@ int main(int argc, char **argv) {
     arg_handlers.list_monitors = list_monitors_command;
 
     args_parser arg_parser;
-    if(!args_parser_parse(&arg_parser, argc, argv, &arg_handlers, NULL))
-        _exit(1);
+    int command_exit_code = 0;
+    switch(args_parser_parse(&arg_parser, argc, argv, &arg_handlers, NULL, &command_exit_code)) {
+        case ARGS_PARSE_RESULT_ERROR:
+            _exit(1);
+        case ARGS_PARSE_RESULT_COMMAND_HANDLED:
+            _exit(command_exit_code);
+        case ARGS_PARSE_RESULT_OK:
+            break;
+    }
 
     if(!arg_parser.settings.low_power) {
         // Forces low latency encoding mode. Use this environment variable until vaapi supports setting this as a parameter.
@@ -966,8 +442,27 @@ int main(int argc, char **argv) {
             _exit(1);
         }
 
-        capture_image_to_file(arg_parser, &egl, window, image_format, capture_sources);
-        _exit(0);
+        const Arg *screenshot_plugin_arg = args_parser_get_arg(&arg_parser, "-p");
+        assert(screenshot_plugin_arg);
+
+        arg_parser.settings.fps = 60; // We want to capture an image as soon as possible
+
+        gsr_screenshot_params screenshot_params;
+        memset(&screenshot_params, 0, sizeof(screenshot_params));
+        screenshot_params.settings = &arg_parser.settings;
+        screenshot_params.egl = &egl;
+        screenshot_params.window = window;
+        screenshot_params.capture_deps = &capture_deps;
+        screenshot_params.capture_sources = capture_sources;
+        screenshot_params.image_format = image_format;
+        screenshot_params.plugin_filepaths = screenshot_plugin_arg->values;
+        screenshot_params.num_plugin_filepaths = screenshot_plugin_arg->num_values;
+        screenshot_params.running = &running;
+        screenshot_params.screenshot_saved = screenshot_saved_callback;
+        screenshot_params.userdata = (void*)arg_parser.settings.recording_saved_script;
+
+        const int screenshot_result = gsr_screenshot_take(&screenshot_params);
+        _exit(gsr_error_to_exit_code(screenshot_result));
     }
 
     AVFormatContext *av_format_context;
@@ -1088,8 +583,8 @@ int main(int argc, char **argv) {
     gsr_plugins plugins;
     memset(&plugins, 0, sizeof(plugins));
 
-    if(plugin_arg->num_values > 0)
-        load_plugins(&plugins, arg_parser, &egl, video_size);
+    if(gsr_load_plugins(&plugins, plugin_arg->values, plugin_arg->num_values, &arg_parser.settings, &egl, video_size) != GSR_ERROR_OK)
+        _exit(1);
 
     gsr_color_conversion_params color_conversion_params;
     memset(&color_conversion_params, 0, sizeof(color_conversion_params));
