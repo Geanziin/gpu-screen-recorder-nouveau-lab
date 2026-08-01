@@ -500,7 +500,7 @@ static bool recorder_tick_video_sources(gsr_recorder *self) {
     return damaged;
 }
 
-static void recorder_update_fps_counters(gsr_recorder *self, bool damaged) {
+static void recorder_update_fps_counters(gsr_recorder *self) {
     ++self->fps_counter;
     const double time_now = clock_get_monotonic_seconds();
     //const double frame_timer_elapsed = time_now - frame_timer_start;
@@ -805,7 +805,7 @@ int gsr_recorder_run(gsr_recorder *self) {
     while(self->running) {
         recorder_process_events(self);
         const bool damaged = recorder_tick_video_sources(self);
-        recorder_update_fps_counters(self, damaged);
+        recorder_update_fps_counters(self);
         recorder_capture_and_encode_frame(self, damaged);
         recorder_apply_pause_toggle(self);
         recorder_apply_replay_recording_toggle(self);
