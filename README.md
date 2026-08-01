@@ -140,8 +140,9 @@ To stop recording send SIGINT to gpu screen recorder. You can do this by running
 To pause/unpause recording send SIGUSR2 to gpu screen recorder. You can do this by running `pkill -SIGUSR2 -f "^gpu-screen-recorder"`. This is only applicable and useful when recording (not streaming nor replay).\
 There are more signals to control GPU Screen Recorder. Run `gpu-screen-recorder --help` to list them all (under `NOTES` section).\
 GPU Screen Recorder can also be controlled with json messages over a unix domain socket by launching it with the `-ipc` option, for example `-ipc "$XDG_RUNTIME_DIR/gsr.sock"`.
-This gives the same control as the signals, except that a replay can be saved with an arbitrary number of seconds, for example `echo '{"id":1,"name":"save-replay","data":30}' | socat - "UNIX-CONNECT:$XDG_RUNTIME_DIR/gsr.sock"`.
-See the `IPC` section in the man page (`man gpu-screen-recorder`) for the full protocol.
+This gives the same control as the signals, except that a replay can be saved with an arbitrary number of seconds and that you get a reply that says if the command succeeded.\
+The `gsr-cli` program sends these commands, for example `gsr-cli -ipc "$XDG_RUNTIME_DIR/gsr.sock" save-replay 30`. It can also check if GPU Screen Recorder is running with `gsr-cli -ipc "$XDG_RUNTIME_DIR/gsr.sock" status`.\
+See `man gsr-cli` for all commands and the `IPC` section in `man gpu-screen-recorder` for the protocol, if you want to talk to the socket directly instead of using `gsr-cli`.
 ## Simple way to run replay without gui
 Run the script `scripts/start-replay.sh` to start replay and then `scripts/save-replay.sh` to save a replay and `scripts/stop-replay.sh` to stop the replay. The videos are saved to `$HOME/Videos`.
 You can use these scripts to start replay at system startup if you add `scripts/start-replay.sh` to startup (this can be done differently depending on your desktop environment / window manager) and then go into

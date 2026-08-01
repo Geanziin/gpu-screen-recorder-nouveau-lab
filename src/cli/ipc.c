@@ -1,13 +1,10 @@
 #include "../../include/cli/ipc.h"
 #include "../../include/recorder/error.h"
 #include "../../include/recorder/replay_save.h"
+#include "../../include/json.h"
 #include "../../include/log.h"
 
-#define SJ_IMPL
-#include "../../external/sj.h"
-
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -32,63 +29,6 @@ typedef struct {
     sj_Value data;
     bool has_data;
 } gsr_ipc_request;
-
-static void json_escape_string(char *buffer, size_t buffer_size, const char *str) {
-    char escape_buffer[8];
-    size_t offset = 0;
-    buffer[0] = '\0';
-
-    for(size_t i = 0; str[i] != '\0'; ++i) {
-        const unsigned char c = str[i];
-        const char *escaped = escape_buffer;
-        switch(c) {
-            case '"':  escaped = "\\\""; break;
-            case '\\': escaped = "\\\\"; break;
-            case '\n': escaped = "\\n";  break;
-            case '\r': escaped = "\\r";  break;
-            case '\t': escaped = "\\t";  break;
-            default: {
-                if(c < 0x20)
-                    snprintf(escape_buffer, sizeof(escape_buffer), "\\u%04x", c);
-                else
-                    snprintf(escape_buffer, sizeof(escape_buffer), "%c", c);
-                break;
-            }
-        }
-
-        const size_t escaped_size = strlen(escaped);
-        if(offset + escaped_size >= buffer_size)
-            break;
-
-        memcpy(buffer + offset, escaped, escaped_size);
-        offset += escaped_size;
-        buffer[offset] = '\0';
-    }
-}
-
-static bool json_string_equals(const sj_Value *value, const char *str) {
-    const size_t value_size = value->end - value->start;
-    return strlen(str) == value_size && memcmp(value->start, str, value_size) == 0;
-}
-
-static bool json_number_to_int64(const sj_Value *value, int64_t *result) {
-    char buffer[32];
-    const size_t value_size = value->end - value->start;
-    if(value_size == 0 || value_size >= sizeof(buffer))
-        return false;
-
-    memcpy(buffer, value->start, value_size);
-    buffer[value_size] = '\0';
-
-    char *number_end = NULL;
-    errno = 0;
-    const long long parsed_value = strtoll(buffer, &number_end, 10);
-    if(errno != 0 || number_end != buffer + value_size)
-        return false;
-
-    *result = parsed_value;
-    return true;
-}
 
 static bool string_is_only_whitespace(const char *str, size_t size) {
     for(size_t i = 0; i < size; ++i) {
@@ -139,7 +79,7 @@ static bool ipc_client_send_reply(gsr_ipc_client *client, int64_t id, bool succe
         reply_size = snprintf(reply, sizeof(reply), "{\"id\":%" PRIi64 ",\"result\":\"ok\"}\n", id);
     } else {
         char escaped_error_message[GSR_IPC_MAX_ESCAPED_ERROR_MESSAGE_SIZE];
-        json_escape_string(escaped_error_message, sizeof(escaped_error_message), error_message ? error_message : "");
+        gsr_json_escape_string(escaped_error_message, sizeof(escaped_error_message), error_message ? error_message : "");
         reply_size = snprintf(reply, sizeof(reply), "{\"id\":%" PRIi64 ",\"result\":\"error\",\"data\":\"%s\"}\n", id, escaped_error_message);
     }
 
@@ -169,13 +109,13 @@ static bool ipc_request_parse(char *data, size_t size, gsr_ipc_request *request,
     sj_Value key;
     sj_Value value;
     while(sj_iter_object(&reader, root, &key, &value)) {
-        if(json_string_equals(&key, "id")) {
+        if(gsr_json_string_equals(&key, "id")) {
             id_value = value;
             has_id = true;
-        } else if(json_string_equals(&key, "name")) {
+        } else if(gsr_json_string_equals(&key, "name")) {
             name_value = value;
             has_name = true;
-        } else if(json_string_equals(&key, "data")) {
+        } else if(gsr_json_string_equals(&key, "data")) {
             request->data = value;
             request->has_data = true;
         }
@@ -191,7 +131,7 @@ static bool ipc_request_parse(char *data, size_t size, gsr_ipc_request *request,
         return false;
     }
 
-    if(id_value.type != SJ_NUMBER || !json_number_to_int64(&id_value, &request->id)) {
+    if(!gsr_json_number_to_int64(&id_value, &request->id)) {
         snprintf(error_message, error_message_size, "expected 'id' to be an integer");
         return false;
     }
@@ -216,7 +156,7 @@ static bool ipc_request_get_save_replay_seconds(const gsr_ipc_request *request, 
         return true;
 
     int64_t data_seconds = 0;
-    if(request->data.type != SJ_NUMBER || !json_number_to_int64(&request->data, &data_seconds) || data_seconds <= 0 || data_seconds > INT_MAX) {
+    if(!gsr_json_number_to_int64(&request->data, &data_seconds) || data_seconds <= 0 || data_seconds > INT_MAX) {
         snprintf(error_message, error_message_size, "expected 'data' to be the number of seconds to save, which has to be larger than 0");
         return false;
     }

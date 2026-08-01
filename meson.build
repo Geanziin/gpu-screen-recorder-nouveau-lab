@@ -31,6 +31,7 @@ src = [
     'src/replay_buffer/replay_buffer_ram.c',
     'src/replay_buffer/replay_buffer_disk.c',
     'src/log.c',
+    'src/json.c',
     'src/ffmpeg_utils.c',
     'src/recorder/audio_codec.c',
     'src/recorder/video_codec.c',
@@ -131,10 +132,11 @@ endif
 add_project_arguments('-DGSR_VERSION="' + meson.project_version() + '"', language: 'c')
 
 executable('gsr-kms-server', 'kms/server/kms_server.c', dependencies : dependency('libdrm'), c_args : '-fstack-protector-all', install : true)
+executable('gsr-cli', ['src/gsr_cli/main.c', 'src/json.c', 'src/log.c'], install : true)
 executable('gpu-screen-recorder', src, dependencies : dep, install : true)
 
 install_headers('plugin/plugin.h', install_dir : 'include/gsr')
-install_man('gpu-screen-recorder.1', 'gsr-kms-server.1')
+install_man('gpu-screen-recorder.1', 'gsr-cli.1', 'gsr-kms-server.1')
 install_subdir('scripts', install_dir: 'share/gpu-screen-recorder')
 
 if get_option('systemd') == true

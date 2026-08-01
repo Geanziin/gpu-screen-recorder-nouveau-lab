@@ -476,6 +476,10 @@ option is used GPU Screen Recorder also listens for commands on a unix domain so
 except that a replay can be saved with an arbitrary number of seconds. The socket can only be used by the user that
 started GPU Screen Recorder and it's removed when GPU Screen Recorder exits.
 .PP
+.BR gsr\-cli (1)
+is a program that sends these commands and reports the reply, so the protocol below only has to be
+implemented by programs that want to talk to the socket directly.
+.PP
 Requests and replies are json objects terminated by a newline. Every request is replied to.
 A request has these fields:
 .TP
@@ -687,6 +691,9 @@ The bug may have been previously reported or may not be related to gpu-screen-r
 .SH COPYRIGHT
 Copyright © dec05eba. Licensed under GPL-3.0-only.
 .SH SEE ALSO
+.BR gsr\-cli (1),
+.BR gsr\-kms\-server (1)
+.PP
 .UR https://git.dec05eba.com/gpu-screen-recorder
 Project homepage
 .UE
