@@ -36,6 +36,8 @@ src = [
     'src/recorder/video_codec.c',
     'src/recorder/codec_select.c',
     'src/recorder/windowing.c',
+    'src/recorder/capture_source.c',
+    'src/recorder/capture_setup.c',
     'src/egl.c',
     'src/cuda.c',
     'src/window_texture.c',

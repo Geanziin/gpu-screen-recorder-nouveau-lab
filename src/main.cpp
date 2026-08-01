@@ -4,6 +4,8 @@ extern "C" {
 #include "../include/recorder/video_codec.h"
 #include "../include/recorder/codec_select.h"
 #include "../include/recorder/windowing.h"
+#include "../include/recorder/capture_source.h"
+#include "../include/recorder/capture_setup.h"
 #include "../include/recorder/error.h"
 #include "../include/capture/nvfbc.h"
 #include "../include/capture/xcomposite.h"
@@ -98,59 +100,6 @@ struct MergedAudioInputs {
 // TODO: Remove LIBAVUTIL_VERSION_MAJOR checks in the future when ubuntu, pop os LTS etc update ffmpeg to >= 5.0
 
 static const int VIDEO_STREAM_INDEX = 0;
-
-typedef struct {
-    const gsr_window *window;
-} MonitorOutputCallbackUserdata;
-
-static void monitor_output_callback_print(const gsr_monitor *monitor, void *userdata) {
-    const MonitorOutputCallbackUserdata *options = (MonitorOutputCallbackUserdata*)userdata;
-    vec2i monitor_position = monitor->pos;
-    vec2i monitor_size = monitor->size;
-    if(gsr_window_get_display_server(options->window) == GSR_DISPLAY_SERVER_WAYLAND) {
-        gsr_monitor_rotation monitor_rotation = GSR_MONITOR_ROT_0;
-        drm_monitor_get_display_server_data(options->window, monitor, &monitor_rotation, &monitor_position);
-        if(monitor_rotation == GSR_MONITOR_ROT_90 || monitor_rotation == GSR_MONITOR_ROT_270)
-            std::swap(monitor_size.x, monitor_size.y);
-    }
-    fprintf(stderr, "  \"%.*s\"    (%dx%d+%d+%d)\n", monitor->name_len, monitor->name, monitor_size.x, monitor_size.y, monitor_position.x, monitor_position.y);
-}
-
-typedef struct {
-    char *output_name;
-} FirstOutputCallback;
-
-static void get_first_output_callback(const gsr_monitor *monitor, void *userdata) {
-    FirstOutputCallback *data = (FirstOutputCallback*)userdata;
-    if(!data->output_name)
-        data->output_name = strdup(monitor->name);
-}
-
-typedef struct {
-    gsr_window *window;
-    vec2i position;
-    char *output_name;
-    vec2i monitor_pos;
-    vec2i monitor_size;
-    double monitor_scale_inverted;
-} MonitorByPositionCallback;
-
-static void get_monitor_by_position_callback(const gsr_monitor *monitor, void *userdata) {
-    MonitorByPositionCallback *data = (MonitorByPositionCallback*)userdata;
-
-    const vec2i monitor_position = monitor->logical_pos;
-    const vec2i monitor_size = monitor->size;
-    const vec2i monitor_logical_size = monitor->logical_size;
-
-    if(!data->output_name && data->position.x >= monitor_position.x && data->position.x <= monitor_position.x + monitor_logical_size.x
-        && data->position.y >= monitor_position.y && data->position.y <= monitor_position.y + monitor_logical_size.y)
-    {
-        data->output_name = strdup(monitor->name);
-        data->monitor_pos = monitor_position;
-        data->monitor_size = monitor_size;
-        data->monitor_scale_inverted = (double)monitor_size.x / (double)monitor_logical_size.x;
-    }
-}
 
 /* AV1/VP9 use the 0-255 qindex quantizer scale and VP8 uses 0-127. Unlike h264 qp the quantizer step size
    is not exponential in qindex, so the mapping to an equivalent h264 qp is not linear in the quantizer range.
@@ -363,41 +312,7 @@ struct RecordingStartResult {
     std::vector<RecordingStartAudio> audio_inputs;
 };
 
-typedef enum {
-    VVEC2I_TYPE_PIXELS,
-    VVEC2I_TYPE_SCALAR
-} vvec2i_type;
-
-typedef struct {
-    int x, y;
-    vvec2i_type x_type;
-    vvec2i_type y_type;
-} vvec2i;
-
-struct CaptureSource {
-    std::string name;
-    CaptureSourceType type = GSR_CAPTURE_SOURCE_TYPE_WINDOW;
-    gsr_capture_alignment halign = GSR_CAPTURE_ALIGN_CENTER;
-    gsr_capture_alignment valign = GSR_CAPTURE_ALIGN_CENTER;
-    gsr_capture_v4l2_pixfmt v4l2_pixfmt = GSR_CAPTURE_V4L2_PIXFMT_AUTO;
-    uint32_t flip = GSR_FLIP_NONE;
-    vvec2i pos = {0, 0, VVEC2I_TYPE_PIXELS, VVEC2I_TYPE_PIXELS};
-    vvec2i size = {100, 100, VVEC2I_TYPE_SCALAR, VVEC2I_TYPE_SCALAR};
-    vec2i region_pos = {0, 0};
-    vec2i region_size = {0, 0};
-    bool region_set = false;
-    int64_t window_id = 0;
-    int camera_fps = 0;
-    vec2i camera_resolution = {0, 0};
-};
-
-struct VideoSource {
-    gsr_capture *capture;
-    gsr_capture_metadata metadata;
-    CaptureSource *capture_source;
-};
-
-static RecordingStartResult start_recording_create_streams(const char *filename, const args_parser &arg_parser, AVCodecContext *video_codec_context, const std::vector<AudioTrack> &audio_tracks, bool hdr, std::vector<VideoSource> &video_sources) {
+static RecordingStartResult start_recording_create_streams(const char *filename, const args_parser &arg_parser, AVCodecContext *video_codec_context, const std::vector<AudioTrack> &audio_tracks, bool hdr, gsr_video_sources *video_sources) {
     AVFormatContext *av_format_context;
     avformat_alloc_output_context2(&av_format_context, nullptr, arg_parser.settings.container_format, filename);
     set_format_context_options(av_format_context);
@@ -437,7 +352,8 @@ static RecordingStartResult start_recording_create_streams(const char *filename,
         return result;
     }
 
-    for(VideoSource &video_source : video_sources) {
+    for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
+        gsr_video_source &video_source = video_sources->items[video_source_index];
         if(hdr && add_hdr_metadata_to_video_stream(video_source.capture, video_stream))
             break;
     }
@@ -494,7 +410,7 @@ struct AudioPtsOffset {
     int stream_index = 0;
 };
 
-static bool save_replay_async(AVCodecContext *video_codec_context, int video_stream_index, const std::vector<AudioTrack> &audio_tracks, gsr_encoder *encoder, const args_parser &arg_parser, const std::string &file_extension, bool date_folders, bool hdr, std::vector<VideoSource> &video_sources, int current_save_replay_seconds) {
+static bool save_replay_async(AVCodecContext *video_codec_context, int video_stream_index, const std::vector<AudioTrack> &audio_tracks, gsr_encoder *encoder, const args_parser &arg_parser, const std::string &file_extension, bool date_folders, bool hdr, gsr_video_sources *video_sources, int current_save_replay_seconds) {
     if(save_replay_thread.valid())
         return true;
 
@@ -1103,262 +1019,7 @@ static void list_monitors_command(void *userdata) {
     _exit(0);
 }
 
-static std::string validate_monitor_get_valid(const gsr_egl *egl, const char* window) {
-    const bool is_x11 = gsr_window_get_display_server(egl->window) == GSR_DISPLAY_SERVER_X11;
-    const gsr_connection_type connection_type = is_x11 ? GSR_CONNECTION_X11 : GSR_CONNECTION_DRM;
-    const bool capture_use_drm = monitor_capture_use_drm(egl->window, egl->gpu_info.vendor);
-
-    std::string capture_source_result = window;
-    if(strcmp(capture_source_result.c_str(), "screen") == 0) {
-        FirstOutputCallback data;
-        data.output_name = NULL;
-        for_each_active_monitor_output(egl->window, egl->card_path, connection_type, get_first_output_callback, &data);
-
-        if(data.output_name) {
-            capture_source_result = data.output_name;
-            free(data.output_name);
-        } else {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "no usable output found");
-            _exit(51);
-        }
-    } else if(capture_use_drm || (strcmp(capture_source_result.c_str(), "screen-direct") != 0 && strcmp(capture_source_result.c_str(), "screen-direct-force") != 0)) {
-        gsr_monitor gmon;
-        if(!get_monitor_by_name(egl, connection_type, capture_source_result.c_str(), &gmon)) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "display \"%s\" not found, expected one of:", capture_source_result.c_str());
-            fprintf(stderr, "  \"screen\"\n");
-            if(!capture_use_drm)
-                fprintf(stderr, "  \"screen-direct\"\n");
-
-            MonitorOutputCallbackUserdata userdata;
-            userdata.window = egl->window;
-            for_each_active_monitor_output(egl->window, egl->card_path, connection_type, monitor_output_callback_print, &userdata);
-            _exit(51);
-        }
-    }
-    return capture_source_result;
-}
-
-static std::string get_monitor_by_region_center(const gsr_egl *egl, vec2i region_position, vec2i region_size, vec2i *monitor_pos, vec2i *monitor_size, double *monitor_scale_inverted) {
-    const bool is_x11 = gsr_window_get_display_server(egl->window) == GSR_DISPLAY_SERVER_X11;
-    const gsr_connection_type connection_type = is_x11 ? GSR_CONNECTION_X11 : GSR_CONNECTION_WAYLAND;
-
-    MonitorByPositionCallback data;
-    data.window = egl->window;
-    data.position = { region_position.x + region_size.x / 2, region_position.y + region_size.y / 2 };
-    data.output_name = NULL;
-    data.monitor_pos = {0, 0};
-    data.monitor_size = {0, 0};
-    data.monitor_scale_inverted = 1.0;
-    for_each_active_monitor_output(egl->window, egl->card_path, connection_type, get_monitor_by_position_callback, &data);
-
-    std::string result;
-    if(data.output_name) {
-        result = data.output_name;
-        free(data.output_name);
-    }
-    *monitor_pos = data.monitor_pos;
-    *monitor_size = data.monitor_size;
-    *monitor_scale_inverted = data.monitor_scale_inverted;
-    return result;
-}
-
-static gsr_kms_client kms_client;
-static bool kms_client_initialized = false;
-static gsr_kms_response kms_response;
-static gsr_kde_night_light *kde_night_light = nullptr;
-static bool kde_night_light_initialized = false;
-
-static gsr_cursor x11_cursor;
-static Display *x11_cursor_display = NULL;
-
-static gsr_capture* create_monitor_capture(const args_parser &arg_parser, gsr_egl *egl, const CaptureSource &capture_source, bool prefer_ximage) {
-    if(gsr_window_get_display_server(egl->window) == GSR_DISPLAY_SERVER_X11 && prefer_ximage) {
-        gsr_capture_ximage_params ximage_params;
-        memset(&ximage_params, 0, sizeof(ximage_params));
-        ximage_params.egl = egl;
-        ximage_params.cursor = &x11_cursor;
-        ximage_params.display_to_capture = capture_source.name.c_str();
-        ximage_params.record_cursor = arg_parser.settings.record_cursor;
-        ximage_params.output_resolution = arg_parser.settings.output_resolution;
-        ximage_params.region_size = capture_source.region_size;
-        ximage_params.region_position = capture_source.region_pos;
-        return gsr_capture_ximage_create(&ximage_params);
-    }
-
-    if(monitor_capture_use_drm(egl->window, egl->gpu_info.vendor)) {
-        if(!kms_client_initialized) {
-            kms_client_initialized = true;
-            const int kms_init_res = gsr_kms_client_init(&kms_client, egl->card_path);
-            if(kms_init_res != 0)
-                _exit(kms_init_res < 0 ? 1 : kms_init_res);
-        }
-
-        if(!kde_night_light_initialized && gsr_window_get_display_server(egl->window) == GSR_DISPLAY_SERVER_WAYLAND) {
-            kde_night_light_initialized = true;
-            kde_night_light = gsr_kde_night_light_create();
-        }
-
-        gsr_capture_kms_params kms_params;
-        memset(&kms_params, 0, sizeof(kms_params));
-        kms_params.egl = egl;
-        kms_params.x11_cursor = &x11_cursor;
-        kms_params.kms_response = &kms_response;
-        kms_params.kde_night_light = kde_night_light;
-        kms_params.display_to_capture = capture_source.name.c_str();
-        kms_params.record_cursor = arg_parser.settings.record_cursor;
-        kms_params.hdr = video_codec_is_hdr(arg_parser.settings.video_codec);
-        kms_params.fps = arg_parser.settings.fps;
-        kms_params.output_resolution = arg_parser.settings.output_resolution;
-        kms_params.region_size = capture_source.region_size;
-        kms_params.region_position = capture_source.region_pos;
-        return gsr_capture_kms_create(&kms_params);
-    } else {
-        const char *capture_source_real = capture_source.name.c_str();
-        const bool direct_capture = strcmp(capture_source.name.c_str(), "screen-direct") == 0 || strcmp(capture_source.name.c_str(), "screen-direct-force") == 0;
-        if(direct_capture) {
-            capture_source_real = "screen";
-            gsr_log(GSR_LOG_LEVEL_WARNING, "%s capture option is not recommended unless you use G-SYNC as Nvidia has driver issues that can cause your system or games to freeze/crash.", capture_source.name.c_str());
-        }
-
-        gsr_capture_nvfbc_params nvfbc_params;
-        memset(&nvfbc_params, 0, sizeof(nvfbc_params));
-        nvfbc_params.egl = egl;
-        nvfbc_params.display_to_capture = capture_source_real;
-        nvfbc_params.fps = arg_parser.settings.fps;
-        nvfbc_params.direct_capture = direct_capture;
-        nvfbc_params.record_cursor = arg_parser.settings.record_cursor;
-        nvfbc_params.output_resolution = arg_parser.settings.output_resolution;
-        nvfbc_params.region_size = capture_source.region_size;
-        nvfbc_params.region_position = capture_source.region_pos;
-        return gsr_capture_nvfbc_create(&nvfbc_params);
-    }
-}
-
-static void monitor_output_callback_print_region(const gsr_monitor *monitor, void *userdata) {
-    const vec2i monitor_position = monitor->logical_pos;
-    const vec2i monitor_size = monitor->logical_size;
-    fprintf(stderr, "  \"%.*s\"    (%dx%d+%d+%d)\n", monitor->name_len, monitor->name, monitor_size.x, monitor_size.y, monitor_position.x, monitor_position.y);
-}
-
-static std::string region_get_data(gsr_egl *egl, vec2i *region_size, vec2i *region_position) {
-    vec2i monitor_pos = {0, 0};
-    vec2i monitor_size = {0, 0};
-    double monitor_scale_inverted = 1.0;
-    std::string window = get_monitor_by_region_center(egl, *region_position, *region_size, &monitor_pos, &monitor_size, &monitor_scale_inverted);
-    if(window.empty()) {
-        const bool is_x11 = gsr_window_get_display_server(egl->window) == GSR_DISPLAY_SERVER_X11;
-        const gsr_connection_type connection_type = is_x11 ? GSR_CONNECTION_X11 : GSR_CONNECTION_WAYLAND;
-        gsr_log(GSR_LOG_LEVEL_ERROR, "the region %dx%d+%d+%d doesn't match any monitor. Available monitors and their regions:", region_size->x, region_size->y, region_position->x, region_position->y);
-
-        MonitorOutputCallbackUserdata userdata;
-        userdata.window = egl->window;
-        for_each_active_monitor_output(egl->window, egl->card_path, connection_type, monitor_output_callback_print_region, &userdata);
-        _exit(51);
-    }
-
-    // Capture whole monitor when region size is set to 0x0
-    if(region_size->x == 0 && region_size->y == 0) {
-        region_position->x = 0;
-        region_position->y = 0;
-    } else {
-        region_position->x -= monitor_pos.x;
-        region_position->y -= monitor_pos.y;
-        // Match drm plane coordinate space (1x scaling) to wayland coordinate space (which may have scaling set by user)
-        region_position->x *= monitor_scale_inverted;
-        region_position->y *= monitor_scale_inverted;
-
-        region_size->x *= monitor_scale_inverted;
-        region_size->y *= monitor_scale_inverted;
-    }
-    return window;
-}
-
-static gsr_capture* create_capture_impl(const args_parser &arg_parser, gsr_egl *egl, CaptureSource &capture_source, bool prefer_ximage) {
-    bool follow_focused = false;
-    const bool wayland = gsr_window_get_display_server(egl->window) == GSR_DISPLAY_SERVER_WAYLAND;
-
-    gsr_capture *capture = nullptr;
-    if(capture_source.type == GSR_CAPTURE_SOURCE_TYPE_FOCUSED_WINDOW) {
-        if(wayland) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "GPU Screen Recorder window capture only works in a pure X11 session. Xwayland is not supported. You can record a monitor instead on wayland");
-            _exit(2);
-        }
-
-        if(arg_parser.settings.output_resolution.x <= 0 || arg_parser.settings.output_resolution.y <= 0) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "invalid value for option -s '%dx%d' when using -w focused option. expected width and height to be greater than 0", arg_parser.settings.output_resolution.x, arg_parser.settings.output_resolution.y);
-            args_parser_print_usage();
-            _exit(1);
-        }
-
-        follow_focused = true;
-    } else if(capture_source.type == GSR_CAPTURE_SOURCE_TYPE_PORTAL) {
-#ifdef GSR_PORTAL
-        // Desktop portal capture on x11 doesn't seem to be hardware accelerated
-        if(!wayland) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "desktop portal capture is not supported on X11");
-            _exit(1);
-        }
-
-        gsr_capture_portal_params portal_params;
-        memset(&portal_params, 0, sizeof(portal_params));
-        portal_params.egl = egl;
-        portal_params.record_cursor = arg_parser.settings.record_cursor;
-        portal_params.restore_portal_session = arg_parser.settings.restore_portal_session;
-        portal_params.portal_session_token_filepath = arg_parser.settings.portal_session_token_filepath;
-        portal_params.output_resolution = arg_parser.settings.output_resolution;
-        capture = gsr_capture_portal_create(&portal_params);
-        if(!capture)
-            _exit(1);
-#else
-        gsr_log(GSR_LOG_LEVEL_ERROR, "option '-w portal' used but GPU Screen Recorder was compiled without desktop portal support. Please recompile GPU Screen recorder with the -Dportal=true option");
-        _exit(2);
-#endif
-    } else if(capture_source.type == GSR_CAPTURE_SOURCE_TYPE_REGION) {
-        capture_source.name = region_get_data(egl, &capture_source.region_size, &capture_source.region_pos);
-        capture = create_monitor_capture(arg_parser, egl, capture_source, prefer_ximage);
-        if(!capture)
-            _exit(1);
-    } else if(capture_source.type == GSR_CAPTURE_SOURCE_TYPE_MONITOR) {
-        capture_source.name = validate_monitor_get_valid(egl, capture_source.name.c_str());
-        capture = create_monitor_capture(arg_parser, egl, capture_source, prefer_ximage);
-        if(!capture)
-            _exit(1);
-    } else if(capture_source.type == GSR_CAPTURE_SOURCE_TYPE_V4L2) {
-        gsr_capture_v4l2_params v4l2_params;
-        memset(&v4l2_params, 0, sizeof(v4l2_params));
-        v4l2_params.egl = egl;
-        v4l2_params.output_resolution = arg_parser.settings.output_resolution;
-        v4l2_params.device_path = capture_source.name.c_str();
-        v4l2_params.pixfmt = capture_source.v4l2_pixfmt;
-        v4l2_params.camera_fps = capture_source.camera_fps;
-        v4l2_params.camera_resolution.width = capture_source.camera_resolution.x;
-        v4l2_params.camera_resolution.height = capture_source.camera_resolution.y;
-        capture = gsr_capture_v4l2_create(&v4l2_params);
-        if(!capture)
-            _exit(1);
-    } else {
-        if(wayland) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "GPU Screen Recorder window capture only works in a pure X11 session. Xwayland is not supported. You can record a monitor instead on wayland or use -w portal option which supports window capture if your wayland compositor supports window capture");
-            _exit(2);
-        }
-    }
-
-    if(!capture) {
-        gsr_capture_xcomposite_params xcomposite_params;
-        memset(&xcomposite_params, 0, sizeof(xcomposite_params));
-        xcomposite_params.egl = egl;
-        xcomposite_params.cursor = &x11_cursor;
-        xcomposite_params.window = capture_source.window_id;
-        xcomposite_params.follow_focused = follow_focused;
-        xcomposite_params.record_cursor = arg_parser.settings.record_cursor;
-        xcomposite_params.output_resolution = arg_parser.settings.output_resolution;
-        capture = gsr_capture_xcomposite_create(&xcomposite_params);
-        if(!capture)
-            _exit(1);
-    }
-
-    return capture;
-}
+static gsr_capture_deps capture_deps;
 
 static gsr_color_range image_format_to_color_range(gsr_image_format image_format, int image_quality) {
     switch(image_format) {
@@ -1382,115 +1043,6 @@ static int video_quality_to_image_quality_value(gsr_video_quality video_quality)
     }
     assert(false);
     return 90;
-}
-
-static bool any_video_sources_uses_external_image(std::vector<VideoSource> &video_sources) {
-    for(VideoSource &video_source : video_sources) {
-        if(gsr_capture_uses_external_image(video_source.capture))
-            return true;
-    }
-    return false;
-}
-
-static std::vector<VideoSource> create_video_sources(const args_parser &arg_parser, gsr_egl *egl, bool prefer_ximage, std::vector<CaptureSource> &capture_sources, vec2i &video_size) {
-    std::vector<VideoSource> video_sources;
-    video_sources.reserve(capture_sources.size());
-
-    for(CaptureSource &capture_source : capture_sources) {
-        gsr_capture_metadata capture_metadata;
-        memset(&capture_metadata, 0, sizeof(capture_metadata));
-        capture_metadata.fps = arg_parser.settings.fps;
-        capture_metadata.halign = capture_source.halign;
-        capture_metadata.valign = capture_source.valign;
-        capture_metadata.flip = (gsr_flip)capture_source.flip;
-        video_sources.push_back(VideoSource{create_capture_impl(arg_parser, egl, capture_source, prefer_ximage), capture_metadata, &capture_source});
-    }
-
-    for(VideoSource &video_source : video_sources) {
-        int capture_result = gsr_capture_start(video_source.capture, &video_source.metadata);
-        if(capture_result != 0) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_start failed");
-            _exit(capture_result);
-        }
-    }
-
-    vec2i start_pos = {99999, 99999};
-    vec2i end_pos = {-99999, -99999};
-    for(const VideoSource &video_source : video_sources) {
-        // TODO: Skip scalar positions for now, but this should be handled in a better way.
-        // Maybe handle scalars at the next loop by multiplying video size by the scalar.
-        if(video_source.capture_source->pos.x_type == VVEC2I_TYPE_SCALAR || video_source.capture_source->pos.y_type == VVEC2I_TYPE_SCALAR
-            || (video_source.capture_source->size.x_type == VVEC2I_TYPE_SCALAR && video_source.capture_source->size.x != 100)
-            || (video_source.capture_source->size.y_type == VVEC2I_TYPE_SCALAR && video_source.capture_source->size.y != 100))
-        {
-            continue;
-        }
-        const vec2i video_source_start_pos = {video_source.capture_source->pos.x, video_source.capture_source->pos.y};
-        const vec2i video_source_end_pos = {video_source_start_pos.x + video_source.metadata.video_size.x, video_source_start_pos.y + video_source.metadata.video_size.y};
-
-        start_pos.x = std::min(start_pos.x, video_source_start_pos.x);
-        start_pos.y = std::min(start_pos.y, video_source_start_pos.y);
-
-        end_pos.x = std::max(end_pos.x, video_source_end_pos.x);
-        end_pos.y = std::max(end_pos.y, video_source_end_pos.y);
-    }
-
-    video_size.x = std::max(0, end_pos.x - start_pos.x);
-    video_size.y = std::max(0, end_pos.y - start_pos.y);
-
-    for(VideoSource &video_source : video_sources) {
-        video_source.metadata.video_size = video_size;
-    }
-
-    return video_sources;
-}
-
-static void video_sources_update_with_real_video_size(std::vector<CaptureSource> &capture_sources, std::vector<VideoSource> &video_sources, vec2i video_size) {
-    assert(capture_sources.size() == video_sources.size());
-    for(size_t i = 0; i < capture_sources.size(); ++i) {
-        CaptureSource &capture_source = capture_sources[i];
-        VideoSource &video_source = video_sources[i];
-
-        video_source.metadata.recording_size = video_source.metadata.video_size;
-        // TODO: What if this updated resolution is above max resolution?
-        video_source.metadata.video_size = video_size;
-
-        if(capture_source.pos.x != 0 || capture_source.pos.y != 0) {
-            video_source.metadata.position.x = capture_source.pos.x;
-            video_source.metadata.position.y = capture_source.pos.y;
-
-            if(capture_source.pos.x_type == VVEC2I_TYPE_SCALAR)
-                video_source.metadata.position.x = video_source.metadata.video_size.x * ((double)video_source.metadata.position.x / 100.0);
-
-            if(capture_source.pos.y_type == VVEC2I_TYPE_SCALAR)
-                video_source.metadata.position.y = video_source.metadata.video_size.y * ((double)video_source.metadata.position.y / 100.0);
-        }
-
-        if(capture_source.size.x != 0 || capture_source.size.y != 0) {
-            video_source.metadata.recording_size.x = capture_source.size.x;
-            video_source.metadata.recording_size.y = capture_source.size.y;
-
-            if(capture_source.size.x_type == VVEC2I_TYPE_SCALAR)
-                video_source.metadata.recording_size.x = video_source.metadata.video_size.x * ((double)video_source.metadata.recording_size.x / 100.0);
-
-            if(capture_source.size.y_type == VVEC2I_TYPE_SCALAR)
-                video_source.metadata.recording_size.y = video_source.metadata.video_size.y * ((double)video_source.metadata.recording_size.y / 100.0);
-        }
-    }
-}
-
-static void gsr_capture_kms_cleanup_kms_fds() {
-    for(int i = 0; i < kms_response.num_items; ++i) {
-        for(int j = 0; j < kms_response.items[i].num_dma_bufs; ++j) {
-            gsr_kms_response_dma_buf *dma_buf = &kms_response.items[i].dma_buf[j];
-            if(dma_buf->fd > 0) {
-                close(dma_buf->fd);
-                dma_buf->fd = -1;
-            }
-        }
-        kms_response.items[i].num_dma_bufs = 0;
-    }
-    kms_response.num_items = 0;
 }
 
 static void load_plugins(gsr_plugins *plugins, args_parser &arg_parser, gsr_egl *egl, vec2i video_size) {
@@ -1520,14 +1072,18 @@ static void load_plugins(gsr_plugins *plugins, args_parser &arg_parser, gsr_egl 
 }
 
 // TODO: 10-bit and hdr.
-static void capture_image_to_file(args_parser &arg_parser, gsr_egl *egl, gsr_window *window, gsr_image_format image_format, std::vector<CaptureSource> &capture_sources) {
+static void capture_image_to_file(args_parser &arg_parser, gsr_egl *egl, gsr_window *window, gsr_image_format image_format, gsr_capture_sources *capture_sources) {
     const int image_quality = video_quality_to_image_quality_value(arg_parser.settings.video_quality);
     const gsr_color_range color_range = image_format_to_color_range(image_format, image_quality);
     arg_parser.settings.fps = 60; // We want to capture an image as soon as possible
 
     vec2i video_size = {0, 0};
-    std::vector<VideoSource> video_sources = create_video_sources(arg_parser, egl, true, capture_sources, video_size);
-    video_sources_update_with_real_video_size(capture_sources, video_sources, video_size);
+    gsr_video_sources video_sources_data;
+    const int video_sources_result = gsr_video_sources_create(&video_sources_data, &arg_parser.settings, egl, &capture_deps, true, capture_sources, &video_size);
+    if(video_sources_result != GSR_ERROR_OK)
+        _exit(gsr_error_to_exit_code(video_sources_result));
+    gsr_video_sources *video_sources = &video_sources_data;
+    gsr_video_sources_update_with_real_video_size(video_sources, video_size);
 
     const Arg *plugin_arg = args_parser_get_arg(&arg_parser, "-p");
     assert(plugin_arg);
@@ -1548,7 +1104,7 @@ static void capture_image_to_file(args_parser &arg_parser, gsr_egl *egl, gsr_win
     memset(&color_conversion_params, 0, sizeof(color_conversion_params));
     color_conversion_params.color_range = color_range;
     color_conversion_params.egl = egl;
-    color_conversion_params.load_external_image_shader = any_video_sources_uses_external_image(video_sources);
+    color_conversion_params.load_external_image_shader = gsr_video_sources_uses_external_image(video_sources);
 
     color_conversion_params.destination_textures[0] = image_writer.texture;
     color_conversion_params.destination_textures_size[0] = video_size;
@@ -1570,26 +1126,25 @@ static void capture_image_to_file(args_parser &arg_parser, gsr_egl *egl, gsr_win
 
     while(running) {
         while(gsr_window_process_event(window)) {
-            if(x11_cursor_display && arg_parser.settings.record_cursor)
-                gsr_cursor_on_event(&x11_cursor, gsr_window_get_event_data(window));
+            if(capture_deps.x11_cursor_display && arg_parser.settings.record_cursor)
+                gsr_cursor_on_event(&capture_deps.x11_cursor, gsr_window_get_event_data(window));
 
-            for(VideoSource &video_source : video_sources) {
+            for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
+        gsr_video_source &video_source = video_sources->items[video_source_index];
                 gsr_capture_on_event(video_source.capture, egl);
             }
         }
 
-        if(x11_cursor_display && arg_parser.settings.record_cursor)
-            gsr_cursor_tick(&x11_cursor, DefaultRootWindow(x11_cursor_display));
+        if(capture_deps.x11_cursor_display && arg_parser.settings.record_cursor)
+            gsr_cursor_tick(&capture_deps.x11_cursor, DefaultRootWindow(capture_deps.x11_cursor_display));
 
-        gsr_capture_kms_cleanup_kms_fds();
+        gsr_capture_deps_cleanup_kms_fds(&capture_deps);
 
-        if(kms_client_initialized) {
-            if(gsr_kms_client_get_kms(&kms_client, &kms_response) != 0)
-                gsr_log(GSR_LOG_LEVEL_ERROR, "failed to get kms, error: %d (%s)", kms_response.result, kms_response.err_msg);
-        }
+        gsr_capture_deps_update_kms(&capture_deps);
 
         should_stop_error = false;
-        for(VideoSource &video_source : video_sources) {
+        for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
+        gsr_video_source &video_source = video_sources->items[video_source_index];
             gsr_capture_tick(video_source.capture);
             if(gsr_capture_should_stop(video_source.capture, &should_stop_error)) {
                 running = 0;
@@ -1597,7 +1152,8 @@ static void capture_image_to_file(args_parser &arg_parser, gsr_egl *egl, gsr_win
             }
         }
 
-        for(VideoSource &video_source : video_sources) {
+        for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
+        gsr_video_source &video_source = video_sources->items[video_source_index];
             if(video_source.capture->pre_capture)
                 video_source.capture->pre_capture(video_source.capture, &video_source.metadata, output_color_conversion);
         }
@@ -1608,14 +1164,15 @@ static void capture_image_to_file(args_parser &arg_parser, gsr_egl *egl, gsr_win
         }
 
         bool all_sources_captured = true;
-        for(VideoSource &video_source : video_sources) {
+        for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
+        gsr_video_source &video_source = video_sources->items[video_source_index];
             // It can fail, for example when capturing portal and the target is a monitor that hasn't been updated.
             // This can also happen for example if the system suspends and the monitor to capture's framebuffer is gone, or if the target window disappeared.
             if(gsr_capture_capture(video_source.capture, &video_source.metadata, output_color_conversion) != 0)
                 all_sources_captured = false;
         }
 
-        gsr_capture_kms_cleanup_kms_fds();
+        gsr_capture_deps_cleanup_kms_fds(&capture_deps);
 
         if(all_sources_captured)
             break;
@@ -1646,9 +1203,7 @@ static void capture_image_to_file(args_parser &arg_parser, gsr_egl *egl, gsr_win
 
     gsr_plugins_deinit(&plugins);
     gsr_image_writer_deinit(&image_writer);
-    for(VideoSource &video_source : video_sources) {
-        gsr_capture_destroy(video_source.capture);
-    }
+    gsr_video_sources_deinit(video_sources);
     _exit(should_stop_error ? 3 : 0);
 }
 
@@ -1780,293 +1335,6 @@ static std::vector<MergedAudioInputs> parse_audio_inputs(const gsr_audio_devices
     }
 
     return requested_audio_inputs;
-}
-
-static bool is_hex_num(char c) {
-    return (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f') || (c >= '0' && c <= '9');
-}
-
-static bool contains_non_hex_number(const char *str) {
-    bool hex_start = false;
-    size_t len = strlen(str);
-    if(len >= 2 && memcmp(str, "0x", 2) == 0) {
-        str += 2;
-        len -= 2;
-        hex_start = true;
-    }
-
-    bool is_hex = false;
-    for(size_t i = 0; i < len; ++i) {
-        char c = str[i];
-        if(c == '\0')
-            return false;
-        if(!is_hex_num(c))
-            return true;
-        if((c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'))
-            is_hex = true;
-    }
-
-    return is_hex && !hex_start;
-}
-
-static void capture_source_type_from_string(const char *capture_source_str, size_t size, CaptureSource &capture_source) {
-    char capture_source_str_n[64];
-    snprintf(capture_source_str_n, sizeof(capture_source_str_n), "%.*s", (int)size, capture_source_str);
-
-    if(size == 7 && memcmp(capture_source_str_n, "focused", 7) == 0) {
-        capture_source.type = GSR_CAPTURE_SOURCE_TYPE_FOCUSED_WINDOW;
-    } else if(size == 6 && memcmp(capture_source_str_n, "portal", 6) == 0) {
-        capture_source.type = GSR_CAPTURE_SOURCE_TYPE_PORTAL;
-    } else if(size == 6 && memcmp(capture_source_str_n, "region", 6) == 0) {
-        capture_source.type = GSR_CAPTURE_SOURCE_TYPE_REGION;
-    } else if(size >= 10 && memcmp(capture_source_str_n, "/dev/video", 10) == 0) {
-        capture_source.type = GSR_CAPTURE_SOURCE_TYPE_V4L2;
-    } else if(sscanf(capture_source_str_n, "%dx%d+%d+%d", &capture_source.region_size.x, &capture_source.region_size.y, &capture_source.region_pos.x, &capture_source.region_pos.y) == 4) {
-        capture_source.type = GSR_CAPTURE_SOURCE_TYPE_REGION;
-        capture_source.region_set = true;
-    } else if(contains_non_hex_number(capture_source_str_n)) {
-        capture_source.type = GSR_CAPTURE_SOURCE_TYPE_MONITOR;
-    } else {
-        capture_source.type = GSR_CAPTURE_SOURCE_TYPE_WINDOW;
-    }
-}
-
-static bool string_to_capture_alignment(const char *str, size_t len, gsr_capture_alignment *alignment) {
-    if(len == 5 && memcmp(str, "start", 5) == 0) {
-        *alignment = GSR_CAPTURE_ALIGN_START;
-        return true;
-    } else if(len == 6 && memcmp(str, "center", 6) == 0) {
-        *alignment = GSR_CAPTURE_ALIGN_CENTER;
-        return true;
-    } else if(len == 3 && memcmp(str, "end", 3) == 0) {
-        *alignment = GSR_CAPTURE_ALIGN_END;
-        return true;
-    } else {
-        return false;
-    }
-}
-
-static bool string_to_v4l2_pixfmt(const char *str, size_t len, gsr_capture_v4l2_pixfmt *pixfmt) {
-    if(len == 4 && memcmp(str, "auto", 4) == 0) {
-        *pixfmt = GSR_CAPTURE_V4L2_PIXFMT_AUTO;
-        return true;
-    } else if(len == 4 && memcmp(str, "yuyv", 4) == 0) {
-        *pixfmt = GSR_CAPTURE_V4L2_PIXFMT_YUYV;
-        return true;
-    } else if(len == 5 && memcmp(str, "mjpeg", 5) == 0) {
-        *pixfmt = GSR_CAPTURE_V4L2_PIXFMT_MJPEG;
-        return true;
-    } else {
-        return false;
-    }
-}
-
-static bool string_to_bool(const char *str, size_t len, bool *value) {
-    if(len == 4 && memcmp(str, "true", 4) == 0) {
-        *value = true;
-        return true;
-    } else if(len == 5 && memcmp(str, "false", 5) == 0) {
-        *value = false;
-        return true;
-    } else {
-        return false;
-    }
-}
-
-struct ParseCaptureSourceOptionsUserdata {
-    CaptureSource *capture_source;
-    bool is_first_column;
-};
-
-static bool parse_capture_source_options_callback(const char *sub, size_t size, void *userdata) {
-    ParseCaptureSourceOptionsUserdata *parse_userdata = (ParseCaptureSourceOptionsUserdata*)userdata;
-    CaptureSource &capture_source = *parse_userdata->capture_source;
-    if(size == 0)
-        return true;
-
-    if(parse_userdata->is_first_column) {
-        parse_userdata->is_first_column = false;
-        return true;
-    }
-
-    if(gsr_string_starts_with(sub, size, "x=")) {
-        capture_source.pos.x_type = sub[size - 1] == '%' ? VVEC2I_TYPE_SCALAR : VVEC2I_TYPE_PIXELS;
-        sub += 2;
-        size -= 2;
-        if(!gsr_string_to_int(sub, size, &capture_source.pos.x)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option x: \"%.*s\", expected a number", (int)size, sub);
-        _exit(1);
-        }
-    } else if(gsr_string_starts_with(sub, size, "y=")) {
-        capture_source.pos.y_type = sub[size - 1] == '%' ? VVEC2I_TYPE_SCALAR : VVEC2I_TYPE_PIXELS;
-        sub += 2;
-        size -= 2;
-        if(!gsr_string_to_int(sub, size, &capture_source.pos.y)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option y: \"%.*s\", expected a number", (int)size, sub);
-        _exit(1);
-        }
-
-    } else if(gsr_string_starts_with(sub, size, "width=")) {
-        capture_source.size.x_type = sub[size - 1] == '%' ? VVEC2I_TYPE_SCALAR : VVEC2I_TYPE_PIXELS;
-        sub += 6;
-        size -= 6;
-        if(!gsr_string_to_int(sub, size, &capture_source.size.x)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option width: \"%.*s\", expected a number", (int)size, sub);
-        _exit(1);
-        }
-    } else if(gsr_string_starts_with(sub, size, "height=")) {
-        capture_source.size.y_type = sub[size - 1] == '%' ? VVEC2I_TYPE_SCALAR : VVEC2I_TYPE_PIXELS;
-        sub += 7;
-        size -= 7;
-        if(!gsr_string_to_int(sub, size, &capture_source.size.y)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option height: \"%.*s\", expected a number", (int)size, sub);
-        _exit(1);
-        }
-    } else if(gsr_string_starts_with(sub, size, "halign=")) {
-        sub += 7;
-        size -= 7;
-        if(!string_to_capture_alignment(sub, size, &capture_source.halign)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option halign: \"%.*s\", expected a \"start\", \"center\" or \"end\"", (int)size, sub);
-        _exit(1);
-        }
-    } else if(gsr_string_starts_with(sub, size, "valign=")) {
-        sub += 7;
-        size -= 7;
-        if(!string_to_capture_alignment(sub, size, &capture_source.valign)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option valign: \"%.*s\", expected a \"start\", \"center\" or \"end\"", (int)size, sub);
-        _exit(1);
-        }
-    } else if(gsr_string_starts_with(sub, size, "pixfmt=")) {
-        sub += 7;
-        size -= 7;
-        if(!string_to_v4l2_pixfmt(sub, size, &capture_source.v4l2_pixfmt)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid v4l2 pixfmt value for option pixfmt: \"%.*s\", expected a \"auto\", \"yuyv\" or \"mjpeg\"", (int)size, sub);
-        _exit(1);
-        }
-    } else if(gsr_string_starts_with(sub, size, "hflip=")) {
-        sub += 6;
-        size -= 6;
-        bool hflip = false;
-        if(!string_to_bool(sub, size, &hflip)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid bool value for option hflip: \"%.*s\", expected a \"true\" or \"false\"", (int)size, sub);
-        _exit(1);
-        }
-
-        if(hflip)
-        capture_source.flip |= GSR_FLIP_HORIZONTAL;
-    } else if(gsr_string_starts_with(sub, size, "vflip=")) {
-        sub += 6;
-        size -= 6;
-        bool vflip = false;
-        if(!string_to_bool(sub, size, &vflip)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid bool value for option vflip: \"%.*s\", expected a \"true\" or \"false\"", (int)size, sub);
-        _exit(1);
-        }
-
-        if(vflip)
-        capture_source.flip |= GSR_FLIP_VERTICAL;
-    } else if(gsr_string_starts_with(sub, size, "camera_fps=")) {
-        sub += 11;
-        size -= 11;
-        if(!gsr_string_to_int(sub, size, &capture_source.camera_fps)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option camera_fps: \"%.*s\", expected a number", (int)size, sub);
-        _exit(1);
-        }
-    } else if(gsr_string_starts_with(sub, size, "camera_width=")) {
-        sub += 13;
-        size -= 13;
-        if(!gsr_string_to_int(sub, size, &capture_source.camera_resolution.x)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option camera_width: \"%.*s\", expected a number", (int)size, sub);
-        _exit(1);
-        }
-    } else if(gsr_string_starts_with(sub, size, "camera_height=")) {
-        sub += 14;
-        size -= 14;
-        if(!gsr_string_to_int(sub, size, &capture_source.camera_resolution.y)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option camera_height: \"%.*s\", expected a number", (int)size, sub);
-        _exit(1);
-        }
-    } else {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target option \"%.*s\", expected x, y, width, height, halign, valign, pixfmt, hflip, vflip, camera_fps, camera_width or camera_height", (int)size, sub);
-        _exit(1);
-    }
-
-    return true;
-}
-
-static void parse_capture_source_options(const std::string &capture_source_str, CaptureSource &capture_source) {
-    ParseCaptureSourceOptionsUserdata userdata;
-    userdata.capture_source = &capture_source;
-    userdata.is_first_column = true;
-    gsr_string_split(capture_source_str.c_str(), ';', parse_capture_source_options_callback, &userdata);
-}
-
-struct ParseCaptureSourceArgUserdata {
-    std::vector<CaptureSource> *requested_capture_sources;
-    const args_parser *arg_parser;
-    bool has_multiple_capture_sources;
-};
-
-static bool parse_capture_source_arg_callback(const char *sub, size_t size, void *userdata) {
-    ParseCaptureSourceArgUserdata *parse_userdata = (ParseCaptureSourceArgUserdata*)userdata;
-    if(size == 0)
-        return true;
-
-    const char *substr_start = sub;
-    size_t capture_source_size = size;
-    const char *capture_source_end = (const char*)memchr(sub, ';', size);
-    if(capture_source_end)
-        capture_source_size = capture_source_end - sub;
-
-    CaptureSource capture_source;
-    capture_source.region_pos = parse_userdata->arg_parser->settings.region_position;
-    capture_source.region_size = parse_userdata->arg_parser->settings.region_size;
-
-    if(gsr_string_starts_with(sub, capture_source_size, "monitor:")) {
-        capture_source.type = GSR_CAPTURE_SOURCE_TYPE_MONITOR;
-        sub += 8;
-        capture_source_size -= 8;
-    } else if(gsr_string_starts_with(sub, capture_source_size, "window:")) {
-        capture_source.type = GSR_CAPTURE_SOURCE_TYPE_WINDOW;
-        sub += 7;
-        capture_source_size -= 7;
-    } else if(gsr_string_starts_with(sub, capture_source_size, "v4l2:")) {
-        capture_source.type = GSR_CAPTURE_SOURCE_TYPE_V4L2;
-        sub += 5;
-        capture_source_size -= 5;
-    } else {
-        capture_source_type_from_string(sub, capture_source_size, capture_source);
-    }
-
-    capture_source.name.assign(sub, capture_source_size);
-
-    if(capture_source.type == GSR_CAPTURE_SOURCE_TYPE_WINDOW) {
-        if(!gsr_string_to_int64(capture_source.name.c_str(), capture_source.name.size(), &capture_source.window_id)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid window number %s", capture_source.name.c_str());
-        args_parser_print_usage();
-        _exit(1);
-        }
-    }
-
-    if(parse_userdata->has_multiple_capture_sources) {
-        capture_source.halign = GSR_CAPTURE_ALIGN_START;
-        capture_source.valign = GSR_CAPTURE_ALIGN_START;
-        capture_source.pos = {0, 0, VVEC2I_TYPE_PIXELS, VVEC2I_TYPE_PIXELS};
-    }
-
-    parse_capture_source_options(std::string(substr_start, size), capture_source);
-    parse_userdata->requested_capture_sources->push_back(capture_source);
-    return true;
-}
-
-static std::vector<CaptureSource> parse_capture_source_arg(const char *capture_source_arg, const args_parser &arg_parser) {
-    std::vector<CaptureSource> requested_capture_sources;
-    ParseCaptureSourceArgUserdata userdata;
-    userdata.requested_capture_sources = &requested_capture_sources;
-    userdata.arg_parser = &arg_parser;
-    userdata.has_multiple_capture_sources = strchr(capture_source_arg, '|') != nullptr;
-    gsr_string_split(capture_source_arg, '|', parse_capture_source_arg_callback, &userdata);
-    return requested_capture_sources;
 }
 
 static bool audio_inputs_has_app_audio(const std::vector<AudioInput> &audio_inputs) {
@@ -2278,54 +1546,22 @@ static void set_display_server_environment_variables() {
     }
 }
 
-static bool is_capturing_damage_tracked_target(const std::vector<CaptureSource> &capture_sources) {
-    for(const CaptureSource &capture_source : capture_sources) {
-        if(capture_source.type != GSR_CAPTURE_SOURCE_TYPE_V4L2)
-            return true;
-    }
-    return false;
-}
-
-static bool is_capturing_type(const std::vector<CaptureSource> &capture_sources, CaptureSourceType target_type) {
-    for(const CaptureSource &capture_source : capture_sources) {
-        if(capture_source.type == target_type)
-            return true;
-    }
-    return false;
-}
-
-static bool has_capture_source_with_region_set(const std::vector<CaptureSource> &capture_sources) {
-    for(const CaptureSource &capture_source : capture_sources) {
-        if(capture_source.type == GSR_CAPTURE_SOURCE_TYPE_REGION && capture_source.region_set)
-            return true;
-    }
-    return false;
-}
-
-static bool is_capturing_monitor_or_region(const std::vector<CaptureSource> &capture_sources) {
-    for(const CaptureSource &capture_source : capture_sources) {
-        if(capture_source.type == GSR_CAPTURE_SOURCE_TYPE_MONITOR || capture_source.type == GSR_CAPTURE_SOURCE_TYPE_REGION)
-            return true;
-    }
-    return false;
-}
-
-static void validate_args_with_capture_sources(args_parser &arg_parser, const std::vector<CaptureSource> &capture_sources) {
+static void validate_args_with_capture_sources(args_parser &arg_parser, const gsr_capture_sources *capture_sources) {
     const Arg *output_resolution_arg = args_parser_get_arg(&arg_parser, "-s");
     assert(output_resolution_arg);
 
     const Arg *region_arg = args_parser_get_arg(&arg_parser, "-region");
     assert(region_arg);
 
-    if(is_capturing_type(capture_sources, GSR_CAPTURE_SOURCE_TYPE_FOCUSED_WINDOW) && output_resolution_arg->num_values == 0) {
+    if(gsr_capture_sources_has_type(capture_sources, GSR_CAPTURE_SOURCE_TYPE_FOCUSED_WINDOW) && output_resolution_arg->num_values == 0) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "option -s is required when using '-w focused' option");
         args_parser_print_usage();
         _exit(1);
     }
 
-    const bool is_capturing_region = is_capturing_type(capture_sources, GSR_CAPTURE_SOURCE_TYPE_REGION);
+    const bool is_capturing_region = gsr_capture_sources_has_type(capture_sources, GSR_CAPTURE_SOURCE_TYPE_REGION);
     if(region_arg->num_values == 0) {
-        if(is_capturing_region && !has_capture_source_with_region_set(capture_sources)) {
+        if(is_capturing_region && !gsr_capture_sources_has_region_set(capture_sources)) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "option -region is required when '-w region' is used");
             args_parser_print_usage();
             _exit(1);
@@ -2340,7 +1576,7 @@ static void validate_args_with_capture_sources(args_parser &arg_parser, const st
         }
     }
 
-    if(!arg_parser.settings.restore_portal_session && is_capturing_type(capture_sources, GSR_CAPTURE_SOURCE_TYPE_PORTAL))
+    if(!arg_parser.settings.restore_portal_session && gsr_capture_sources_has_type(capture_sources, GSR_CAPTURE_SOURCE_TYPE_PORTAL))
         gsr_log(GSR_LOG_LEVEL_INFO, "option '-w portal' was used without '-restore-portal-session yes'. The previous screencast session will be ignored");
 }
 
@@ -2453,8 +1689,13 @@ int main(int argc, char **argv) {
         setenv("AMD_DEBUG", "lowlatencyenc", true);
     }
 
-    std::vector<CaptureSource> capture_sources = parse_capture_source_arg(arg_parser.settings.capture_source, arg_parser);
-    if(capture_sources.empty()) {
+    gsr_capture_sources capture_sources_data;
+    const int parse_capture_sources_result = gsr_capture_sources_parse(&capture_sources_data, arg_parser.settings.capture_source, arg_parser.settings.region_position, arg_parser.settings.region_size);
+    if(parse_capture_sources_result != GSR_ERROR_OK)
+        _exit(gsr_error_to_exit_code(parse_capture_sources_result));
+
+    gsr_capture_sources *capture_sources = &capture_sources_data;
+    if(capture_sources->num_items == 0) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "option -w can't be empty. You need to capture video from at least one source");
         args_parser_print_usage();
         _exit(1);
@@ -2507,7 +1748,7 @@ int main(int argc, char **argv) {
 
     gsr_windowing windowing;
     gsr_windowing_params windowing_params;
-    windowing_params.monitor_capture = is_capturing_monitor_or_region(capture_sources);
+    windowing_params.monitor_capture = gsr_capture_sources_has_monitor_or_region(capture_sources);
     windowing_params.gl_debug = arg_parser.settings.gl_debug;
     windowing_params.listen_to_x11_events = true;
     if(gsr_windowing_init(&windowing, &windowing_params) != GSR_ERROR_OK)
@@ -2516,7 +1757,7 @@ int main(int argc, char **argv) {
     Display *dpy = windowing.display;
     gsr_window *window = windowing.window;
 
-    if(is_capturing_type(capture_sources, GSR_CAPTURE_SOURCE_TYPE_PORTAL)) {
+    if(gsr_capture_sources_has_type(capture_sources, GSR_CAPTURE_SOURCE_TYPE_PORTAL)) {
         if(gsr_windowing_is_using_prime_run()) {
             gsr_log(GSR_LOG_LEVEL_WARNING, "use of prime-run with -w portal option is currently not supported. Disabling prime-run");
             gsr_windowing_disable_prime_run();
@@ -2546,12 +1787,7 @@ int main(int argc, char **argv) {
         _exit(2);
     }
 
-    memset(&x11_cursor, 0, sizeof(x11_cursor));
-    x11_cursor_display = NULL;
-    if(gsr_window_get_display_server(window) == GSR_DISPLAY_SERVER_X11 && arg_parser.settings.record_cursor) {
-        x11_cursor_display = (Display*)gsr_window_get_display(egl.window);
-        gsr_cursor_init(&x11_cursor, &egl, x11_cursor_display);
-    }
+    gsr_capture_deps_init_cursor(&capture_deps, &egl, arg_parser.settings.record_cursor);
 
     // if(wayland && arg_parser.capture_source_type == GSR_CAPTURE_SOURCE_TYPE_MONITOR) {
     //     fprintf(stderr, "gsr warning: it's not possible to sync video to recorded monitor exactly on wayland when recording a monitor."
@@ -2604,7 +1840,12 @@ int main(int argc, char **argv) {
     arg_parser.settings.audio_codec = select_audio_codec_with_fallback(arg_parser.settings.audio_codec, file_extension.c_str(), uses_amix);
 
     vec2i video_size = {0, 0};
-    std::vector<VideoSource> video_sources = create_video_sources(arg_parser, &egl, false, capture_sources, video_size);
+    gsr_video_sources video_sources_data;
+    const int video_sources_result = gsr_video_sources_create(&video_sources_data, &arg_parser.settings, &egl, &capture_deps, false, capture_sources, &video_size);
+    if(video_sources_result != GSR_ERROR_OK)
+        _exit(gsr_error_to_exit_code(video_sources_result));
+
+    gsr_video_sources *video_sources = &video_sources_data;
 
     // (Some?) livestreaming services require at least one audio track to work.
     // If not audio is provided then create one silent audio track.
@@ -2668,7 +1909,7 @@ int main(int argc, char **argv) {
 
     video_size.x = video_codec_context->width;
     video_size.y = video_codec_context->height;
-    video_sources_update_with_real_video_size(capture_sources, video_sources, video_size);
+    gsr_video_sources_update_with_real_video_size(video_sources, video_size);
 
     const Arg *plugin_arg = args_parser_get_arg(&arg_parser, "-p");
     assert(plugin_arg);
@@ -2683,7 +1924,7 @@ int main(int argc, char **argv) {
     memset(&color_conversion_params, 0, sizeof(color_conversion_params));
     color_conversion_params.color_range = arg_parser.settings.color_range;
     color_conversion_params.egl = &egl;
-    color_conversion_params.load_external_image_shader = any_video_sources_uses_external_image(video_sources);
+    color_conversion_params.load_external_image_shader = gsr_video_sources_uses_external_image(video_sources);
     gsr_video_encoder_get_textures(video_encoder, color_conversion_params.destination_textures, color_conversion_params.destination_textures_size, &color_conversion_params.num_destination_textures, &color_conversion_params.destination_color);
 
     gsr_color_conversion color_conversion;
@@ -3044,43 +2285,45 @@ int main(int argc, char **argv) {
     bool use_damage_tracking = false;
     gsr_damage damage;
     memset(&damage, 0, sizeof(damage));
-    if(arg_parser.settings.framerate_mode == GSR_FRAMERATE_MODE_CONTENT && is_capturing_damage_tracked_target(capture_sources)) {
+    if(arg_parser.settings.framerate_mode == GSR_FRAMERATE_MODE_CONTENT && gsr_capture_sources_has_damage_tracked_target(capture_sources)) {
         if(gsr_window_get_display_server(window) == GSR_DISPLAY_SERVER_X11) {
-            gsr_damage_init(&damage, &egl, &x11_cursor, arg_parser.settings.record_cursor);
+            gsr_damage_init(&damage, &egl, &capture_deps.x11_cursor, arg_parser.settings.record_cursor);
             use_damage_tracking = true;
 
-            for(const CaptureSource &capture_source : capture_sources) {
-                switch(capture_source.type) {
+            for(size_t i = 0; i < capture_sources->num_items; ++i) {
+                const gsr_capture_source *capture_source = &capture_sources->items[i];
+                switch(capture_source->type) {
                     case GSR_CAPTURE_SOURCE_TYPE_WINDOW:
-                        gsr_damage_start_tracking_window(&damage, capture_source.window_id);
+                        gsr_damage_start_tracking_window(&damage, capture_source->window_id);
                         break;
                     case GSR_CAPTURE_SOURCE_TYPE_MONITOR:
                     case GSR_CAPTURE_SOURCE_TYPE_REGION:
                         // TODO: When capturing a region only track damage in that region
-                        gsr_damage_start_tracking_monitor(&damage, capture_source.name.c_str());
+                        gsr_damage_start_tracking_monitor(&damage, capture_source->name);
                         break;
                     default:
                         break;
                 }
             }
-        } else if(is_capturing_monitor_or_region(capture_sources)) {
+        } else if(gsr_capture_sources_has_monitor_or_region(capture_sources)) {
             gsr_log(GSR_LOG_LEVEL_WARNING, "\"-fm content\" has no effect on Wayland when recording a monitor. Either record a monitor on X11 or capture with desktop portal instead (-w portal)");
         }
     }
 
     while(running) {
         while(gsr_window_process_event(window)) {
-            if(x11_cursor_display && arg_parser.settings.record_cursor)
-                gsr_cursor_on_event(&x11_cursor, gsr_window_get_event_data(window));
+            if(capture_deps.x11_cursor_display && arg_parser.settings.record_cursor)
+                gsr_cursor_on_event(&capture_deps.x11_cursor, gsr_window_get_event_data(window));
 
             gsr_damage_on_event(&damage, gsr_window_get_event_data(window));
-            for(VideoSource &video_source : video_sources) {
+            for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
+        gsr_video_source &video_source = video_sources->items[video_source_index];
                 gsr_capture_on_event(video_source.capture, &egl);
             }
         }
 
-        if(x11_cursor_display && arg_parser.settings.record_cursor)
-            gsr_cursor_tick(&x11_cursor, DefaultRootWindow(x11_cursor_display));
+        if(capture_deps.x11_cursor_display && arg_parser.settings.record_cursor)
+            gsr_cursor_tick(&capture_deps.x11_cursor, DefaultRootWindow(capture_deps.x11_cursor_display));
 
         gsr_damage_tick(&damage);
 
@@ -3090,7 +2333,8 @@ int main(int argc, char **argv) {
         if(use_damage_tracking)
             damaged = gsr_damage_is_damaged(&damage);
 
-        for(VideoSource &video_source : video_sources) {
+        for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
+        gsr_video_source &video_source = video_sources->items[video_source_index];
             gsr_capture_tick(video_source.capture);
 
             if(gsr_capture_should_stop(video_source.capture, &should_stop_error)) {
@@ -3149,15 +2393,13 @@ int main(int argc, char **argv) {
 
             gsr_damage_clear(&damage);
             gsr_plugins_clear_damage(&plugins);
-            gsr_capture_kms_cleanup_kms_fds();
+            gsr_capture_deps_cleanup_kms_fds(&capture_deps);
 
-            if(kms_client_initialized) {
-                if(gsr_kms_client_get_kms(&kms_client, &kms_response) != 0)
-                    gsr_log(GSR_LOG_LEVEL_ERROR, "failed to get kms, error: %d (%s)", kms_response.result, kms_response.err_msg);
-            }
+            gsr_capture_deps_update_kms(&capture_deps);
 
             bool capture_has_synchronous_task = false;
-            for(VideoSource &video_source : video_sources) {
+            for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
+        gsr_video_source &video_source = video_sources->items[video_source_index];
                 if(video_source.capture->clear_damage)
                     video_source.capture->clear_damage(video_source.capture);
 
@@ -3170,7 +2412,8 @@ int main(int argc, char **argv) {
                 }
             }
 
-            for(VideoSource &video_source : video_sources) {
+            for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
+        gsr_video_source &video_source = video_sources->items[video_source_index];
                 if(video_source.capture->pre_capture)
                     video_source.capture->pre_capture(video_source.capture, &video_source.metadata, output_color_conversion);
             }
@@ -3180,11 +2423,12 @@ int main(int argc, char **argv) {
                 gsr_color_conversion_clear(output_color_conversion);
             }
 
-            for(VideoSource &video_source : video_sources) {
+            for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
+        gsr_video_source &video_source = video_sources->items[video_source_index];
                 gsr_capture_capture(video_source.capture, &video_source.metadata, output_color_conversion);
             }
 
-            gsr_capture_kms_cleanup_kms_fds();
+            gsr_capture_deps_cleanup_kms_fds(&capture_deps);
 
             if(plugins.num_plugins > 0) {
                 gsr_plugins_draw(&plugins);
@@ -3202,7 +2446,8 @@ int main(int argc, char **argv) {
             gsr_egl_swap_buffers(&egl);
             gsr_video_encoder_copy_textures_to_frame(video_encoder, video_frame, output_color_conversion);
 
-            for(VideoSource &video_source : video_sources) {
+            for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
+        gsr_video_source &video_source = video_sources->items[video_source_index];
                 if(hdr && !hdr_metadata_set && !arg_parser.settings.is_replaying && add_hdr_metadata_to_video_stream(video_source.capture, video_stream))
                     hdr_metadata_set = true;
             }
@@ -3421,23 +2666,15 @@ int main(int argc, char **argv) {
         avformat_free_context(av_format_context);
     }
 
-    gsr_cursor_deinit(&x11_cursor);
     gsr_damage_deinit(&damage);
     gsr_color_conversion_deinit(&color_conversion);
     gsr_video_encoder_destroy(video_encoder, video_codec_context);
     gsr_encoder_deinit(&encoder);
-    for(VideoSource &video_source : video_sources) {
-        gsr_capture_destroy(video_source.capture);
-    }
+    gsr_video_sources_deinit(video_sources);
 #ifdef GSR_APP_AUDIO
     gsr_pipewire_audio_deinit(&pipewire_audio);
 #endif
-    if(kms_client_initialized) {
-        gsr_capture_kms_cleanup_kms_fds();
-        gsr_kms_client_deinit(&kms_client);
-    }
-
-    gsr_kde_night_light_destroy(kde_night_light);
+    gsr_capture_deps_deinit(&capture_deps);
 
     if(!arg_parser.settings.is_replaying && arg_parser.settings.recording_saved_script)
         run_recording_saved_script_async(arg_parser.settings.recording_saved_script, arg_parser.settings.filename, "regular");
