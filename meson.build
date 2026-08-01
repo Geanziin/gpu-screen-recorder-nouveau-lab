@@ -35,6 +35,7 @@ src = [
     'src/recorder/audio_codec.c',
     'src/recorder/video_codec.c',
     'src/recorder/codec_select.c',
+    'src/recorder/windowing.c',
     'src/egl.c',
     'src/cuda.c',
     'src/window_texture.c',
