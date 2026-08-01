@@ -6,6 +6,7 @@
 #include "../include/defs.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 typedef struct AVCodecContext AVCodecContext;
 typedef struct AVFrame AVFrame;
@@ -63,5 +64,22 @@ vec2i gsr_capture_get_target_position(vec2i output_size, gsr_capture_metadata *c
 unsigned int gl_create_texture(gsr_egl *egl, int width, int height, int internal_format, unsigned int format, int filter);
 
 bool get_nvidia_driver_version(int *major, int *minor);
+
+/* Return false from the callback to stop splitting */
+typedef bool (*gsr_string_split_callback)(const char *str, size_t size, void *userdata);
+void gsr_string_split(const char *str, char delimiter, gsr_string_split_callback callback, void *userdata);
+
+bool gsr_string_starts_with(const char *str, size_t str_size, const char *substr);
+bool gsr_string_ends_with(const char *str, const char *substr);
+
+bool gsr_string_to_int(const char *str, size_t size, int *number);
+bool gsr_string_to_int64(const char *str, size_t size, int64_t *number);
+
+bool gsr_array_ensure_capacity(void **array, size_t num_items, size_t *capacity_items, size_t item_size);
+
+/* These write a formatted local date/time into |str|, which should be at least 128 bytes in size */
+void gsr_get_date_str(char *str, size_t size);
+void gsr_get_date_only_str(char *str, size_t size);
+void gsr_get_time_only_str(char *str, size_t size);
 
 #endif /* GSR_UTILS_H */

@@ -781,30 +781,6 @@ static void save_replay_30_minutes_handler(int) {
     save_replay_seconds = 60*30;
 }
 
-static std::string get_date_str() {
-    char str[128];
-    time_t now = time(NULL);
-    struct tm *t = localtime(&now);
-    strftime(str, sizeof(str)-1, "%Y-%m-%d_%H-%M-%S", t);
-    return str;
-}
-
-static std::string get_date_only_str() {
-    char str[128];
-    time_t now = time(NULL);
-    struct tm *t = localtime(&now);
-    strftime(str, sizeof(str)-1, "%Y-%m-%d", t);
-    return str;
-}
-
-static std::string get_time_only_str() {
-    char str[128];
-    time_t now = time(NULL);
-    struct tm *t = localtime(&now);
-    strftime(str, sizeof(str)-1, "%H-%M-%S", t);
-    return str;
-}
-
 static AVStream* create_stream(AVFormatContext *av_format_context, AVCodecContext *codec_context) {
     AVStream *stream = avformat_new_stream(av_format_context, nullptr);
     if (!stream) {
@@ -1082,16 +1058,20 @@ static std::future<bool> save_replay_thread;
 static std::string save_replay_output_filepath;
 
 static std::string create_new_recording_filepath_from_timestamp(std::string directory, const char *filename_prefix, const std::string &file_extension, bool date_folders) {
+    char date_str[128];
     std::string output_filepath;
     if(date_folders) {
-        std::string output_folder = directory + '/' + get_date_only_str();
+        gsr_get_date_only_str(date_str, sizeof(date_str));
+        std::string output_folder = directory + '/' + date_str;
         if(create_directory_recursive(&output_folder[0]) != 0)
             gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create directory: %s", output_folder.c_str());
-        output_filepath = output_folder + "/" + filename_prefix + "_" + get_time_only_str() + "." + file_extension;
+        gsr_get_time_only_str(date_str, sizeof(date_str));
+        output_filepath = output_folder + "/" + filename_prefix + "_" + date_str + "." + file_extension;
     } else {
         if(create_directory_recursive(&directory[0]) != 0)
             gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create directory: %s", directory.c_str());
-        output_filepath = directory + "/" + filename_prefix + "_" + get_date_str() + "." + file_extension;
+        gsr_get_date_str(date_str, sizeof(date_str));
+        output_filepath = directory + "/" + filename_prefix + "_" + date_str + "." + file_extension;
     }
     return output_filepath;
 }
@@ -1240,35 +1220,6 @@ static bool save_replay_async(AVCodecContext *video_codec_context, int video_str
     return true;
 }
 
-static void split_string(const std::string &str, char delimiter, std::function<bool(const char*,size_t)> callback) {
-    size_t index = 0;
-    while(index < str.size()) {
-        size_t end_index = str.find(delimiter, index);
-        if(end_index == std::string::npos)
-            end_index = str.size();
-
-        if(!callback(&str[index], end_index - index))
-            break;
-
-        index = end_index + 1;
-    }
-}
-
-static bool string_starts_with(const char *str, size_t str_size, const char *substr) {
-    int len = strlen(substr);
-    return (int)str_size >= len && memcmp(str, substr, len) == 0;
-}
-
-static bool string_starts_with(const std::string &str, const char *substr) {
-    return string_starts_with(str.data(), str.size(), substr);
-}
-
-static bool string_ends_with(const char *str, const char *substr) {
-    int str_len = strlen(str);
-    int substr_len = strlen(substr);
-    return str_len >= substr_len && memcmp(str + str_len - substr_len, substr, substr_len) == 0;
-}
-
 static const AudioDevice* get_audio_device_by_name(const std::vector<AudioDevice> &audio_devices, const char *name) {
     for(const auto &audio_device : audio_devices) {
         if(strcmp(audio_device.name.c_str(), name) == 0)
@@ -1277,44 +1228,42 @@ static const AudioDevice* get_audio_device_by_name(const std::vector<AudioDevice
     return nullptr;
 }
 
+static bool parse_audio_input_arg_callback(const char *sub, size_t size, void *userdata) {
+    MergedAudioInputs *result = (MergedAudioInputs*)userdata;
+    if(size == 0)
+        return true;
+
+    AudioInput audio_input;
+    audio_input.name.assign(sub, size);
+
+    if(gsr_string_starts_with(audio_input.name.data(), audio_input.name.size(), "name:")) {
+        result->custom_name = audio_input.name.substr(5);
+    } else if(gsr_string_starts_with(audio_input.name.data(), audio_input.name.size(), "app:")) {
+        audio_input.name.erase(audio_input.name.begin(), audio_input.name.begin() + 4);
+        audio_input.type = AudioInputType::APPLICATION;
+        audio_input.inverted = false;
+        result->audio_inputs.push_back(std::move(audio_input));
+    } else if(gsr_string_starts_with(audio_input.name.data(), audio_input.name.size(), "app-inverse:")) {
+        audio_input.name.erase(audio_input.name.begin(), audio_input.name.begin() + 12);
+        audio_input.type = AudioInputType::APPLICATION;
+        audio_input.inverted = true;
+        result->audio_inputs.push_back(std::move(audio_input));
+    } else if(gsr_string_starts_with(audio_input.name.data(), audio_input.name.size(), "device:")) {
+        audio_input.name.erase(audio_input.name.begin(), audio_input.name.begin() + 7);
+        audio_input.type = AudioInputType::DEVICE;
+        result->audio_inputs.push_back(std::move(audio_input));
+    } else {
+        audio_input.type = AudioInputType::DEVICE;
+        result->audio_inputs.push_back(std::move(audio_input));
+    }
+
+    return true;
+}
+
 static MergedAudioInputs parse_audio_input_arg(const char *str) {
     MergedAudioInputs result;
     result.track_name = str;
-
-    split_string(str, '|', [&](const char *sub, size_t size) {
-        if(size == 0)
-            return true;
-
-        AudioInput audio_input;
-        audio_input.name.assign(sub, size);
-
-        if(string_starts_with(audio_input.name.c_str(), "name:")) {
-            result.custom_name = audio_input.name.substr(5);
-            return true;
-        } else if(string_starts_with(audio_input.name.c_str(), "app:")) {
-            audio_input.name.erase(audio_input.name.begin(), audio_input.name.begin() + 4);
-            audio_input.type = AudioInputType::APPLICATION;
-            audio_input.inverted = false;
-            result.audio_inputs.push_back(std::move(audio_input));
-            return true;
-        } else if(string_starts_with(audio_input.name.c_str(), "app-inverse:")) {
-            audio_input.name.erase(audio_input.name.begin(), audio_input.name.begin() + 12);
-            audio_input.type = AudioInputType::APPLICATION;
-            audio_input.inverted = true;
-            result.audio_inputs.push_back(std::move(audio_input));
-            return true;
-        } else if(string_starts_with(audio_input.name.c_str(), "device:")) {
-            audio_input.name.erase(audio_input.name.begin(), audio_input.name.begin() + 7);
-            audio_input.type = AudioInputType::DEVICE;
-            result.audio_inputs.push_back(std::move(audio_input));
-            return true;
-        } else {
-            audio_input.type = AudioInputType::DEVICE;
-            result.audio_inputs.push_back(std::move(audio_input));
-            return true;
-        }
-    });
-
+    gsr_string_split(str, '|', parse_audio_input_arg_callback, &result);
     return result;
 }
 
@@ -2692,16 +2641,6 @@ static bool contains_non_hex_number(const char *str) {
     return is_hex && !hex_start;
 }
 
-template <typename T>
-static bool string_to_int(const char *str, size_t len, T *number) {
-    char number_str[32];
-    snprintf(number_str, sizeof(number_str), "%.*s", (int)len, str);
-
-    errno = 0;
-    *number = strtol(number_str, NULL, 0);
-    return errno == 0;
-}
-
 static void capture_source_type_from_string(const char *capture_source_str, size_t size, CaptureSource &capture_source) {
     char capture_source_str_n[64];
     snprintf(capture_source_str_n, sizeof(capture_source_str_n), "%.*s", (int)size, capture_source_str);
@@ -2766,180 +2705,199 @@ static bool string_to_bool(const char *str, size_t len, bool *value) {
     }
 }
 
-static void parse_capture_source_options(const std::string &capture_source_str, CaptureSource &capture_source) {
-    bool is_first_column = true;
+struct ParseCaptureSourceOptionsUserdata {
+    CaptureSource *capture_source;
+    bool is_first_column;
+};
 
-    split_string(capture_source_str, ';', [&](const char *sub, size_t size) {
-        if(size == 0)
-            return true;
-
-        // First column contains the capture target
-        if(is_first_column) {
-            is_first_column = false;
-            return true;
-        }
-
-        if(string_starts_with(sub, size, "x=")) {
-            capture_source.pos.x_type = sub[size - 1] == '%' ? VVEC2I_TYPE_SCALAR : VVEC2I_TYPE_PIXELS;
-            sub += 2;
-            size -= 2;
-            if(!string_to_int(sub, size, &capture_source.pos.x)) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option x: \"%.*s\", expected a number", (int)size, sub);
-                _exit(1);
-            }
-        } else if(string_starts_with(sub, size, "y=")) {
-            capture_source.pos.y_type = sub[size - 1] == '%' ? VVEC2I_TYPE_SCALAR : VVEC2I_TYPE_PIXELS;
-            sub += 2;
-            size -= 2;
-            if(!string_to_int(sub, size, &capture_source.pos.y)) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option y: \"%.*s\", expected a number", (int)size, sub);
-                _exit(1);
-            }
-
-        } else if(string_starts_with(sub, size, "width=")) {
-            capture_source.size.x_type = sub[size - 1] == '%' ? VVEC2I_TYPE_SCALAR : VVEC2I_TYPE_PIXELS;
-            sub += 6;
-            size -= 6;
-            if(!string_to_int(sub, size, &capture_source.size.x)) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option width: \"%.*s\", expected a number", (int)size, sub);
-                _exit(1);
-            }
-        } else if(string_starts_with(sub, size, "height=")) {
-            capture_source.size.y_type = sub[size - 1] == '%' ? VVEC2I_TYPE_SCALAR : VVEC2I_TYPE_PIXELS;
-            sub += 7;
-            size -= 7;
-            if(!string_to_int(sub, size, &capture_source.size.y)) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option height: \"%.*s\", expected a number", (int)size, sub);
-                _exit(1);
-            }
-        } else if(string_starts_with(sub, size, "halign=")) {
-            sub += 7;
-            size -= 7;
-            if(!string_to_capture_alignment(sub, size, &capture_source.halign)) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option halign: \"%.*s\", expected a \"start\", \"center\" or \"end\"", (int)size, sub);
-                _exit(1);
-            }
-        } else if(string_starts_with(sub, size, "valign=")) {
-            sub += 7;
-            size -= 7;
-            if(!string_to_capture_alignment(sub, size, &capture_source.valign)) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option valign: \"%.*s\", expected a \"start\", \"center\" or \"end\"", (int)size, sub);
-                _exit(1);
-            }
-        } else if(string_starts_with(sub, size, "pixfmt=")) {
-            sub += 7;
-            size -= 7;
-            if(!string_to_v4l2_pixfmt(sub, size, &capture_source.v4l2_pixfmt)) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid v4l2 pixfmt value for option pixfmt: \"%.*s\", expected a \"auto\", \"yuyv\" or \"mjpeg\"", (int)size, sub);
-                _exit(1);
-            }
-        } else if(string_starts_with(sub, size, "hflip=")) {
-            sub += 6;
-            size -= 6;
-            bool hflip = false;
-            if(!string_to_bool(sub, size, &hflip)) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid bool value for option hflip: \"%.*s\", expected a \"true\" or \"false\"", (int)size, sub);
-                _exit(1);
-            }
-
-            if(hflip)
-                capture_source.flip |= GSR_FLIP_HORIZONTAL;
-        } else if(string_starts_with(sub, size, "vflip=")) {
-            sub += 6;
-            size -= 6;
-            bool vflip = false;
-            if(!string_to_bool(sub, size, &vflip)) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid bool value for option vflip: \"%.*s\", expected a \"true\" or \"false\"", (int)size, sub);
-                _exit(1);
-            }
-
-            if(vflip)
-                capture_source.flip |= GSR_FLIP_VERTICAL;
-        } else if(string_starts_with(sub, size, "camera_fps=")) {
-            sub += 11;
-            size -= 11;
-            if(!string_to_int(sub, size, &capture_source.camera_fps)) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option camera_fps: \"%.*s\", expected a number", (int)size, sub);
-                _exit(1);
-            }
-        } else if(string_starts_with(sub, size, "camera_width=")) {
-            sub += 13;
-            size -= 13;
-            if(!string_to_int(sub, size, &capture_source.camera_resolution.x)) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option camera_width: \"%.*s\", expected a number", (int)size, sub);
-                _exit(1);
-            }
-        } else if(string_starts_with(sub, size, "camera_height=")) {
-            sub += 14;
-            size -= 14;
-            if(!string_to_int(sub, size, &capture_source.camera_resolution.y)) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option camera_height: \"%.*s\", expected a number", (int)size, sub);
-                _exit(1);
-            }
-        } else {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target option \"%.*s\", expected x, y, width, height, halign, valign, pixfmt, hflip, vflip, camera_fps, camera_width or camera_height", (int)size, sub);
-            _exit(1);
-        }
-
+static bool parse_capture_source_options_callback(const char *sub, size_t size, void *userdata) {
+    ParseCaptureSourceOptionsUserdata *parse_userdata = (ParseCaptureSourceOptionsUserdata*)userdata;
+    CaptureSource &capture_source = *parse_userdata->capture_source;
+    if(size == 0)
         return true;
-    });
+
+    if(parse_userdata->is_first_column) {
+        parse_userdata->is_first_column = false;
+        return true;
+    }
+
+    if(gsr_string_starts_with(sub, size, "x=")) {
+        capture_source.pos.x_type = sub[size - 1] == '%' ? VVEC2I_TYPE_SCALAR : VVEC2I_TYPE_PIXELS;
+        sub += 2;
+        size -= 2;
+        if(!gsr_string_to_int(sub, size, &capture_source.pos.x)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option x: \"%.*s\", expected a number", (int)size, sub);
+        _exit(1);
+        }
+    } else if(gsr_string_starts_with(sub, size, "y=")) {
+        capture_source.pos.y_type = sub[size - 1] == '%' ? VVEC2I_TYPE_SCALAR : VVEC2I_TYPE_PIXELS;
+        sub += 2;
+        size -= 2;
+        if(!gsr_string_to_int(sub, size, &capture_source.pos.y)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option y: \"%.*s\", expected a number", (int)size, sub);
+        _exit(1);
+        }
+
+    } else if(gsr_string_starts_with(sub, size, "width=")) {
+        capture_source.size.x_type = sub[size - 1] == '%' ? VVEC2I_TYPE_SCALAR : VVEC2I_TYPE_PIXELS;
+        sub += 6;
+        size -= 6;
+        if(!gsr_string_to_int(sub, size, &capture_source.size.x)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option width: \"%.*s\", expected a number", (int)size, sub);
+        _exit(1);
+        }
+    } else if(gsr_string_starts_with(sub, size, "height=")) {
+        capture_source.size.y_type = sub[size - 1] == '%' ? VVEC2I_TYPE_SCALAR : VVEC2I_TYPE_PIXELS;
+        sub += 7;
+        size -= 7;
+        if(!gsr_string_to_int(sub, size, &capture_source.size.y)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option height: \"%.*s\", expected a number", (int)size, sub);
+        _exit(1);
+        }
+    } else if(gsr_string_starts_with(sub, size, "halign=")) {
+        sub += 7;
+        size -= 7;
+        if(!string_to_capture_alignment(sub, size, &capture_source.halign)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option halign: \"%.*s\", expected a \"start\", \"center\" or \"end\"", (int)size, sub);
+        _exit(1);
+        }
+    } else if(gsr_string_starts_with(sub, size, "valign=")) {
+        sub += 7;
+        size -= 7;
+        if(!string_to_capture_alignment(sub, size, &capture_source.valign)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option valign: \"%.*s\", expected a \"start\", \"center\" or \"end\"", (int)size, sub);
+        _exit(1);
+        }
+    } else if(gsr_string_starts_with(sub, size, "pixfmt=")) {
+        sub += 7;
+        size -= 7;
+        if(!string_to_v4l2_pixfmt(sub, size, &capture_source.v4l2_pixfmt)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid v4l2 pixfmt value for option pixfmt: \"%.*s\", expected a \"auto\", \"yuyv\" or \"mjpeg\"", (int)size, sub);
+        _exit(1);
+        }
+    } else if(gsr_string_starts_with(sub, size, "hflip=")) {
+        sub += 6;
+        size -= 6;
+        bool hflip = false;
+        if(!string_to_bool(sub, size, &hflip)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid bool value for option hflip: \"%.*s\", expected a \"true\" or \"false\"", (int)size, sub);
+        _exit(1);
+        }
+
+        if(hflip)
+        capture_source.flip |= GSR_FLIP_HORIZONTAL;
+    } else if(gsr_string_starts_with(sub, size, "vflip=")) {
+        sub += 6;
+        size -= 6;
+        bool vflip = false;
+        if(!string_to_bool(sub, size, &vflip)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid bool value for option vflip: \"%.*s\", expected a \"true\" or \"false\"", (int)size, sub);
+        _exit(1);
+        }
+
+        if(vflip)
+        capture_source.flip |= GSR_FLIP_VERTICAL;
+    } else if(gsr_string_starts_with(sub, size, "camera_fps=")) {
+        sub += 11;
+        size -= 11;
+        if(!gsr_string_to_int(sub, size, &capture_source.camera_fps)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option camera_fps: \"%.*s\", expected a number", (int)size, sub);
+        _exit(1);
+        }
+    } else if(gsr_string_starts_with(sub, size, "camera_width=")) {
+        sub += 13;
+        size -= 13;
+        if(!gsr_string_to_int(sub, size, &capture_source.camera_resolution.x)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option camera_width: \"%.*s\", expected a number", (int)size, sub);
+        _exit(1);
+        }
+    } else if(gsr_string_starts_with(sub, size, "camera_height=")) {
+        sub += 14;
+        size -= 14;
+        if(!gsr_string_to_int(sub, size, &capture_source.camera_resolution.y)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option camera_height: \"%.*s\", expected a number", (int)size, sub);
+        _exit(1);
+        }
+    } else {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target option \"%.*s\", expected x, y, width, height, halign, valign, pixfmt, hflip, vflip, camera_fps, camera_width or camera_height", (int)size, sub);
+        _exit(1);
+    }
+
+    return true;
+}
+
+static void parse_capture_source_options(const std::string &capture_source_str, CaptureSource &capture_source) {
+    ParseCaptureSourceOptionsUserdata userdata;
+    userdata.capture_source = &capture_source;
+    userdata.is_first_column = true;
+    gsr_string_split(capture_source_str.c_str(), ';', parse_capture_source_options_callback, &userdata);
+}
+
+struct ParseCaptureSourceArgUserdata {
+    std::vector<CaptureSource> *requested_capture_sources;
+    const args_parser *arg_parser;
+    bool has_multiple_capture_sources;
+};
+
+static bool parse_capture_source_arg_callback(const char *sub, size_t size, void *userdata) {
+    ParseCaptureSourceArgUserdata *parse_userdata = (ParseCaptureSourceArgUserdata*)userdata;
+    if(size == 0)
+        return true;
+
+    const char *substr_start = sub;
+    size_t capture_source_size = size;
+    const char *capture_source_end = (const char*)memchr(sub, ';', size);
+    if(capture_source_end)
+        capture_source_size = capture_source_end - sub;
+
+    CaptureSource capture_source;
+    capture_source.region_pos = parse_userdata->arg_parser->region_position;
+    capture_source.region_size = parse_userdata->arg_parser->region_size;
+
+    if(gsr_string_starts_with(sub, capture_source_size, "monitor:")) {
+        capture_source.type = GSR_CAPTURE_SOURCE_TYPE_MONITOR;
+        sub += 8;
+        capture_source_size -= 8;
+    } else if(gsr_string_starts_with(sub, capture_source_size, "window:")) {
+        capture_source.type = GSR_CAPTURE_SOURCE_TYPE_WINDOW;
+        sub += 7;
+        capture_source_size -= 7;
+    } else if(gsr_string_starts_with(sub, capture_source_size, "v4l2:")) {
+        capture_source.type = GSR_CAPTURE_SOURCE_TYPE_V4L2;
+        sub += 5;
+        capture_source_size -= 5;
+    } else {
+        capture_source_type_from_string(sub, capture_source_size, capture_source);
+    }
+
+    capture_source.name.assign(sub, capture_source_size);
+
+    if(capture_source.type == GSR_CAPTURE_SOURCE_TYPE_WINDOW) {
+        if(!gsr_string_to_int64(capture_source.name.c_str(), capture_source.name.size(), &capture_source.window_id)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "invalid window number %s", capture_source.name.c_str());
+        args_parser_print_usage();
+        _exit(1);
+        }
+    }
+
+    if(parse_userdata->has_multiple_capture_sources) {
+        capture_source.halign = GSR_CAPTURE_ALIGN_START;
+        capture_source.valign = GSR_CAPTURE_ALIGN_START;
+        capture_source.pos = {0, 0, VVEC2I_TYPE_PIXELS, VVEC2I_TYPE_PIXELS};
+    }
+
+    parse_capture_source_options(std::string(substr_start, size), capture_source);
+    parse_userdata->requested_capture_sources->push_back(capture_source);
+    return true;
 }
 
 static std::vector<CaptureSource> parse_capture_source_arg(const char *capture_source_arg, const args_parser &arg_parser) {
     std::vector<CaptureSource> requested_capture_sources;
-    const bool has_multiple_capture_sources = strchr(capture_source_arg, '|') != nullptr;
-
-    split_string(capture_source_arg, '|', [&](const char *sub, size_t size) {
-        if(size == 0)
-            return true;
-
-        const char *substr_start = sub;
-        size_t capture_source_size = size;
-        const char *capture_source_end = (const char*)memchr(sub, ';', size);
-        if(capture_source_end)
-            capture_source_size = capture_source_end - sub;
-
-        CaptureSource capture_source;
-        capture_source.region_pos = arg_parser.region_position;
-        capture_source.region_size = arg_parser.region_size;
-
-        if(string_starts_with(sub, capture_source_size, "monitor:")) {
-            capture_source.type = GSR_CAPTURE_SOURCE_TYPE_MONITOR;
-            sub += 8;
-            capture_source_size -= 8;
-        } else if(string_starts_with(sub, capture_source_size, "window:")) {
-            capture_source.type = GSR_CAPTURE_SOURCE_TYPE_WINDOW;
-            sub += 7;
-            capture_source_size -= 7;
-        } else if(string_starts_with(sub, capture_source_size, "v4l2:")) {
-            capture_source.type = GSR_CAPTURE_SOURCE_TYPE_V4L2;
-            sub += 5;
-            capture_source_size -= 5;
-        } else {
-            capture_source_type_from_string(sub, capture_source_size, capture_source);
-        }
-
-        capture_source.name.assign(sub, capture_source_size);
-
-        if(capture_source.type == GSR_CAPTURE_SOURCE_TYPE_WINDOW) {
-            if(!string_to_int(capture_source.name.c_str(), capture_source.name.size(), &capture_source.window_id)) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid window number %s", capture_source.name.c_str());
-                args_parser_print_usage();
-                _exit(1);
-            }
-        }
-
-        if(has_multiple_capture_sources) {
-            capture_source.halign = GSR_CAPTURE_ALIGN_START;
-            capture_source.valign = GSR_CAPTURE_ALIGN_START;
-            capture_source.pos = {0, 0, VVEC2I_TYPE_PIXELS, VVEC2I_TYPE_PIXELS};
-        }
-
-        parse_capture_source_options(std::string(substr_start, size), capture_source);
-        requested_capture_sources.push_back(capture_source);
-        return true;
-    });
-
+    ParseCaptureSourceArgUserdata userdata;
+    userdata.requested_capture_sources = &requested_capture_sources;
+    userdata.arg_parser = &arg_parser;
+    userdata.has_multiple_capture_sources = strchr(capture_source_arg, '|') != nullptr;
+    gsr_string_split(capture_source_arg, '|', parse_capture_source_arg_callback, &userdata);
     return requested_capture_sources;
 }
 
@@ -3462,10 +3420,10 @@ static AudioDeviceData create_application_audio_audio_input(const MergedAudioInp
 #endif
 
 static bool get_image_format_from_filename(const char *filename, gsr_image_format *image_format) {
-    if(string_ends_with(filename, ".jpg") || string_ends_with(filename, ".jpeg")) {
+    if(gsr_string_ends_with(filename, ".jpg") || gsr_string_ends_with(filename, ".jpeg")) {
         *image_format = GSR_IMAGE_FORMAT_JPEG;
         return true;
-    } else if(string_ends_with(filename, ".png")) {
+    } else if(gsr_string_ends_with(filename, ".png")) {
         *image_format = GSR_IMAGE_FORMAT_PNG;
         return true;
     } else {

@@ -1,5 +1,6 @@
 #include "../include/pipewire_audio.h"
 #include "../include/log.h"
+#include "../include/utils.h"
 
 #include <pipewire/pipewire.h>
 #include <pipewire/extensions/metadata.h>
@@ -400,24 +401,6 @@ static bool gsr_pipewire_audio_listen_on_metadata(gsr_pipewire_audio *self, uint
     return true;
 }
 
-static bool array_ensure_capacity(void **array, size_t size, size_t *capacity_items, size_t element_size) {
-    if(size + 1 >= *capacity_items) {
-        size_t new_capacity_items = *capacity_items * 2;
-        if(new_capacity_items == 0)
-            new_capacity_items = 32;
-
-        void *new_data = realloc(*array, new_capacity_items * element_size);
-        if(!new_data) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "pipewire_audio: failed to reallocate memory");
-            return false;
-        }
-
-        *array = new_data;
-        *capacity_items = new_capacity_items;
-    }
-    return true;
-}
-
 struct gsr_pipewire_audio_node_binding {
     gsr_pipewire_audio *self;
     struct pw_proxy *proxy;
@@ -435,7 +418,7 @@ static gsr_pipewire_audio_node* gsr_pipewire_audio_get_node_by_id(gsr_pipewire_a
 }
 
 static void gsr_pipewire_audio_add_node(gsr_pipewire_audio *self, uint32_t id, const char *node_name, gsr_pipewire_audio_node_type type, bool is_virtual, bool is_application) {
-    if(!array_ensure_capacity((void**)&self->stream_nodes, self->num_stream_nodes, &self->stream_nodes_capacity_items, sizeof(gsr_pipewire_audio_node)))
+    if(!gsr_array_ensure_capacity((void**)&self->stream_nodes, self->num_stream_nodes, &self->stream_nodes_capacity_items, sizeof(gsr_pipewire_audio_node)))
         return;
 
     char *node_name_copy = strdup(node_name);
@@ -525,7 +508,7 @@ static const struct pw_proxy_events node_proxy_events = {
 /* The registry only broadcasts a small set of the node properties (node.name, media.class, application.name, etc).
    Binding to the node is required to get the other properties (node.virtual, application.id, etc) from the node info event. */
 static void gsr_pipewire_audio_bind_node(gsr_pipewire_audio *self, uint32_t id) {
-    if(!array_ensure_capacity((void**)&self->node_bindings, self->num_node_bindings, &self->node_bindings_capacity_items, sizeof(gsr_pipewire_audio_node_binding*)))
+    if(!gsr_array_ensure_capacity((void**)&self->node_bindings, self->num_node_bindings, &self->node_bindings_capacity_items, sizeof(gsr_pipewire_audio_node_binding*)))
         return;
 
     gsr_pipewire_audio_node_binding *node_binding = calloc(1, sizeof(gsr_pipewire_audio_node_binding));
@@ -592,7 +575,7 @@ static void registry_event_global(void *data, uint32_t id, uint32_t permissions,
         const int node_id_num = node_id ? atoi(node_id) : 0;
 
         if(port_name && direction >= 0 && node_id_num > 0) {
-            if(!array_ensure_capacity((void**)&self->ports, self->num_ports, &self->ports_capacity_items, sizeof(gsr_pipewire_audio_port)))
+            if(!gsr_array_ensure_capacity((void**)&self->ports, self->num_ports, &self->ports_capacity_items, sizeof(gsr_pipewire_audio_port)))
                 return;
 
             //fprintf(stderr, "  port name: %s, node id: %d, direction: %s\n", port_name, node_id_num, port_direction);
@@ -615,7 +598,7 @@ static void registry_event_global(void *data, uint32_t id, uint32_t permissions,
         const uint32_t output_node_id_num = output_node ? atoi(output_node) : 0;
         const uint32_t input_node_id_num = input_node ? atoi(input_node) : 0;
         if(output_node_id_num > 0 && input_node_id_num > 0) {
-            if(!array_ensure_capacity((void**)&self->links, self->num_links, &self->links_capacity_items, sizeof(gsr_pipewire_audio_link)))
+            if(!gsr_array_ensure_capacity((void**)&self->links, self->num_links, &self->links_capacity_items, sizeof(gsr_pipewire_audio_link)))
                 return;
 
             //fprintf(stderr, "  new link (%u): %u -> %u\n", id, output_node_id_num, input_node_id_num);
@@ -891,7 +874,7 @@ static bool string_remove_suffix(char *str, const char *suffix) {
 }
 
 static bool gsr_pipewire_audio_add_links_to_output(gsr_pipewire_audio *self, const char **output_names, int num_output_names, const char *input_name, gsr_pipewire_audio_node_type output_type, gsr_pipewire_audio_link_input_type input_type, bool inverted) {
-    if(!array_ensure_capacity((void**)&self->requested_links, self->num_requested_links, &self->requested_links_capacity_items, sizeof(gsr_pipewire_audio_requested_link)))
+    if(!gsr_array_ensure_capacity((void**)&self->requested_links, self->num_requested_links, &self->requested_links_capacity_items, sizeof(gsr_pipewire_audio_requested_link)))
         return false;
     
     gsr_pipewire_audio_requested_output *outputs = calloc(num_output_names, sizeof(gsr_pipewire_audio_requested_output));

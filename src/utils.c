@@ -683,3 +683,89 @@ bool get_nvidia_driver_version(int *major, int *minor) {
     fclose(f);
     return success;
 }
+
+void gsr_string_split(const char *str, char delimiter, gsr_string_split_callback callback, void *userdata) {
+    const size_t str_len = strlen(str);
+    size_t index = 0;
+    while(index < str_len) {
+        const char *end = strchr(str + index, delimiter);
+        const size_t end_index = end ? (size_t)(end - str) : str_len;
+
+        if(!callback(str + index, end_index - index, userdata))
+            break;
+
+        index = end_index + 1;
+    }
+}
+
+bool gsr_string_starts_with(const char *str, size_t str_size, const char *substr) {
+    const size_t substr_len = strlen(substr);
+    return str_size >= substr_len && memcmp(str, substr, substr_len) == 0;
+}
+
+bool gsr_string_ends_with(const char *str, const char *substr) {
+    const size_t str_len = strlen(str);
+    const size_t substr_len = strlen(substr);
+    return str_len >= substr_len && memcmp(str + str_len - substr_len, substr, substr_len) == 0;
+}
+
+static bool string_to_long(const char *str, size_t size, long *number) {
+    char number_str[32];
+    snprintf(number_str, sizeof(number_str), "%.*s", (int)size, str);
+
+    errno = 0;
+    *number = strtol(number_str, NULL, 0);
+    return errno == 0;
+}
+
+bool gsr_string_to_int(const char *str, size_t size, int *number) {
+    long value = 0;
+    if(!string_to_long(str, size, &value))
+        return false;
+    *number = value;
+    return true;
+}
+
+bool gsr_string_to_int64(const char *str, size_t size, int64_t *number) {
+    long value = 0;
+    if(!string_to_long(str, size, &value))
+        return false;
+    *number = value;
+    return true;
+}
+
+bool gsr_array_ensure_capacity(void **array, size_t num_items, size_t *capacity_items, size_t item_size) {
+    if(num_items + 1 >= *capacity_items) {
+        size_t new_capacity_items = *capacity_items * 2;
+        if(new_capacity_items == 0)
+            new_capacity_items = 32;
+
+        void *new_data = realloc(*array, new_capacity_items * item_size);
+        if(!new_data) {
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_array_ensure_capacity: failed to reallocate memory");
+            return false;
+        }
+
+        *array = new_data;
+        *capacity_items = new_capacity_items;
+    }
+    return true;
+}
+
+void gsr_get_date_str(char *str, size_t size) {
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    strftime(str, size - 1, "%Y-%m-%d_%H-%M-%S", t);
+}
+
+void gsr_get_date_only_str(char *str, size_t size) {
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    strftime(str, size - 1, "%Y-%m-%d", t);
+}
+
+void gsr_get_time_only_str(char *str, size_t size) {
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    strftime(str, size - 1, "%H-%M-%S", t);
+}
