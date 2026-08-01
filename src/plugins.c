@@ -1,7 +1,6 @@
 #include "../include/plugins.h"
 #include "../include/log.h"
 #include "../include/utils.h"
-#include <stdio.h>
 #include <string.h>
 #include <dlfcn.h>
 #include <assert.h>

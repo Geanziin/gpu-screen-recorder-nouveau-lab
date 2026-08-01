@@ -1,7 +1,6 @@
 #include "../include/cursor.h"
 #include "../include/log.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>

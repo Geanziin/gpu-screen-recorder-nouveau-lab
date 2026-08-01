@@ -1,7 +1,6 @@
 #include "../include/shader.h"
 #include "../include/log.h"
 #include "../include/egl.h"
-#include <stdio.h>
 #include <assert.h>
 
 static bool print_compile_errors = false;

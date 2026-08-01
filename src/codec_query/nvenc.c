@@ -4,7 +4,6 @@
 #include "../../external/nvEncodeAPI.h"
 
 #include <dlfcn.h>
-#include <stdio.h>
 #include <string.h>
 
 #define NVENCAPI_MAJOR_VERSION_470 11

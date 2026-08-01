@@ -3,8 +3,6 @@
 #include "../../include/replay_buffer/replay_buffer_disk.h"
 
 #include <stdlib.h>
-#include <string.h>
-#include <assert.h>
 
 gsr_replay_buffer* gsr_replay_buffer_create(gsr_replay_storage replay_storage, const char *replay_directory, double replay_buffer_time, size_t replay_buffer_num_packets) {
     gsr_replay_buffer *replay_buffer = NULL;

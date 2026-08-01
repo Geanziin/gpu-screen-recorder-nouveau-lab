@@ -3,7 +3,6 @@
 
 #include <dlfcn.h>
 #include <stdbool.h>
-#include <stdio.h>
 
 void* dlsym_print_fail(void *handle, const char *name, bool required) {
     dlerror();

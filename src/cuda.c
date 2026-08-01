@@ -2,9 +2,7 @@
 #include "../include/log.h"
 #include "../include/library_loader.h"
 #include <string.h>
-#include <stdio.h>
 #include <dlfcn.h>
-#include <assert.h>
 
 bool gsr_cuda_load(gsr_cuda *self) {
     memset(self, 0, sizeof(gsr_cuda));

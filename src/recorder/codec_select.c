@@ -12,7 +12,6 @@
 #include <libavformat/avformat.h>
 
 #include <string.h>
-#include <assert.h>
 
 gsr_video_encoder* create_video_encoder(gsr_egl *egl, const gsr_recorder_settings *settings) {
     const gsr_color_depth color_depth = video_codec_to_bit_depth(settings->video_codec);

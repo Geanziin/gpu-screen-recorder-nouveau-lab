@@ -10,10 +10,10 @@
 #include <stdbool.h>
 #include <fcntl.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <poll.h>
-#include <sys/stat.h>
 #ifdef __linux__
 #include <sys/capability.h>
 #endif

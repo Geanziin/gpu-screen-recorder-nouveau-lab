@@ -2,14 +2,10 @@
 #include "../../include/log.h"
 #include "../../include/window_texture.h"
 #include "../../include/utils.h"
-#include "../../include/cursor.h"
 #include "../../include/color_conversion.h"
 #include "../../include/window/window.h"
 
 #include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <assert.h>
 
 #include <X11/Xlib.h>
 

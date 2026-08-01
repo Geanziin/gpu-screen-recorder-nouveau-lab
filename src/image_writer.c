@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <assert.h>
 #include <dlfcn.h>
 
 #define TJPF_RGBA 7

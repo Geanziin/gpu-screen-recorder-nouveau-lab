@@ -3,7 +3,6 @@
 #include "../../include/log.h"
 
 #include <stdlib.h>
-#include <string.h>
 #include <stdatomic.h>
 
 struct gsr_recording_clock {

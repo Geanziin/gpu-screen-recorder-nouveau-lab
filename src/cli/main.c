@@ -305,24 +305,26 @@ static void recording_stopped_callback(const char *filepath, void *userdata) {
 }
 
 #ifdef GSR_APP_AUDIO
+static gsr_pipewire_audio pipewire_audio;
+
 static bool app_audio_name_callback(const char *app_name, void *userdata) {
     gsr_app_audio_names *app_audio_names = userdata;
     gsr_app_audio_names_add(app_audio_names, app_name);
     return true;
 }
 
-static int setup_app_audio(gsr_pipewire_audio *pipewire_audio, gsr_app_audio_names *app_audio_names) {
+static int setup_app_audio(gsr_app_audio_names *app_audio_names) {
     if(!pulseaudio_server_is_pipewire()) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "your sound server is not PipeWire. Application audio is only available when running PipeWire audio server");
         return GSR_ERROR_UNSUPPORTED;
     }
 
-    if(!gsr_pipewire_audio_init(pipewire_audio)) {
+    if(!gsr_pipewire_audio_init(&pipewire_audio)) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "failed to setup PipeWire audio for application audio capture");
         return GSR_ERROR_UNSUPPORTED;
     }
 
-    gsr_pipewire_audio_for_each_app(pipewire_audio, app_audio_name_callback, app_audio_names);
+    gsr_pipewire_audio_for_each_app(&pipewire_audio, app_audio_name_callback, app_audio_names);
     return GSR_ERROR_OK;
 }
 #endif
@@ -364,7 +366,7 @@ static int take_screenshot(args_parser *arg_parser, gsr_windowing *windowing, gs
     return gsr_screenshot_take(&screenshot_params);
 }
 
-static int record(args_parser *arg_parser, gsr_windowing *windowing, gsr_capture_deps *capture_deps, gsr_capture_sources *capture_sources, gsr_audio_input_tracks *audio_input_tracks, gsr_pipewire_audio *pipewire_audio) {
+static int record(args_parser *arg_parser, gsr_windowing *windowing, gsr_capture_deps *capture_deps, gsr_capture_sources *capture_sources, gsr_audio_input_tracks *audio_input_tracks) {
     const Arg *plugin_arg = args_parser_get_arg(arg_parser, "-p");
     assert(plugin_arg);
 
@@ -378,9 +380,7 @@ static int record(args_parser *arg_parser, gsr_windowing *windowing, gsr_capture
     recorder_params.plugin_filepaths = plugin_arg->values;
     recorder_params.num_plugin_filepaths = plugin_arg->num_values;
 #ifdef GSR_APP_AUDIO
-    recorder_params.pipewire_audio = pipewire_audio;
-#else
-    (void)pipewire_audio;
+    recorder_params.pipewire_audio = &pipewire_audio;
 #endif
 
     gsr_recorder_callbacks callbacks;
@@ -473,11 +473,9 @@ int main(int argc, char **argv) {
     gsr_app_audio_names app_audio_names;
     memset(&app_audio_names, 0, sizeof(app_audio_names));
 
-    gsr_pipewire_audio pipewire_audio;
-    memset(&pipewire_audio, 0, sizeof(pipewire_audio));
 #ifdef GSR_APP_AUDIO
     if(uses_app_audio) {
-        const int app_audio_result = setup_app_audio(&pipewire_audio, &app_audio_names);
+        const int app_audio_result = setup_app_audio(&app_audio_names);
         if(app_audio_result != GSR_ERROR_OK)
             _exit(gsr_error_to_exit_code(app_audio_result));
     }
@@ -543,7 +541,7 @@ int main(int argc, char **argv) {
 
         result = take_screenshot(&arg_parser, &windowing, &capture_deps, &capture_sources, image_format);
     } else {
-        result = record(&arg_parser, &windowing, &capture_deps, &capture_sources, &audio_input_tracks, &pipewire_audio);
+        result = record(&arg_parser, &windowing, &capture_deps, &capture_sources, &audio_input_tracks);
     }
 
     gsr_capture_deps_deinit(&capture_deps);

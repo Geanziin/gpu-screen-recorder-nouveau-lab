@@ -2,13 +2,11 @@
 #include "../../include/log.h"
 #include "../../include/utils.h"
 #include "../../include/color_conversion.h"
-#include "../../include/cursor.h"
 #include "../../include/kde_night_light.h"
 #include "../../include/window/window.h"
 
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
 

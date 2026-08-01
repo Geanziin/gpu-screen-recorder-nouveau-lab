@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <dlfcn.h>
 #include <assert.h>
-#include <unistd.h>
 
 // TODO: rename gsr_egl to something else since this includes both egl and glx and in the future maybe vulkan too
 

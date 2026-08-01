@@ -3,7 +3,6 @@
 
 #ifdef GSR_DBUS
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -343,7 +342,6 @@ bool gsr_kde_night_light_get_inverse_matrix(gsr_kde_night_light *self, gsr_night
 
 #else /* GSR_DBUS */
 
-#include <stdio.h>
 #include <stddef.h>
 
 gsr_kde_night_light* gsr_kde_night_light_create(void) {

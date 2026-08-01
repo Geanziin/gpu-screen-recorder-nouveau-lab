@@ -3,7 +3,6 @@
 #include "../../include/log.h"
 
 #include <assert.h>
-#include <math.h>
 
 #include <libavutil/opt.h>
 

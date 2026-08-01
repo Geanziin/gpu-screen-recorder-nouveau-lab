@@ -3,7 +3,6 @@
 #include "../include/utils.h"
 #include "../include/window/window.h"
 
-#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <X11/extensions/Xdamage.h>
