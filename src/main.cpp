@@ -7,6 +7,7 @@ extern "C" {
 #include "../include/recorder/capture_source.h"
 #include "../include/recorder/capture_setup.h"
 #include "../include/recorder/audio_input.h"
+#include "../include/recorder/audio_capture.h"
 #include "../include/recorder/error.h"
 #include "../include/capture/nvfbc.h"
 #include "../include/capture/xcomposite.h"
@@ -195,26 +196,7 @@ static void run_recording_saved_script_async(const char *script_file, const char
     }
 }
 
-struct AudioDeviceData {
-    SoundDevice sound_device;
-    gsr_audio_input audio_input;
-    AVFilterContext *src_filter_ctx = nullptr;
-    AVFrame *frame = nullptr;
-    std::thread thread; // TODO: Instead of having a thread for each track, have one thread for all threads and read the data with non-blocking read
-};
-
 // TODO: Cleanup
-struct AudioTrack {
-    std::string name;
-    AVCodecContext *codec_context = nullptr;
-
-    std::vector<AudioDeviceData> audio_devices;
-    AVFilterGraph *graph = nullptr;
-    AVFilterContext *sink = nullptr;
-    int stream_index = 0;
-    int64_t pts = 0;
-};
-
 static bool add_hdr_metadata_to_video_stream(gsr_capture *cap, AVStream *video_stream) {
     size_t light_metadata_size = 0;
     size_t mastering_display_metadata_size = 0;
@@ -286,7 +268,7 @@ static void set_format_context_options(AVFormatContext *av_format_context) {
 }
 
 struct RecordingStartAudio {
-    const AudioTrack *audio_track;
+    const gsr_audio_track *audio_track;
     AVStream *stream;
 };
 
@@ -296,7 +278,7 @@ struct RecordingStartResult {
     std::vector<RecordingStartAudio> audio_inputs;
 };
 
-static RecordingStartResult start_recording_create_streams(const char *filename, const args_parser &arg_parser, AVCodecContext *video_codec_context, const std::vector<AudioTrack> &audio_tracks, bool hdr, gsr_video_sources *video_sources) {
+static RecordingStartResult start_recording_create_streams(const char *filename, const args_parser &arg_parser, AVCodecContext *video_codec_context, const gsr_audio_capture *audio_capture, bool hdr, gsr_video_sources *video_sources) {
     AVFormatContext *av_format_context;
     avformat_alloc_output_context2(&av_format_context, nullptr, arg_parser.settings.container_format, filename);
     set_format_context_options(av_format_context);
@@ -305,12 +287,13 @@ static RecordingStartResult start_recording_create_streams(const char *filename,
     avcodec_parameters_from_context(video_stream->codecpar, video_codec_context);
 
     RecordingStartResult result;
-    result.audio_inputs.reserve(audio_tracks.size());
+    result.audio_inputs.reserve(audio_capture->num_tracks);
 
-    for(const AudioTrack &audio_track : audio_tracks) {
+    for(size_t audio_track_index = 0; audio_track_index < audio_capture->num_tracks; ++audio_track_index) {
+        const gsr_audio_track &audio_track = audio_capture->tracks[audio_track_index];
         AVStream *audio_stream = create_stream(av_format_context, audio_track.codec_context);
-        if(!audio_track.name.empty() && !arg_parser.settings.exclude_metadata)
-            av_dict_set(&audio_stream->metadata, "title", audio_track.name.c_str(), 0);
+        if(!audio_track.name[0] == '\0' && !arg_parser.settings.exclude_metadata)
+            av_dict_set(&audio_stream->metadata, "title", audio_track.name, 0);
         avcodec_parameters_from_context(audio_stream->codecpar, audio_track.codec_context);
         result.audio_inputs.push_back({&audio_track, audio_stream});
     }
@@ -394,7 +377,7 @@ struct AudioPtsOffset {
     int stream_index = 0;
 };
 
-static bool save_replay_async(AVCodecContext *video_codec_context, int video_stream_index, const std::vector<AudioTrack> &audio_tracks, gsr_encoder *encoder, const args_parser &arg_parser, const std::string &file_extension, bool date_folders, bool hdr, gsr_video_sources *video_sources, int current_save_replay_seconds) {
+static bool save_replay_async(AVCodecContext *video_codec_context, int video_stream_index, const gsr_audio_capture *audio_capture, gsr_encoder *encoder, const args_parser &arg_parser, const std::string &file_extension, bool date_folders, bool hdr, gsr_video_sources *video_sources, int current_save_replay_seconds) {
     if(save_replay_thread.valid())
         return true;
 
@@ -420,15 +403,16 @@ static bool save_replay_async(AVCodecContext *video_codec_context, int video_str
     const int64_t video_pts_offset = gsr_replay_buffer_iterator_get_packet(cloned_replay_buffer, video_start_iterator)->pts;
 
     std::vector<AudioPtsOffset> audio_pts_offsets;
-    audio_pts_offsets.reserve(audio_tracks.size());
-    for(const AudioTrack &audio_track : audio_tracks) {
+    audio_pts_offsets.reserve(audio_capture->num_tracks);
+    for(size_t audio_track_index = 0; audio_track_index < audio_capture->num_tracks; ++audio_track_index) {
+        const gsr_audio_track &audio_track = audio_capture->tracks[audio_track_index];
         const gsr_replay_buffer_iterator audio_start_iterator = gsr_replay_buffer_find_keyframe(cloned_replay_buffer, video_start_iterator, audio_track.stream_index, false);
         const int64_t audio_pts_offset = audio_start_iterator.packet_index == (size_t)-1 ? 0 : gsr_replay_buffer_iterator_get_packet(cloned_replay_buffer, audio_start_iterator)->pts;
         audio_pts_offsets.push_back(AudioPtsOffset{audio_pts_offset, audio_track.stream_index});
     }
 
     std::string output_filepath = create_new_recording_filepath_from_timestamp(arg_parser.settings.filename, "Replay", file_extension, date_folders);
-    RecordingStartResult recording_start_result = start_recording_create_streams(output_filepath.c_str(), arg_parser, video_codec_context, audio_tracks, hdr, video_sources);
+    RecordingStartResult recording_start_result = start_recording_create_streams(output_filepath.c_str(), arg_parser, video_codec_context, audio_capture, hdr, video_sources);
     if(!recording_start_result.av_format_context) {
         pthread_mutex_lock(&encoder->replay_mutex);
         gsr_replay_buffer_destroy(cloned_replay_buffer);
@@ -489,7 +473,7 @@ static bool save_replay_async(AVCodecContext *video_codec_context, int video_str
                     continue;
                 }
 
-                const AudioTrack *audio_track = recording_start_audio->audio_track;
+                const gsr_audio_track *audio_track = recording_start_audio->audio_track;
                 stream = recording_start_audio->stream;
                 codec_context = audio_track->codec_context;
 
@@ -523,140 +507,6 @@ static bool save_replay_async(AVCodecContext *video_codec_context, int video_str
     });
 
     return true;
-}
-
-static int init_filter_graph(AVCodecContext* audio_codec_context, AVFilterGraph** graph, AVFilterContext** sink, std::vector<AVFilterContext*>& src_filter_ctx, size_t num_sources) {
-    char ch_layout[64];
-    int err = 0;
-    ch_layout[0] = '\0';
-
-    // C89-style variable declaration to
-    // avoid problems because of goto
-    AVFilterGraph* filter_graph = nullptr;
-    AVFilterContext* mix_ctx = nullptr;
-
-    const AVFilter* mix_filter = nullptr;
-    const AVFilter* abuffersink = nullptr;
-    AVFilterContext* abuffersink_ctx = nullptr;
-    char args[512] = { 0 };
-#if LIBAVFILTER_VERSION_INT >= AV_VERSION_INT(7, 107, 100)
-    bool normalize = false;
-#endif
-
-    filter_graph = avfilter_graph_alloc();
-    if (!filter_graph) {
-        fprintf(stderr, "Unable to create filter graph.\n");
-        err = AVERROR(ENOMEM);
-        goto fail;
-    }
-
-    for(size_t i = 0; i < num_sources; ++i) {
-        const AVFilter *abuffer = avfilter_get_by_name("abuffer");
-        if (!abuffer) {
-            fprintf(stderr, "Could not find the abuffer filter.\n");
-            err = AVERROR_FILTER_NOT_FOUND;
-            goto fail;
-        }
-
-        AVFilterContext *abuffer_ctx = avfilter_graph_alloc_filter(filter_graph, abuffer, NULL);
-        if (!abuffer_ctx) {
-            fprintf(stderr, "Could not allocate the abuffer instance.\n");
-            err = AVERROR(ENOMEM);
-            goto fail;
-        }
-
-        #if LIBAVCODEC_VERSION_MAJOR < 60
-        av_get_channel_layout_string(ch_layout, sizeof(ch_layout), 0, AV_CH_LAYOUT_STEREO);
-        #else
-        av_channel_layout_describe(&audio_codec_context->ch_layout, ch_layout, sizeof(ch_layout));
-        #endif
-        av_opt_set    (abuffer_ctx, "channel_layout", ch_layout,                                               AV_OPT_SEARCH_CHILDREN);
-        av_opt_set    (abuffer_ctx, "sample_fmt",     av_get_sample_fmt_name(audio_codec_context->sample_fmt), AV_OPT_SEARCH_CHILDREN);
-        av_opt_set_q  (abuffer_ctx, "time_base",      audio_codec_context->time_base,                          AV_OPT_SEARCH_CHILDREN);
-        av_opt_set_int(abuffer_ctx, "sample_rate",    audio_codec_context->sample_rate,                        AV_OPT_SEARCH_CHILDREN);
-        av_opt_set_int(abuffer_ctx, "bit_rate",       audio_codec_context->bit_rate,                           AV_OPT_SEARCH_CHILDREN);
-
-        err = avfilter_init_str(abuffer_ctx, NULL);
-        if (err < 0) {
-            fprintf(stderr, "Could not initialize the abuffer filter.\n");
-            goto fail;
-        }
-
-        src_filter_ctx.push_back(abuffer_ctx);
-    }
-
-    mix_filter = avfilter_get_by_name("amix");
-    if (!mix_filter) {
-        av_log(NULL, AV_LOG_ERROR, "Could not find the mix filter.\n");
-        err = AVERROR_FILTER_NOT_FOUND;
-        goto fail;
-    }
-
-#if LIBAVFILTER_VERSION_INT >= AV_VERSION_INT(7, 107, 100)
-    snprintf(args, sizeof(args), "inputs=%d:normalize=%s", (int)num_sources, normalize ? "true" : "false");
-#else
-    snprintf(args, sizeof(args), "inputs=%d", (int)num_sources);
-    gsr_log(GSR_LOG_LEVEL_WARNING, "your ffmpeg version doesn't support disabling normalizing of mixed audio. Volume might be lower than expected");
-#endif
-
-    err = avfilter_graph_create_filter(&mix_ctx, mix_filter, "amix", args, NULL, filter_graph);
-    if (err < 0) {
-        av_log(NULL, AV_LOG_ERROR, "Cannot create audio amix filter\n");
-        goto fail;
-    }
-
-    abuffersink = avfilter_get_by_name("abuffersink");
-    if (!abuffersink) {
-        fprintf(stderr, "Could not find the abuffersink filter.\n");
-        err = AVERROR_FILTER_NOT_FOUND;
-        goto fail;
-    }
-
-    abuffersink_ctx = avfilter_graph_alloc_filter(filter_graph, abuffersink, "sink");
-    if (!abuffersink_ctx) {
-        fprintf(stderr, "Could not allocate the abuffersink instance.\n");
-        err = AVERROR(ENOMEM);
-        goto fail;
-    }
-
-    err = avfilter_init_str(abuffersink_ctx, NULL);
-    if (err < 0) {
-        fprintf(stderr, "Could not initialize the abuffersink instance.\n");
-        goto fail;
-    }
-
-    err = 0;
-    for(size_t i = 0; i < src_filter_ctx.size(); ++i) {
-        AVFilterContext *src_ctx = src_filter_ctx[i];
-        if (err >= 0)
-            err = avfilter_link(src_ctx, 0, mix_ctx, i);
-    }
-    if (err >= 0)
-        err = avfilter_link(mix_ctx, 0, abuffersink_ctx, 0);
-    if (err < 0) {
-        av_log(NULL, AV_LOG_ERROR, "Error connecting filters\n");
-        goto fail;
-    }
-
-    err = avfilter_graph_config(filter_graph, NULL);
-    if (err < 0) {
-        av_log(NULL, AV_LOG_ERROR, "Error configuring the filter graph\n");
-        goto fail;
-    }
-
-    /* Make sure the sink always outputs frames with the exact amount of samples the audio encoder wants,
-       otherwise the audio encoder rejects the frame and that piece of audio is lost */
-    av_buffersink_set_frame_size(abuffersink_ctx, audio_codec_context->frame_size);
-
-    *graph = filter_graph;
-    *sink = abuffersink_ctx;
-
-    return 0;
-
-fail:
-    avfilter_graph_free(&filter_graph);
-    src_filter_ctx.clear();  // possibly unnecessary?
-    return err;
 }
 
 static void list_system_info(bool wayland) {
@@ -1149,101 +999,7 @@ static void capture_image_to_file(args_parser &arg_parser, gsr_egl *egl, gsr_win
 // OH, YOU MISSPELLED THE AUDIO INPUT? FUCK YOU
 // Should use amix if more than 1 audio device and 0 application audio, merged
 /* Returns -1 if none is available */
-static std::vector<AudioDeviceData> create_device_audio_inputs(const gsr_merged_audio_inputs *merged_audio_inputs, AVCodecContext *audio_codec_context, int num_channels, double num_audio_frames_shift, std::vector<AVFilterContext*> &src_filter_ctx, bool use_amix) {
-    std::vector<AudioDeviceData> audio_track_audio_devices;
-    for(size_t i = 0; i < merged_audio_inputs->num_items; ++i) {
-        const gsr_audio_input &audio_input = merged_audio_inputs->items[i];
-        AVFilterContext *src_ctx = nullptr;
-        if(use_amix)
-            src_ctx = src_filter_ctx[i];
-
-        AudioDeviceData audio_device;
-        audio_device.audio_input = audio_input;
-        audio_device.src_filter_ctx = src_ctx;
-
-        if(audio_input.name[0] == '\0') {
-            audio_device.sound_device.handle = NULL;
-            audio_device.sound_device.frames = 0;
-        } else {
-            char description[GSR_AUDIO_INPUT_NAME_MAX_SIZE + 8];
-            snprintf(description, sizeof(description), "gsr-%s", audio_input.name);
-            if(sound_device_get_by_name(&audio_device.sound_device, description, audio_input.name, description, num_channels, audio_codec_context->frame_size, audio_codec_context_get_audio_format(audio_codec_context)) != 0) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "failed to get \"%s\" audio device", audio_input.name);
-                _exit(1);
-            }
-        }
-
-        audio_device.frame = create_audio_frame(audio_codec_context);
-        if(!audio_device.frame)
-            _exit(1);
-        audio_device.frame->pts = -audio_codec_context->frame_size * num_audio_frames_shift;
-
-        audio_track_audio_devices.push_back(std::move(audio_device));
-    }
-    return audio_track_audio_devices;
-}
-
 #ifdef GSR_APP_AUDIO
-static AudioDeviceData create_application_audio_audio_input(const gsr_merged_audio_inputs &merged_audio_inputs, AVCodecContext *audio_codec_context, int num_channels, double num_audio_frames_shift, gsr_pipewire_audio *pipewire_audio) {
-    AudioDeviceData audio_device;
-    audio_device.frame = create_audio_frame(audio_codec_context);
-    if(!audio_device.frame)
-        _exit(1);
-    audio_device.frame->pts = -audio_codec_context->frame_size * num_audio_frames_shift;
-
-    char random_str[8];
-    if(!generate_random_characters_standard_alphabet(random_str, sizeof(random_str))) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to generate random string");
-        _exit(1);
-    }
-
-    std::string combined_sink_name = "gsr-combined-";
-    combined_sink_name.append(random_str, sizeof(random_str));
-    combined_sink_name += ".monitor";
-
-    if(sound_device_get_by_name(&audio_device.sound_device, combined_sink_name.c_str(), "", "gpu-screen-recorder", num_channels, audio_codec_context->frame_size, audio_codec_context_get_audio_format(audio_codec_context)) != 0) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to setup audio recording to combined sink");
-        _exit(1);
-    }
-
-    std::vector<const char*> audio_devices_sources;
-    for(size_t i = 0; i < merged_audio_inputs.num_items; ++i) {
-        const gsr_audio_input &audio_input = merged_audio_inputs.items[i];
-        if(audio_input.type == GSR_AUDIO_INPUT_TYPE_DEVICE)
-            audio_devices_sources.push_back(audio_input.name);
-    }
-
-    bool app_audio_inverted = false;
-    std::vector<const char*> app_names;
-    for(size_t i = 0; i < merged_audio_inputs.num_items; ++i) {
-        const gsr_audio_input &audio_input = merged_audio_inputs.items[i];
-        if(audio_input.type == GSR_AUDIO_INPUT_TYPE_APPLICATION) {
-            app_names.push_back(audio_input.name);
-            app_audio_inverted = audio_input.inverted;
-        }
-    }
-
-    if(!audio_devices_sources.empty()) {
-        if(!gsr_pipewire_audio_add_link_from_sources_to_stream(pipewire_audio, audio_devices_sources.data(), audio_devices_sources.size(), combined_sink_name.c_str())) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "failed to add application audio link");
-            _exit(1);
-        }
-    }
-
-    if(app_audio_inverted) {
-        if(!gsr_pipewire_audio_add_link_from_apps_to_stream_inverted(pipewire_audio, app_names.data(), app_names.size(), combined_sink_name.c_str())) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "failed to add application audio link");
-            _exit(1);
-        }
-    } else {
-        if(!gsr_pipewire_audio_add_link_from_apps_to_stream(pipewire_audio, app_names.data(), app_names.size(), combined_sink_name.c_str())) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "failed to add application audio link");
-            _exit(1);
-        }
-    }
-
-    return audio_device;
-}
 #endif
 
 static bool get_image_format_from_filename(const char *filename, gsr_image_format *image_format) {
@@ -1619,7 +1375,6 @@ int main(int argc, char **argv) {
     }
 
     AVStream *video_stream = nullptr;
-    std::vector<AudioTrack> audio_tracks;
 
     if(arg_parser.settings.video_encoder == GSR_VIDEO_ENCODER_HW_CPU && arg_parser.settings.video_codec != (gsr_video_codec)GSR_VIDEO_CODEC_AUTO && arg_parser.settings.video_codec != GSR_VIDEO_CODEC_H264) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "-encoder cpu was specified but a codec other than h264 was specified. -encoder cpu supports only h264 at the moment");
@@ -1652,6 +1407,10 @@ int main(int argc, char **argv) {
     video_frame->chroma_location = video_codec_context->chroma_sample_location;
 
     const size_t estimated_replay_buffer_packets = calculate_estimated_replay_buffer_packets(arg_parser.settings.replay_buffer_size_secs, arg_parser.settings.fps, arg_parser.settings.audio_codec, &requested_audio_inputs);
+    gsr_recording_clock *recording_clock = gsr_recording_clock_create();
+    if(!recording_clock)
+        _exit(1);
+
     gsr_encoder encoder;
     if(!gsr_encoder_init(&encoder, arg_parser.settings.replay_storage, estimated_replay_buffer_packets, arg_parser.settings.replay_buffer_size_secs, arg_parser.settings.filename)) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create encoder");
@@ -1716,6 +1475,10 @@ int main(int argc, char **argv) {
         }
     }
 
+    gsr_audio_capture audio_capture;
+    if(gsr_audio_capture_init(&audio_capture, &encoder, recording_clock, &running) != GSR_ERROR_OK)
+        _exit(1);
+
     int audio_max_frame_size = 1024;
     int audio_stream_index = VIDEO_STREAM_INDEX + 1;
     for(size_t audio_track_index = 0; audio_track_index < requested_audio_inputs.num_items; ++audio_track_index) {
@@ -1732,7 +1495,7 @@ int main(int argc, char **argv) {
                 gsr_log(GSR_LOG_LEVEL_ERROR, "added too many audio sources");
         }
 
-        if(audio_stream && !merged_audio_inputs.track_name[0] == '\0' && !arg_parser.settings.exclude_metadata)
+        if(audio_stream && merged_audio_inputs.track_name[0] != '\0' && !arg_parser.settings.exclude_metadata)
             av_dict_set(&audio_stream->metadata, "title", merged_audio_inputs.track_name, 0);
 
         if(!open_audio(audio_codec_context, arg_parser.settings.ffmpeg_audio_opts))
@@ -1748,12 +1511,16 @@ int main(int argc, char **argv) {
 
         //audio_frame->sample_rate = audio_codec_context->sample_rate;
 
-        std::vector<AVFilterContext*> src_filter_ctx;
+        AVFilterContext *src_filter_ctx[GSR_MAX_AUDIO_SOURCES_PER_TRACK];
         AVFilterGraph *graph = nullptr;
         AVFilterContext *sink = nullptr;
         if(use_amix) {
-            int err = init_filter_graph(audio_codec_context, &graph, &sink, src_filter_ctx, merged_audio_inputs.num_items);
-            if(err < 0) {
+            if(merged_audio_inputs.num_items > GSR_MAX_AUDIO_SOURCES_PER_TRACK) {
+                gsr_log(GSR_LOG_LEVEL_ERROR, "too many audio sources for one audio track, the maximum is %d", GSR_MAX_AUDIO_SOURCES_PER_TRACK);
+                _exit(1);
+            }
+
+            if(gsr_audio_init_filter_graph(audio_codec_context, &graph, &sink, src_filter_ctx, merged_audio_inputs.num_items) < 0) {
                 gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create audio filter");
                 _exit(1);
             }
@@ -1767,28 +1534,34 @@ int main(int argc, char **argv) {
         const double audio_startup_time_seconds = force_no_audio_offset ? 0 : audio_codec_get_desired_delay(arg_parser.settings.audio_codec, arg_parser.settings.fps);// * ((double)audio_codec_context->frame_size / 1024.0);
         const double num_audio_frames_shift = audio_startup_time_seconds / timeout_sec;
 
-        std::vector<AudioDeviceData> audio_track_audio_devices;
-        if(gsr_audio_inputs_has_app_audio(&merged_audio_inputs)) {
-            assert(!use_amix);
-#ifdef GSR_APP_AUDIO
-            audio_track_audio_devices.push_back(create_application_audio_audio_input(merged_audio_inputs, audio_codec_context, num_channels, num_audio_frames_shift, &pipewire_audio));
-#endif
-        } else {
-            audio_track_audio_devices = create_device_audio_inputs(&merged_audio_inputs, audio_codec_context, num_channels, num_audio_frames_shift, src_filter_ctx, use_amix);
-        }
-
-        AudioTrack audio_track;
-        audio_track.name = merged_audio_inputs.track_name;
+        gsr_audio_track audio_track;
+        memset(&audio_track, 0, sizeof(audio_track));
+        snprintf(audio_track.name, sizeof(audio_track.name), "%s", merged_audio_inputs.track_name);
         audio_track.codec_context = audio_codec_context;
-        audio_track.audio_devices = std::move(audio_track_audio_devices);
         audio_track.graph = graph;
         audio_track.sink = sink;
         audio_track.stream_index = audio_stream_index;
         audio_track.pts = -audio_codec_context->frame_size * num_audio_frames_shift;
-        audio_tracks.push_back(std::move(audio_track));
+
+        int audio_track_result = GSR_ERROR_OK;
+        if(gsr_audio_inputs_has_app_audio(&merged_audio_inputs)) {
+            assert(!use_amix);
+#ifdef GSR_APP_AUDIO
+            audio_track_result = gsr_audio_track_init_application_input(&audio_track, &merged_audio_inputs, audio_codec_context, num_channels, num_audio_frames_shift, &pipewire_audio);
+#endif
+        } else {
+            audio_track_result = gsr_audio_track_init_device_inputs(&audio_track, &merged_audio_inputs, audio_codec_context, num_channels, num_audio_frames_shift, src_filter_ctx, use_amix);
+        }
+
+        if(audio_track_result != GSR_ERROR_OK)
+            _exit(gsr_error_to_exit_code(audio_track_result));
+
+        if(!gsr_audio_capture_add_track(&audio_capture, &audio_track))
+            _exit(1);
         ++audio_stream_index;
 
-        audio_max_frame_size = std::max(audio_max_frame_size, audio_codec_context->frame_size);
+        if(audio_codec_context->frame_size > audio_max_frame_size)
+            audio_max_frame_size = audio_codec_context->frame_size;
     }
 
     //av_dump_format(av_format_context, 0, filename, 1);
@@ -1810,230 +1583,17 @@ int main(int argc, char **argv) {
     int damage_fps_counter = 0;
 
     bool paused = false;
-    std::atomic<double> paused_time_offset(0.0);
-    double paused_time_start = 0.0;
     bool replay_recording = false;
     RecordingStartResult replay_recording_start_result;
     std::vector<size_t> replay_recording_items;
     std::string replay_recording_filepath;
     bool force_iframe_frame = false; // Only needed for video since audio frames are always iframes
 
-    std::mutex audio_filter_mutex;
+    gsr_recording_clock_start(recording_clock);
+    const double record_start_time = gsr_recording_clock_get_start_time(recording_clock);
 
-    const double record_start_time = clock_get_monotonic_seconds();
-
-    const size_t audio_buffer_size = audio_max_frame_size * 4 * 2; // max 4 bytes/sample, 2 channels
-    uint8_t *empty_audio = (uint8_t*)malloc(audio_buffer_size);
-    if(!empty_audio) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create empty audio");
+    if(gsr_audio_capture_start(&audio_capture, audio_max_frame_size, uses_amix) != GSR_ERROR_OK)
         _exit(1);
-    }
-    memset(empty_audio, 0, audio_buffer_size);
-
-    for(AudioTrack &audio_track : audio_tracks) {
-        for(AudioDeviceData &audio_device : audio_track.audio_devices) {
-            audio_device.thread = std::thread([&]() mutable {
-                const AVSampleFormat sound_device_sample_format = audio_format_to_sample_format(audio_codec_context_get_audio_format(audio_track.codec_context));
-                // TODO: Always do conversion for now. This fixes issue with stuttering audio on pulseaudio with opus + multiple audio sources merged
-                const bool needs_audio_conversion = true;//audio_track.codec_context->sample_fmt != sound_device_sample_format;
-                SwrContext *swr = nullptr;
-                if(needs_audio_conversion) {
-                    swr = swr_alloc();
-                    if(!swr) {
-                        fprintf(stderr, "Failed to create SwrContext\n");
-                        _exit(1);
-                    }
-                    #if LIBAVUTIL_VERSION_MAJOR <= 56
-                    av_opt_set_channel_layout(swr, "in_channel_layout", AV_CH_LAYOUT_STEREO, 0);
-                    av_opt_set_channel_layout(swr, "out_channel_layout", AV_CH_LAYOUT_STEREO, 0);
-                    #elif LIBAVUTIL_VERSION_MAJOR >= 59
-                    av_opt_set_chlayout(swr, "in_chlayout", &audio_track.codec_context->ch_layout, 0);
-                    av_opt_set_chlayout(swr, "out_chlayout", &audio_track.codec_context->ch_layout, 0);
-                    #else
-                    av_opt_set_chlayout(swr, "in_channel_layout", &audio_track.codec_context->ch_layout, 0);
-                    av_opt_set_chlayout(swr, "out_channel_layout", &audio_track.codec_context->ch_layout, 0);
-                    #endif
-                    av_opt_set_int(swr, "in_sample_rate", audio_track.codec_context->sample_rate, 0);
-                    av_opt_set_int(swr, "out_sample_rate", audio_track.codec_context->sample_rate, 0);
-                    av_opt_set_sample_fmt(swr, "in_sample_fmt", sound_device_sample_format, 0);
-                    av_opt_set_sample_fmt(swr, "out_sample_fmt", audio_track.codec_context->sample_fmt, 0);
-                    swr_init(swr);
-                }
-
-                const double audio_fps = (double)audio_track.codec_context->sample_rate / (double)audio_track.codec_context->frame_size;
-                const int64_t timeout_ms = std::round(1000.0 / audio_fps);
-                const double timeout_sec = 1000.0 / audio_fps / 1000.0;
-                int64_t num_received_frames = 0;
-
-                // The sound device is opened before the recording starts, so it can contain old audio from before the recording started.
-                // Discard it so the recording doesn't start with old audio.
-                if(audio_device.sound_device.handle)
-                    sound_device_flush(&audio_device.sound_device);
-
-                while(running) {
-                    void *sound_buffer;
-                    int sound_buffer_size = -1;
-                    const double time_before_read_seconds = clock_get_monotonic_seconds();
-                    if(audio_device.sound_device.handle) {
-                        // TODO: use this instead of calculating time to read. But this can fluctuate and we dont want to go back in time,
-                        // also it's 0.0 for some users???
-                        double latency_seconds = 0.0;
-                        sound_buffer_size = sound_device_read_next_chunk(&audio_device.sound_device, &sound_buffer, timeout_sec * 2.0, &latency_seconds);
-                    }
-
-                    const bool got_audio_data = sound_buffer_size >= 0;
-                    //fprintf(stderr, "got audio data: %s\n", got_audio_data ? "yes" : "no");
-                    //fprintf(stderr, "time to read: %f, %s, %f\n", time_to_read_seconds, got_audio_data ? "yes" : "no", timeout_sec);
-                    const double this_audio_frame_time = clock_get_monotonic_seconds() - paused_time_offset;
-
-                    if(paused) {
-                        if(!audio_device.sound_device.handle)
-                            av_usleep(timeout_ms * 1000);
-
-                        continue;
-                    }
-
-                    int ret = av_frame_make_writable(audio_device.frame);
-                    if (ret < 0) {
-                        fprintf(stderr, "Failed to make audio frame writable\n");
-                        break;
-                    }
-
-                    // TODO: Is this |received_audio_time| really correct?
-                    const int64_t num_expected_frames = std::floor((this_audio_frame_time - record_start_time) / timeout_sec);
-                    int64_t num_missing_frames = std::max((int64_t)0LL, num_expected_frames - num_received_frames);
-
-                    if(got_audio_data)
-                        num_missing_frames = std::max((int64_t)0LL, num_missing_frames - 1);
-
-                    if(!audio_device.sound_device.handle)
-                        num_missing_frames = std::max((int64_t)1, num_missing_frames);
-
-                    // Fucking hell is there a better way to do this? I JUST WANT TO KEEP VIDEO AND AUDIO SYNCED HOLY FUCK I WANT TO KILL MYSELF NOW.
-                    // THIS PIECE OF SHIT WANTS EMPTY FRAMES OTHERWISE VIDEO PLAYS TOO FAST TO KEEP UP WITH AUDIO OR THE AUDIO PLAYS TOO EARLY.
-                    // BUT WE CANT USE DELAYS TO GIVE DUMMY DATA BECAUSE PULSEAUDIO MIGHT GIVE AUDIO A BIG DELAYED!!!
-                    // This garbage is needed because we want to produce constant frame rate videos instead of variable frame rate
-                    // videos because bad software such as video editing software and VLC do not support variable frame rate software,
-                    // despite nvidia shadowplay and xbox game bar producing variable frame rate videos.
-                    // So we have to make sure we produce frames at the same relative rate as the video.
-                    if((num_missing_frames >= 1 && got_audio_data) || num_missing_frames >= 5 || !audio_device.sound_device.handle) {
-                        // Fill the missing frames with silence. Duplicating the previous audio frame to fill the gap instead
-                        // sounds like a stutter and it's especially noticeable at the start of the recording when the audio device
-                        // hasn't started to deliver audio at a stable rate yet, which repeats the first audio frame multiple times.
-                        if(needs_audio_conversion)
-                            swr_convert(swr, &audio_device.frame->data[0], audio_track.codec_context->frame_size, (const uint8_t**)&empty_audio, audio_track.codec_context->frame_size);
-                        else
-                            audio_device.frame->data[0] = empty_audio;
-
-                        // TODO: Check if duplicate frame can be saved just by writing it with a different pts instead of sending it again
-                        std::lock_guard<std::mutex> lock(audio_filter_mutex);
-                        for(int i = 0; i < num_missing_frames; ++i) {
-                            if(audio_track.graph) {
-                                // TODO: av_buffersrc_add_frame
-                                if(av_buffersrc_write_frame(audio_device.src_filter_ctx, audio_device.frame) < 0) {
-                                    gsr_log(GSR_LOG_LEVEL_ERROR, "failed to add audio frame to filter");
-                                }
-                            } else {
-                                ret = avcodec_send_frame(audio_track.codec_context, audio_device.frame);
-                                if(ret >= 0) {
-                                    // TODO: Move to separate thread because this could write to network (for example when livestreaming)
-                                    gsr_encoder_receive_packets(&encoder, audio_track.codec_context, audio_device.frame->pts, audio_track.stream_index);
-                                } else {
-                                    fprintf(stderr, "Failed to encode audio!\n");
-                                }
-                                audio_track.pts += audio_track.codec_context->frame_size;
-                            }
-
-                            audio_device.frame->pts += audio_track.codec_context->frame_size;
-                            num_received_frames++;
-                        }
-                    }
-
-                    if(!audio_device.sound_device.handle) {
-                        av_usleep(timeout_ms * 1000);
-                    } else if(got_audio_data) {
-                        // The frame has to be made writable again if the frame was already sent to the audio filter above (when filling missing frames)
-                        // because the audio filter only references the frame data instead of copying it. Without this the sent frames data would be
-                        // overwritten with the audio data below, causing the audio to repeat instead of the missing frames being silent.
-                        ret = av_frame_make_writable(audio_device.frame);
-                        if (ret < 0) {
-                            fprintf(stderr, "Failed to make audio frame writable\n");
-                            break;
-                        }
-
-                        // TODO: Instead of converting audio, get float audio from alsa. Or does alsa do conversion internally to get this format?
-                        if(needs_audio_conversion)
-                            swr_convert(swr, &audio_device.frame->data[0], audio_track.codec_context->frame_size, (const uint8_t**)&sound_buffer, audio_track.codec_context->frame_size);
-                        else
-                            audio_device.frame->data[0] = (uint8_t*)sound_buffer;
-
-                        std::lock_guard<std::mutex> lock(audio_filter_mutex);
-
-                        if(audio_track.graph) {
-                            // TODO: av_buffersrc_add_frame
-                            if(av_buffersrc_write_frame(audio_device.src_filter_ctx, audio_device.frame) < 0) {
-                                gsr_log(GSR_LOG_LEVEL_ERROR, "failed to add audio frame to filter");
-                            }
-                        } else {
-                            ret = avcodec_send_frame(audio_track.codec_context, audio_device.frame);
-                            if(ret >= 0) {
-                                // TODO: Move to separate thread because this could write to network (for example when livestreaming)
-                                gsr_encoder_receive_packets(&encoder, audio_track.codec_context, audio_device.frame->pts, audio_track.stream_index);
-                            } else {
-                                fprintf(stderr, "Failed to encode audio!\n");
-                            }
-                            audio_track.pts += audio_track.codec_context->frame_size;
-                        }
-
-                        audio_device.frame->pts += audio_track.codec_context->frame_size;
-                        num_received_frames++;
-                    } else {
-                        // TODO: Maybe sleep for time_to_sleep_until_next_frame/4? for better latency
-                        const double time_after_read_seconds = clock_get_monotonic_seconds();
-                        const double time_to_read_seconds = time_after_read_seconds - time_before_read_seconds;
-                        const double time_to_sleep_until_next_frame = timeout_sec - time_to_read_seconds;
-                        if(time_to_sleep_until_next_frame > 0.0)
-                            av_usleep(time_to_sleep_until_next_frame * 1000ULL * 1000ULL);
-                    }
-                }
-
-                if(swr)
-                    swr_free(&swr);
-            });
-        }
-    }
-
-    std::thread amix_thread;
-    if(uses_amix) {
-        amix_thread = std::thread([&]() {
-            AVFrame *aframe = av_frame_alloc();
-            while(running) {
-                {
-                    std::lock_guard<std::mutex> lock(audio_filter_mutex);
-                    for(AudioTrack &audio_track : audio_tracks) {
-                        if(!audio_track.sink)
-                            continue;
-
-                        int err = 0;
-                        while ((err = av_buffersink_get_frame(audio_track.sink, aframe)) >= 0) {
-                            aframe->pts = audio_track.pts;
-                            err = avcodec_send_frame(audio_track.codec_context, aframe);
-                            if(err >= 0){
-                                // TODO: Move to separate thread because this could write to network (for example when livestreaming)
-                                gsr_encoder_receive_packets(&encoder, audio_track.codec_context, aframe->pts, audio_track.stream_index);
-                            } else {
-                                fprintf(stderr, "Failed to encode audio!\n");
-                            }
-                            av_frame_unref(aframe);
-                            audio_track.pts += audio_track.codec_context->frame_size;
-                        }
-                    }
-                }
-                av_usleep(5 * 1000); // 5 milliseconds
-            }
-            av_frame_free(&aframe);
-        });
-    }
 
     // Set update_fps to 24 to test if duplicate/delayed frames cause video/audio desync or too fast/slow video.
     //const double update_fps = fps + 190;
@@ -2146,7 +1706,7 @@ int main(int argc, char **argv) {
             damage_fps_counter = 0;
         }
 
-        const double this_video_frame_time = clock_get_monotonic_seconds() - paused_time_offset;
+        const double this_video_frame_time = gsr_recording_clock_get_time(recording_clock);
         const int64_t expected_frames = std::floor((this_video_frame_time - record_start_time) / target_fps);
         const int64_t num_missed_frames = expected_frames - video_pts_counter;
 
@@ -2169,8 +1729,8 @@ int main(int argc, char **argv) {
                 if(video_source.capture->capture_has_synchronous_task) {
                     capture_has_synchronous_task = video_source.capture->capture_has_synchronous_task(video_source.capture);
                     if(capture_has_synchronous_task) {
-                        paused_time_start = clock_get_monotonic_seconds();
                         paused = true;
+                        gsr_recording_clock_set_paused(recording_clock, true);
                     }
                 }
             }
@@ -2202,8 +1762,8 @@ int main(int argc, char **argv) {
             }
 
             if(capture_has_synchronous_task) {
-                paused_time_offset = paused_time_offset + (clock_get_monotonic_seconds() - paused_time_start);
                 paused = false;
+                gsr_recording_clock_set_paused(recording_clock, false);
             }
 
             gsr_egl_swap_buffers(&egl);
@@ -2250,17 +1810,10 @@ int main(int argc, char **argv) {
         }
 
         if(toggle_pause == 1 && !arg_parser.settings.is_replaying) {
-            const bool new_paused_state = !paused;
-            if(new_paused_state) {
-                paused_time_start = clock_get_monotonic_seconds();
-                fprintf(stderr, "Paused\n");
-            } else {
-                paused_time_offset = paused_time_offset + (clock_get_monotonic_seconds() - paused_time_start);
-                fprintf(stderr, "Unpaused\n");
-            }
-
-            toggle_pause = 0;
             paused = !paused;
+            gsr_recording_clock_set_paused(recording_clock, paused);
+            gsr_log(GSR_LOG_LEVEL_INFO, paused ? "Paused" : "Unpaused");
+            toggle_pause = 0;
         }
 
         if(toggle_replay_recording && !arg_parser.settings.replay_recording_directory) {
@@ -2273,10 +1826,10 @@ int main(int argc, char **argv) {
             toggle_replay_recording = 0;
             const bool new_replay_recording_state = !replay_recording;
             if(new_replay_recording_state) {
-                std::lock_guard<std::mutex> lock(audio_filter_mutex);
+                gsr_audio_capture_lock_filter(&audio_capture);
                 replay_recording_items.clear();
                 replay_recording_filepath = create_new_recording_filepath_from_timestamp(arg_parser.settings.replay_recording_directory, "Video", file_extension, arg_parser.settings.date_folders);
-                replay_recording_start_result = start_recording_create_streams(replay_recording_filepath.c_str(), arg_parser, video_codec_context, audio_tracks, hdr, video_sources);
+                replay_recording_start_result = start_recording_create_streams(replay_recording_filepath.c_str(), arg_parser, video_codec_context, &audio_capture, hdr, video_sources);
                 if(replay_recording_start_result.av_format_context) {
                     const size_t video_recording_destination_id = gsr_encoder_add_recording_destination(&encoder, video_codec_context, replay_recording_start_result.av_format_context, replay_recording_start_result.video_stream, video_frame->pts);
                     if(arg_parser.settings.write_first_frame_ts && video_recording_destination_id != (size_t)-1) {
@@ -2343,7 +1896,7 @@ int main(int argc, char **argv) {
 
             save_replay_seconds = 0;
             save_replay_output_filepath.clear();
-            const bool replay_start_result = save_replay_async(video_codec_context, VIDEO_STREAM_INDEX, audio_tracks, &encoder, arg_parser, file_extension, arg_parser.settings.date_folders, hdr, video_sources, current_save_replay_seconds);
+            const bool replay_start_result = save_replay_async(video_codec_context, VIDEO_STREAM_INDEX, &audio_capture, &encoder, arg_parser, file_extension, arg_parser.settings.date_folders, hdr, video_sources, current_save_replay_seconds);
             if(!replay_start_result) {
                 printf("gsr error: Failed to save replay\n");
                 fflush(stdout);
@@ -2356,7 +1909,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        const double time_at_frame_end = clock_get_monotonic_seconds() - paused_time_offset;
+        const double time_at_frame_end = gsr_recording_clock_get_time(recording_clock);
         const double time_elapsed_total = time_at_frame_end - record_start_time;
         const int64_t frames_elapsed = std::floor(time_elapsed_total / target_fps);
         const double time_at_next_frame = (frames_elapsed + 1) * target_fps;
@@ -2409,15 +1962,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    for(AudioTrack &audio_track : audio_tracks) {
-        for(auto &audio_device : audio_track.audio_devices) {
-            audio_device.thread.join();
-            sound_device_close(&audio_device.sound_device);
-        }
-    }
-
-    if(amix_thread.joinable())
-        amix_thread.join();
+    gsr_audio_capture_join_threads(&audio_capture);
 
     // TODO: Replace this with start_recording_create_steams
     if(!arg_parser.settings.is_replaying && av_write_trailer(av_format_context) != 0) {
@@ -2451,7 +1996,6 @@ int main(int argc, char **argv) {
     //gsr_window_destroy(&window);
 
     //av_frame_free(&video_frame);
-    free(empty_audio);
     args_parser_deinit(&arg_parser);
     // We do an _exit here because cuda uses at_exit to do _something_ that causes the program to freeze,
     // but only on some nvidia driver versions on some gpus (RTX?), and _exit exits the program without calling
