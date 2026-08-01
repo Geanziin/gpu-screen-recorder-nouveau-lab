@@ -8,6 +8,8 @@ extern "C" {
 #include "../include/recorder/capture_setup.h"
 #include "../include/recorder/audio_input.h"
 #include "../include/recorder/audio_capture.h"
+#include "../include/recorder/muxer.h"
+#include "../include/recorder/replay_save.h"
 #include "../include/recorder/error.h"
 #include "../include/capture/nvfbc.h"
 #include "../include/capture/xcomposite.h"
@@ -89,8 +91,6 @@ static const int VIDEO_STREAM_INDEX = 0;
 /* AV1/VP9 use the 0-255 qindex quantizer scale and VP8 uses 0-127. Unlike h264 qp the quantizer step size
    is not exponential in qindex, so the mapping to an equivalent h264 qp is not linear in the quantizer range.
    qindex = h264 qp * 4 matches the qindex = crf * 4 scale used by libvpx/libaom, where crf is roughly equivalent to h264 qp. */
-static const int save_replay_seconds_full = -1;
-
 static sig_atomic_t running = 1;
 static sig_atomic_t toggle_pause = 0;
 static sig_atomic_t toggle_replay_recording = 0;
@@ -109,7 +109,7 @@ static void toggle_replay_recording_handler(int) {
 }
 
 static void save_replay_handler(int) {
-    save_replay_seconds = save_replay_seconds_full;
+    save_replay_seconds = GSR_SAVE_REPLAY_SECONDS_FULL;
 }
 
 static void save_replay_10_seconds_handler(int) {
@@ -134,19 +134,6 @@ static void save_replay_10_minutes_handler(int) {
 
 static void save_replay_30_minutes_handler(int) {
     save_replay_seconds = 60*30;
-}
-
-static AVStream* create_stream(AVFormatContext *av_format_context, AVCodecContext *codec_context) {
-    AVStream *stream = avformat_new_stream(av_format_context, nullptr);
-    if (!stream) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "Could not allocate stream");
-        _exit(1);
-    }
-    stream->id = av_format_context->nb_streams - 1;
-    stream->time_base = codec_context->time_base;
-    stream->avg_frame_rate = codec_context->framerate;
-    //stream->r_frame_rate = codec_context->framerate;
-    return stream;
 }
 
 static void run_recording_saved_script_async(const char *script_file, const char *video_file, const char *type) {
@@ -197,318 +184,6 @@ static void run_recording_saved_script_async(const char *script_file, const char
 }
 
 // TODO: Cleanup
-static bool add_hdr_metadata_to_video_stream(gsr_capture *cap, AVStream *video_stream) {
-    size_t light_metadata_size = 0;
-    size_t mastering_display_metadata_size = 0;
-    AVContentLightMetadata *light_metadata = av_content_light_metadata_alloc(&light_metadata_size);
-    #if LIBAVUTIL_VERSION_INT < AV_VERSION_INT(59, 37, 100)
-    AVMasteringDisplayMetadata *mastering_display_metadata = av_mastering_display_metadata_alloc();
-    mastering_display_metadata_size = sizeof(*mastering_display_metadata);
-    #else
-    AVMasteringDisplayMetadata *mastering_display_metadata = av_mastering_display_metadata_alloc_size(&mastering_display_metadata_size);
-    #endif
-
-    if(!light_metadata || !mastering_display_metadata) {
-        if(light_metadata)
-            av_freep(&light_metadata);
-
-        if(mastering_display_metadata)
-            av_freep(&mastering_display_metadata);
-
-        return false;
-    }
-
-    if(!gsr_capture_set_hdr_metadata(cap, mastering_display_metadata, light_metadata)) {
-        av_freep(&light_metadata);
-        av_freep(&mastering_display_metadata);
-        return false;
-    }
-
-    // TODO: More error checking
-
-    #if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(60, 31, 102)
-    const bool content_light_level_added = av_stream_add_side_data(video_stream, AV_PKT_DATA_CONTENT_LIGHT_LEVEL, (uint8_t*)light_metadata, light_metadata_size) == 0;
-    #else
-    const bool content_light_level_added = av_packet_side_data_add(&video_stream->codecpar->coded_side_data, &video_stream->codecpar->nb_coded_side_data, AV_PKT_DATA_CONTENT_LIGHT_LEVEL, light_metadata, light_metadata_size, 0) != NULL;
-    #endif
-
-    #if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(60, 31, 102)
-    const bool mastering_display_metadata_added = av_stream_add_side_data(video_stream, AV_PKT_DATA_MASTERING_DISPLAY_METADATA, (uint8_t*)mastering_display_metadata, mastering_display_metadata_size) == 0;
-    #else
-    const bool mastering_display_metadata_added = av_packet_side_data_add(&video_stream->codecpar->coded_side_data, &video_stream->codecpar->nb_coded_side_data, AV_PKT_DATA_MASTERING_DISPLAY_METADATA, mastering_display_metadata, mastering_display_metadata_size, 0) != NULL;
-    #endif
-
-    if(!content_light_level_added)
-        av_freep(&light_metadata);
-
-    if(!mastering_display_metadata_added)
-        av_freep(&mastering_display_metadata);
-
-    // Return true even on failure because we dont want to retry adding hdr metadata on failure
-    return true;
-}
-
-static void set_format_context_options(AVFormatContext *av_format_context) {
-    if(LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(62, 6, 101)) {
-        av_opt_set(av_format_context->priv_data, "use_editlist", "1", 0);
-        const AVOption *opt = av_opt_find(av_format_context->priv_data, "movflags", NULL, 0, 0);
-        if (opt && opt->unit) {
-            const AVOption *flag = av_opt_find(av_format_context->priv_data, "hybrid_fragmented", opt->unit, 0, 0);
-            if (flag)
-                av_opt_set(av_format_context->priv_data, "movflags", "+hybrid_fragmented", 0);
-        }
-    } else {
-        const AVOutputFormat *output_format = av_format_context->oformat;
-        const char *file_extension = output_format->extensions ? output_format->extensions : "";
-        if(strcmp(file_extension, "mp4") != 0 && strcmp(file_extension, "mov") != 0)
-            return;
-
-        gsr_log(GSR_LOG_LEVEL_WARNING, "your FFmpeg version is known to be buggy (it doesn't have working hybrid_fragmented movflags). If you experience stutter in the mp4 file then update your FFmpeg to at least version 8 or record to a mkv file");
-    }
-}
-
-struct RecordingStartAudio {
-    const gsr_audio_track *audio_track;
-    AVStream *stream;
-};
-
-struct RecordingStartResult {
-    AVFormatContext *av_format_context = nullptr;
-    AVStream *video_stream = nullptr;
-    std::vector<RecordingStartAudio> audio_inputs;
-};
-
-static RecordingStartResult start_recording_create_streams(const char *filename, const args_parser &arg_parser, AVCodecContext *video_codec_context, const gsr_audio_capture *audio_capture, bool hdr, gsr_video_sources *video_sources) {
-    AVFormatContext *av_format_context;
-    avformat_alloc_output_context2(&av_format_context, nullptr, arg_parser.settings.container_format, filename);
-    set_format_context_options(av_format_context);
-
-    AVStream *video_stream = create_stream(av_format_context, video_codec_context);
-    avcodec_parameters_from_context(video_stream->codecpar, video_codec_context);
-
-    RecordingStartResult result;
-    result.audio_inputs.reserve(audio_capture->num_tracks);
-
-    for(size_t audio_track_index = 0; audio_track_index < audio_capture->num_tracks; ++audio_track_index) {
-        const gsr_audio_track &audio_track = audio_capture->tracks[audio_track_index];
-        AVStream *audio_stream = create_stream(av_format_context, audio_track.codec_context);
-        if(!audio_track.name[0] == '\0' && !arg_parser.settings.exclude_metadata)
-            av_dict_set(&audio_stream->metadata, "title", audio_track.name, 0);
-        avcodec_parameters_from_context(audio_stream->codecpar, audio_track.codec_context);
-        result.audio_inputs.push_back({&audio_track, audio_stream});
-    }
-
-    const int open_ret = avio_open(&av_format_context->pb, filename, AVIO_FLAG_WRITE);
-    if(open_ret < 0) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "start_recording_create_streams: could not open '%s': %s", filename, gsr_av_error_to_string(open_ret));
-        return result;
-    }
-
-    AVDictionary *options = nullptr;
-    av_dict_set(&options, "strict", "experimental", 0);
-
-    if(arg_parser.settings.ffmpeg_opts)
-        av_dict_parse_string(&options, arg_parser.settings.ffmpeg_opts, "=", ";", 0);
-
-    const int header_write_ret = avformat_write_header(av_format_context, &options);
-    av_dict_free(&options);
-    if(header_write_ret < 0) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "start_recording_create_streams: error occurred when writing header to output file: %s", gsr_av_error_to_string(header_write_ret));
-        avio_close(av_format_context->pb);
-        avformat_free_context(av_format_context);
-        return result;
-    }
-
-    for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
-        gsr_video_source &video_source = video_sources->items[video_source_index];
-        if(hdr && add_hdr_metadata_to_video_stream(video_source.capture, video_stream))
-            break;
-    }
-
-    result.av_format_context = av_format_context;
-    result.video_stream = video_stream;
-    return result;
-}
-
-static bool stop_recording_close_streams(AVFormatContext *av_format_context) {
-    bool trailer_written = true;
-    if(av_write_trailer(av_format_context) != 0) {
-        //fprintf(stderr, "gsr error: end: failed to write trailer\n");
-        //trailer_written = false;
-    }
-
-    const bool closed = avio_close(av_format_context->pb) == 0;
-    avformat_free_context(av_format_context);
-    return trailer_written && closed;
-}
-
-static std::future<bool> save_replay_thread;
-static std::string save_replay_output_filepath;
-
-static std::string create_new_recording_filepath_from_timestamp(std::string directory, const char *filename_prefix, const std::string &file_extension, bool date_folders) {
-    char date_str[128];
-    std::string output_filepath;
-    if(date_folders) {
-        gsr_get_date_only_str(date_str, sizeof(date_str));
-        std::string output_folder = directory + '/' + date_str;
-        if(create_directory_recursive(&output_folder[0]) != 0)
-            gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create directory: %s", output_folder.c_str());
-        gsr_get_time_only_str(date_str, sizeof(date_str));
-        output_filepath = output_folder + "/" + filename_prefix + "_" + date_str + "." + file_extension;
-    } else {
-        if(create_directory_recursive(&directory[0]) != 0)
-            gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create directory: %s", directory.c_str());
-        gsr_get_date_str(date_str, sizeof(date_str));
-        output_filepath = directory + "/" + filename_prefix + "_" + date_str + "." + file_extension;
-    }
-    return output_filepath;
-}
-
-static RecordingStartAudio* get_recording_start_item_by_stream_index(RecordingStartResult &result, int stream_index) {
-    for(auto &audio_input : result.audio_inputs) {
-        if(audio_input.stream->index == stream_index)
-            return &audio_input;
-    }
-    return nullptr;
-}
-
-struct AudioPtsOffset {
-    int64_t pts_offset = 0;
-    int stream_index = 0;
-};
-
-static bool save_replay_async(AVCodecContext *video_codec_context, int video_stream_index, const gsr_audio_capture *audio_capture, gsr_encoder *encoder, const args_parser &arg_parser, const std::string &file_extension, bool date_folders, bool hdr, gsr_video_sources *video_sources, int current_save_replay_seconds) {
-    if(save_replay_thread.valid())
-        return true;
-
-    pthread_mutex_lock(&encoder->replay_mutex);
-    gsr_replay_buffer *cloned_replay_buffer = gsr_replay_buffer_clone(encoder->replay_buffer);
-    pthread_mutex_unlock(&encoder->replay_mutex);
-    if(!cloned_replay_buffer) {
-        // TODO: Return this error to mark the replay as failed
-        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to save replay: failed to clone replay buffer");
-        return false;
-    }
-
-    const gsr_replay_buffer_iterator search_start_iterator = current_save_replay_seconds == save_replay_seconds_full ? gsr_replay_buffer_iterator{0, 0} : gsr_replay_buffer_find_packet_index_by_time_passed(cloned_replay_buffer, current_save_replay_seconds);
-    const gsr_replay_buffer_iterator video_start_iterator = gsr_replay_buffer_find_keyframe(cloned_replay_buffer, search_start_iterator, video_stream_index, false);
-    if(video_start_iterator.packet_index == (size_t)-1) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to save replay: failed to find a video keyframe. perhaps replay was saved too fast, before anything has been recorded");
-        pthread_mutex_lock(&encoder->replay_mutex);
-        gsr_replay_buffer_destroy(cloned_replay_buffer);
-        pthread_mutex_unlock(&encoder->replay_mutex);
-        return true;
-    }
-
-    const int64_t video_pts_offset = gsr_replay_buffer_iterator_get_packet(cloned_replay_buffer, video_start_iterator)->pts;
-
-    std::vector<AudioPtsOffset> audio_pts_offsets;
-    audio_pts_offsets.reserve(audio_capture->num_tracks);
-    for(size_t audio_track_index = 0; audio_track_index < audio_capture->num_tracks; ++audio_track_index) {
-        const gsr_audio_track &audio_track = audio_capture->tracks[audio_track_index];
-        const gsr_replay_buffer_iterator audio_start_iterator = gsr_replay_buffer_find_keyframe(cloned_replay_buffer, video_start_iterator, audio_track.stream_index, false);
-        const int64_t audio_pts_offset = audio_start_iterator.packet_index == (size_t)-1 ? 0 : gsr_replay_buffer_iterator_get_packet(cloned_replay_buffer, audio_start_iterator)->pts;
-        audio_pts_offsets.push_back(AudioPtsOffset{audio_pts_offset, audio_track.stream_index});
-    }
-
-    std::string output_filepath = create_new_recording_filepath_from_timestamp(arg_parser.settings.filename, "Replay", file_extension, date_folders);
-    RecordingStartResult recording_start_result = start_recording_create_streams(output_filepath.c_str(), arg_parser, video_codec_context, audio_capture, hdr, video_sources);
-    if(!recording_start_result.av_format_context) {
-        pthread_mutex_lock(&encoder->replay_mutex);
-        gsr_replay_buffer_destroy(cloned_replay_buffer);
-        pthread_mutex_unlock(&encoder->replay_mutex);
-        return false;
-    }
-
-    save_replay_output_filepath = std::move(output_filepath);
-
-    save_replay_thread = std::async(std::launch::async, [video_stream_index, recording_start_result, video_start_iterator, video_pts_offset, audio_pts_offsets{std::move(audio_pts_offsets)}, video_codec_context, cloned_replay_buffer, encoder]() mutable {
-        bool success = true;
-        gsr_replay_buffer_iterator replay_iterator = video_start_iterator;
-
-        for(;;) {
-            AVPacket *replay_packet = gsr_replay_buffer_iterator_get_packet(cloned_replay_buffer, replay_iterator);
-            uint8_t *replay_packet_data = NULL;
-            if(replay_packet) {
-                pthread_mutex_lock(&encoder->replay_mutex);
-                replay_packet_data = gsr_replay_buffer_iterator_get_packet_data(cloned_replay_buffer, replay_iterator);
-                pthread_mutex_unlock(&encoder->replay_mutex);
-            }
-
-            if(!replay_packet) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "save_replay_async: no replay packet");
-                success = false;
-                break;
-            }
-
-            if(!replay_packet->data && !replay_packet_data) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "save_replay_async: no replay packet data");
-                success = false;
-                break;
-            }
-
-            // TODO: Check if successful
-            AVPacket av_packet;
-            memset(&av_packet, 0, sizeof(av_packet));
-            //av_packet_from_data(av_packet, replay_packet->data, replay_packet->size);
-            av_packet.data = replay_packet->data ? replay_packet->data : replay_packet_data;
-            av_packet.size = replay_packet->size;
-            av_packet.stream_index = replay_packet->stream_index;
-            av_packet.pts = replay_packet->pts;
-            av_packet.dts = replay_packet->pts;
-            av_packet.flags = replay_packet->flags;
-            //av_packet.duration = replay_packet->duration;
-
-            AVStream *stream = recording_start_result.video_stream;
-            AVCodecContext *codec_context = video_codec_context;
-
-            if(av_packet.stream_index == video_stream_index) {
-                av_packet.pts -= video_pts_offset;
-                av_packet.dts -= video_pts_offset;
-            } else {
-                RecordingStartAudio *recording_start_audio = get_recording_start_item_by_stream_index(recording_start_result, av_packet.stream_index);
-                if(!recording_start_audio) {
-                    gsr_log(GSR_LOG_LEVEL_ERROR, "save_replay_async: failed to find audio stream by index: %d", av_packet.stream_index);
-                    free(replay_packet_data);
-                    continue;
-                }
-
-                const gsr_audio_track *audio_track = recording_start_audio->audio_track;
-                stream = recording_start_audio->stream;
-                codec_context = audio_track->codec_context;
-
-                const AudioPtsOffset &audio_pts_offset = audio_pts_offsets[av_packet.stream_index - 1];
-                assert(audio_pts_offset.stream_index == av_packet.stream_index);
-                av_packet.pts -= audio_pts_offset.pts_offset;
-                av_packet.dts -= audio_pts_offset.pts_offset;
-            }
-
-            //av_packet.stream_index = stream->index;
-            av_packet_rescale_ts(&av_packet, codec_context->time_base, stream->time_base);
-
-            const int ret = av_write_frame(recording_start_result.av_format_context, &av_packet);
-            if(ret < 0)
-                gsr_log(GSR_LOG_LEVEL_ERROR, "Failed to write frame index %d to muxer, reason: %s (%d)", av_packet.stream_index, gsr_av_error_to_string(ret), ret);
-
-            free(replay_packet_data);
-
-            //av_packet_free(&av_packet);
-            if(!gsr_replay_buffer_iterator_next(cloned_replay_buffer, &replay_iterator))
-                break;
-        }
-
-        stop_recording_close_streams(recording_start_result.av_format_context);
-
-        pthread_mutex_lock(&encoder->replay_mutex);
-        gsr_replay_buffer_destroy(cloned_replay_buffer);
-        pthread_mutex_unlock(&encoder->replay_mutex);
-
-        return success;
-    });
-
-    return true;
-}
-
 static void list_system_info(bool wayland) {
     printf("display_server|%s\n", wayland ? "wayland" : "x11");
     bool supports_app_audio = false;
@@ -1012,31 +687,6 @@ static bool get_image_format_from_filename(const char *filename, gsr_image_forma
     } else {
         return false;
     }
-}
-
-static void av_write_header(AVFormatContext *av_format_context, const char *ffmpeg_opts) {
-    AVDictionary *options = nullptr;
-    av_dict_set(&options, "strict", "experimental", 0);
-
-    if(ffmpeg_opts)
-        av_dict_parse_string(&options, ffmpeg_opts, "=", ";", 0);
-
-    const int ret = avformat_write_header(av_format_context, &options);
-    if(ret < 0)
-        fprintf(stderr, "Error occurred when writing header to output file: %s\n", gsr_av_error_to_string(ret));
-
-    av_dict_free(&options);
-}
-
-static size_t calculate_estimated_replay_buffer_packets(int64_t replay_buffer_size_secs, int fps, gsr_audio_codec audio_codec, const gsr_audio_input_tracks *audio_inputs) {
-    if(replay_buffer_size_secs == -1)
-        return 0;
-
-    int audio_fps = 0;
-    if(audio_inputs->num_items > 0)
-        audio_fps = GSR_AUDIO_SAMPLE_RATE / audio_codec_get_frame_size(audio_codec);
-
-    return replay_buffer_size_secs * (fps + audio_fps * audio_inputs->num_items);
 }
 
 static void set_display_server_environment_variables() {
@@ -1584,7 +1234,10 @@ int main(int argc, char **argv) {
 
     bool paused = false;
     bool replay_recording = false;
-    RecordingStartResult replay_recording_start_result;
+    gsr_recording_output replay_recording_output;
+    memset(&replay_recording_output, 0, sizeof(replay_recording_output));
+    gsr_replay_save replay_save;
+    gsr_replay_save_init(&replay_save);
     std::vector<size_t> replay_recording_items;
     std::string replay_recording_filepath;
     bool force_iframe_frame = false; // Only needed for video since audio frames are always iframes
@@ -1828,10 +1481,11 @@ int main(int argc, char **argv) {
             if(new_replay_recording_state) {
                 gsr_audio_capture_lock_filter(&audio_capture);
                 replay_recording_items.clear();
-                replay_recording_filepath = create_new_recording_filepath_from_timestamp(arg_parser.settings.replay_recording_directory, "Video", file_extension, arg_parser.settings.date_folders);
-                replay_recording_start_result = start_recording_create_streams(replay_recording_filepath.c_str(), arg_parser, video_codec_context, &audio_capture, hdr, video_sources);
-                if(replay_recording_start_result.av_format_context) {
-                    const size_t video_recording_destination_id = gsr_encoder_add_recording_destination(&encoder, video_codec_context, replay_recording_start_result.av_format_context, replay_recording_start_result.video_stream, video_frame->pts);
+                char replay_recording_filepath_buf[PATH_MAX];
+                const bool filepath_created = gsr_create_new_recording_filepath_from_timestamp(replay_recording_filepath_buf, sizeof(replay_recording_filepath_buf), arg_parser.settings.replay_recording_directory, "Video", file_extension.c_str(), arg_parser.settings.date_folders);
+                replay_recording_filepath = filepath_created ? replay_recording_filepath_buf : "";
+                if(filepath_created && gsr_recording_output_start(&replay_recording_output, replay_recording_filepath.c_str(), &arg_parser.settings, video_codec_context, &audio_capture, hdr, video_sources)) {
+                    const size_t video_recording_destination_id = gsr_encoder_add_recording_destination(&encoder, video_codec_context, replay_recording_output.av_format_context, replay_recording_output.video_stream, video_frame->pts);
                     if(arg_parser.settings.write_first_frame_ts && video_recording_destination_id != (size_t)-1) {
                         std::string ts_filepath = replay_recording_filepath + ".ts";
                         gsr_encoder_set_recording_destination_first_frame_ts_filepath(&encoder, video_recording_destination_id, ts_filepath.c_str());
@@ -1840,27 +1494,29 @@ int main(int argc, char **argv) {
                     if(video_recording_destination_id != (size_t)-1)
                         replay_recording_items.push_back(video_recording_destination_id);
 
-                    for(const auto &audio_input : replay_recording_start_result.audio_inputs) {
-                        const size_t audio_recording_destination_id = gsr_encoder_add_recording_destination(&encoder, audio_input.audio_track->codec_context, replay_recording_start_result.av_format_context, audio_input.stream, audio_input.audio_track->pts);
+                    for(size_t i = 0; i < replay_recording_output.num_audio_streams; ++i) {
+                        const gsr_recording_audio_stream *audio_stream = &replay_recording_output.audio_streams[i];
+                        const size_t audio_recording_destination_id = gsr_encoder_add_recording_destination(&encoder, audio_stream->audio_track->codec_context, replay_recording_output.av_format_context, audio_stream->stream, audio_stream->audio_track->pts);
                         if(audio_recording_destination_id != (size_t)-1)
                             replay_recording_items.push_back(audio_recording_destination_id);
                     }
 
                     replay_recording = true;
                     force_iframe_frame = true;
-                    fprintf(stderr, "Started recording\n");
+                    gsr_log(GSR_LOG_LEVEL_INFO, "Started recording");
                 } else {
                     printf("gsr error: Failed to start recording\n");
                     fflush(stdout);
                 }
-            } else if(replay_recording_start_result.av_format_context) {
+                gsr_audio_capture_unlock_filter(&audio_capture);
+            } else if(replay_recording_output.av_format_context) {
                 for(size_t id : replay_recording_items) {
                     gsr_encoder_remove_recording_destination(&encoder, id);
                 }
                 replay_recording_items.clear();
 
-                if(stop_recording_close_streams(replay_recording_start_result.av_format_context)) {
-                    fprintf(stderr, "Stopped recording\n");
+                if(gsr_recording_output_stop(&replay_recording_output)) {
+                    gsr_log(GSR_LOG_LEVEL_INFO, "Stopped recording");
                     puts(replay_recording_filepath.c_str());
                     fflush(stdout);
                     if(arg_parser.settings.recording_saved_script)
@@ -1870,39 +1526,38 @@ int main(int argc, char **argv) {
                     fflush(stdout);
                 }
 
-                replay_recording_start_result = RecordingStartResult{};
                 replay_recording = false;
                 replay_recording_filepath.clear();
             }
         }
 
-        if(save_replay_thread.valid() && save_replay_thread.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-            const bool replay_save_result = save_replay_thread.get();
-            if(save_replay_output_filepath.empty() || !replay_save_result) {
+        bool replay_save_result = false;
+        const char *replay_save_output_filepath = nullptr;
+        if(gsr_replay_save_poll(&replay_save, &replay_save_result, &replay_save_output_filepath)) {
+            if(replay_save_output_filepath[0] == '\0' || !replay_save_result) {
                 printf("gsr error: Failed to save replay\n");
                 fflush(stdout);
             } else {
-                puts(save_replay_output_filepath.c_str());
+                puts(replay_save_output_filepath);
                 fflush(stdout);
                 if(arg_parser.settings.recording_saved_script)
-                    run_recording_saved_script_async(arg_parser.settings.recording_saved_script, save_replay_output_filepath.c_str(), "replay");
+                    run_recording_saved_script_async(arg_parser.settings.recording_saved_script, replay_save_output_filepath, "replay");
             }
         }
 
-        if(save_replay_seconds != 0 && !save_replay_thread.valid() && arg_parser.settings.is_replaying) {
+        if(save_replay_seconds != 0 && !gsr_replay_save_is_running(&replay_save) && arg_parser.settings.is_replaying) {
             int current_save_replay_seconds = save_replay_seconds;
             if(current_save_replay_seconds > 0)
                 current_save_replay_seconds += arg_parser.settings.keyint;
 
             save_replay_seconds = 0;
-            save_replay_output_filepath.clear();
-            const bool replay_start_result = save_replay_async(video_codec_context, VIDEO_STREAM_INDEX, &audio_capture, &encoder, arg_parser, file_extension, arg_parser.settings.date_folders, hdr, video_sources, current_save_replay_seconds);
+            const bool replay_start_result = gsr_replay_save_start(&replay_save, video_codec_context, VIDEO_STREAM_INDEX, &audio_capture, &encoder, &arg_parser.settings, file_extension.c_str(), hdr, video_sources, current_save_replay_seconds);
             if(!replay_start_result) {
                 printf("gsr error: Failed to save replay\n");
                 fflush(stdout);
             }
 
-            if(arg_parser.settings.restart_replay_on_save && current_save_replay_seconds == save_replay_seconds_full) {
+            if(arg_parser.settings.restart_replay_on_save && current_save_replay_seconds == GSR_SAVE_REPLAY_SECONDS_FULL) {
                 pthread_mutex_lock(&encoder.replay_mutex);
                 gsr_replay_buffer_clear(encoder.replay_buffer);
                 pthread_mutex_unlock(&encoder.replay_mutex);
@@ -1930,28 +1585,29 @@ int main(int argc, char **argv) {
 
     running = 0;
 
-    if(save_replay_thread.valid()) {
-        save_replay_thread.get();
-        if(save_replay_output_filepath.empty()) {
+    bool final_replay_save_result = false;
+    const char *final_replay_save_output_filepath = nullptr;
+    if(gsr_replay_save_join(&replay_save, &final_replay_save_result, &final_replay_save_output_filepath)) {
+        if(final_replay_save_output_filepath[0] == '\0') {
             // TODO: Output failed to save
         } else {
-            puts(save_replay_output_filepath.c_str());
+            puts(final_replay_save_output_filepath);
             fflush(stdout);
             if(arg_parser.settings.recording_saved_script)
-                run_recording_saved_script_async(arg_parser.settings.recording_saved_script, save_replay_output_filepath.c_str(), "replay");
+                run_recording_saved_script_async(arg_parser.settings.recording_saved_script, final_replay_save_output_filepath, "replay");
         }
     }
 
     gsr_plugins_deinit(&plugins);
 
-    if(replay_recording_start_result.av_format_context) {
+    if(replay_recording_output.av_format_context) {
         for(size_t id : replay_recording_items) {
             gsr_encoder_remove_recording_destination(&encoder, id);
         }
         replay_recording_items.clear();
 
-        if(stop_recording_close_streams(replay_recording_start_result.av_format_context)) {
-            fprintf(stderr, "Stopped recording\n");
+        if(gsr_recording_output_stop(&replay_recording_output)) {
+            gsr_log(GSR_LOG_LEVEL_INFO, "Stopped recording");
             puts(replay_recording_filepath.c_str());
             fflush(stdout);
             if(arg_parser.settings.recording_saved_script)

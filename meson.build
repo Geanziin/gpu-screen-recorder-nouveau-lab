@@ -41,6 +41,8 @@ src = [
     'src/recorder/audio_input.c',
     'src/recorder/audio_capture.c',
     'src/recorder/recording_clock.c',
+    'src/recorder/muxer.c',
+    'src/recorder/replay_save.c',
     'src/egl.c',
     'src/cuda.c',
     'src/window_texture.c',
