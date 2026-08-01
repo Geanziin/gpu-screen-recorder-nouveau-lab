@@ -253,104 +253,104 @@ static bool file_is_pipe_or_char_device(const char *filepath) {
 }
 
 static bool args_parser_set_values(args_parser *self) {
-    self->video_encoder = (gsr_video_encoder_hardware)args_get_enum_by_key(self->args, NUM_ARGS, "-encoder", GSR_VIDEO_ENCODER_HW_GPU);
-    self->pixel_format = (gsr_pixel_format)args_get_enum_by_key(self->args, NUM_ARGS, "-pixfmt", GSR_PIXEL_FORMAT_YUV420);
-    self->framerate_mode = (gsr_framerate_mode)args_get_enum_by_key(self->args, NUM_ARGS, "-fm", GSR_FRAMERATE_MODE_VARIABLE);
-    self->color_range = (gsr_color_range)args_get_enum_by_key(self->args, NUM_ARGS, "-cr", GSR_COLOR_RANGE_LIMITED);
-    self->tune = (gsr_tune)args_get_enum_by_key(self->args, NUM_ARGS, "-tune", GSR_TUNE_PERFORMANCE);
-    self->video_codec = (gsr_video_codec)args_get_enum_by_key(self->args, NUM_ARGS, "-k", GSR_VIDEO_CODEC_AUTO);
-    self->audio_codec = (gsr_audio_codec)args_get_enum_by_key(self->args, NUM_ARGS, "-ac", GSR_AUDIO_CODEC_OPUS);
-    self->bitrate_mode = (gsr_bitrate_mode)args_get_enum_by_key(self->args, NUM_ARGS, "-bm", GSR_BITRATE_MODE_AUTO);
-    self->replay_storage = (gsr_replay_storage)args_get_enum_by_key(self->args, NUM_ARGS, "-replay-storage", GSR_REPLAY_STORAGE_RAM);
+    self->settings.video_encoder = (gsr_video_encoder_hardware)args_get_enum_by_key(self->args, NUM_ARGS, "-encoder", GSR_VIDEO_ENCODER_HW_GPU);
+    self->settings.pixel_format = (gsr_pixel_format)args_get_enum_by_key(self->args, NUM_ARGS, "-pixfmt", GSR_PIXEL_FORMAT_YUV420);
+    self->settings.framerate_mode = (gsr_framerate_mode)args_get_enum_by_key(self->args, NUM_ARGS, "-fm", GSR_FRAMERATE_MODE_VARIABLE);
+    self->settings.color_range = (gsr_color_range)args_get_enum_by_key(self->args, NUM_ARGS, "-cr", GSR_COLOR_RANGE_LIMITED);
+    self->settings.tune = (gsr_tune)args_get_enum_by_key(self->args, NUM_ARGS, "-tune", GSR_TUNE_PERFORMANCE);
+    self->settings.video_codec = (gsr_video_codec)args_get_enum_by_key(self->args, NUM_ARGS, "-k", GSR_VIDEO_CODEC_AUTO);
+    self->settings.audio_codec = (gsr_audio_codec)args_get_enum_by_key(self->args, NUM_ARGS, "-ac", GSR_AUDIO_CODEC_OPUS);
+    self->settings.bitrate_mode = (gsr_bitrate_mode)args_get_enum_by_key(self->args, NUM_ARGS, "-bm", GSR_BITRATE_MODE_AUTO);
+    self->settings.replay_storage = (gsr_replay_storage)args_get_enum_by_key(self->args, NUM_ARGS, "-replay-storage", GSR_REPLAY_STORAGE_RAM);
 
-    self->capture_source = args_get_value_by_key(self->args, NUM_ARGS, "-w");
-    self->verbose = args_get_boolean_by_key(self->args, NUM_ARGS, "-v", true);
-    self->gl_debug = args_get_boolean_by_key(self->args, NUM_ARGS, "-gl-debug", false);
-    self->record_cursor = args_get_boolean_by_key(self->args, NUM_ARGS, "-cursor", true);
-    self->date_folders = args_get_boolean_by_key(self->args, NUM_ARGS, "-df", false);
-    self->restore_portal_session = args_get_boolean_by_key(self->args, NUM_ARGS, "-restore-portal-session", false);
-    self->restart_replay_on_save = args_get_boolean_by_key(self->args, NUM_ARGS, "-restart-replay-on-save", false);
+    self->settings.capture_source = args_get_value_by_key(self->args, NUM_ARGS, "-w");
+    self->settings.verbose = args_get_boolean_by_key(self->args, NUM_ARGS, "-v", true);
+    self->settings.gl_debug = args_get_boolean_by_key(self->args, NUM_ARGS, "-gl-debug", false);
+    self->settings.record_cursor = args_get_boolean_by_key(self->args, NUM_ARGS, "-cursor", true);
+    self->settings.date_folders = args_get_boolean_by_key(self->args, NUM_ARGS, "-df", false);
+    self->settings.restore_portal_session = args_get_boolean_by_key(self->args, NUM_ARGS, "-restore-portal-session", false);
+    self->settings.restart_replay_on_save = args_get_boolean_by_key(self->args, NUM_ARGS, "-restart-replay-on-save", false);
     const bool overclock = args_get_boolean_by_key(self->args, NUM_ARGS, "-oc", false);
-    self->fallback_cpu_encoding = args_get_boolean_by_key(self->args, NUM_ARGS, "-fallback-cpu-encoding", false);
-    self->write_first_frame_ts = args_get_boolean_by_key(self->args, NUM_ARGS, "-write-first-frame-ts", false);
-    self->low_power = args_get_boolean_by_key(self->args, NUM_ARGS, "-low-power", false);
-    self->exclude_metadata = args_get_boolean_by_key(self->args, NUM_ARGS, "-exclude-metadata", false);
+    self->settings.fallback_cpu_encoding = args_get_boolean_by_key(self->args, NUM_ARGS, "-fallback-cpu-encoding", false);
+    self->settings.write_first_frame_ts = args_get_boolean_by_key(self->args, NUM_ARGS, "-write-first-frame-ts", false);
+    self->settings.low_power = args_get_boolean_by_key(self->args, NUM_ARGS, "-low-power", false);
+    self->settings.exclude_metadata = args_get_boolean_by_key(self->args, NUM_ARGS, "-exclude-metadata", false);
 
-    self->audio_bitrate = args_get_i64_by_key(self->args, NUM_ARGS, "-ab", 0);
-    self->audio_bitrate *= 1000LL;
+    self->settings.audio_bitrate = args_get_i64_by_key(self->args, NUM_ARGS, "-ab", 0);
+    self->settings.audio_bitrate *= 1000LL;
 
-    self->keyint = args_get_double_by_key(self->args, NUM_ARGS, "-keyint", 2.0);
+    self->settings.keyint = args_get_double_by_key(self->args, NUM_ARGS, "-keyint", 2.0);
 
     if(overclock) {
         gsr_log(GSR_LOG_LEVEL_INFO, "the overclock option (-oc) is deprecated and no longer has any effect as it's no longer needed (on GPUs that are 12 years old or younger)");
     }
 
-    if(self->audio_codec == GSR_AUDIO_CODEC_FLAC) {
+    if(self->settings.audio_codec == GSR_AUDIO_CODEC_FLAC) {
         gsr_log(GSR_LOG_LEVEL_WARNING, "flac audio codec is temporary disabled, using opus audio codec instead");
-        self->audio_codec = GSR_AUDIO_CODEC_OPUS;
+        self->settings.audio_codec = GSR_AUDIO_CODEC_OPUS;
     }
 
-    self->portal_session_token_filepath = args_get_value_by_key(self->args, NUM_ARGS, "-portal-session-token-filepath");
-    if(self->portal_session_token_filepath) {
-        int len = strlen(self->portal_session_token_filepath);
-        if(len > 0 && self->portal_session_token_filepath[len - 1] == '/') {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "-portal-session-token-filepath should be a path to a file but it ends with a /: %s", self->portal_session_token_filepath);
+    self->settings.portal_session_token_filepath = args_get_value_by_key(self->args, NUM_ARGS, "-portal-session-token-filepath");
+    if(self->settings.portal_session_token_filepath) {
+        int len = strlen(self->settings.portal_session_token_filepath);
+        if(len > 0 && self->settings.portal_session_token_filepath[len - 1] == '/') {
+            gsr_log(GSR_LOG_LEVEL_ERROR, "-portal-session-token-filepath should be a path to a file but it ends with a /: %s", self->settings.portal_session_token_filepath);
             return false;
         }
     }
 
-    self->recording_saved_script = args_get_value_by_key(self->args, NUM_ARGS, "-sc");
-    if(self->recording_saved_script) {
+    self->settings.recording_saved_script = args_get_value_by_key(self->args, NUM_ARGS, "-sc");
+    if(self->settings.recording_saved_script) {
         struct stat buf;
-        if(stat(self->recording_saved_script, &buf) == -1 || !S_ISREG(buf.st_mode)) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "Script \"%s\" either doesn't exist or it's not a file", self->recording_saved_script);
+        if(stat(self->settings.recording_saved_script, &buf) == -1 || !S_ISREG(buf.st_mode)) {
+            gsr_log(GSR_LOG_LEVEL_ERROR, "Script \"%s\" either doesn't exist or it's not a file", self->settings.recording_saved_script);
             usage();
             return false;
         }
 
         if(!(buf.st_mode & S_IXUSR)) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "Script \"%s\" is not executable", self->recording_saved_script);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "Script \"%s\" is not executable", self->settings.recording_saved_script);
             usage();
             return false;
         }
     }
 
     const char *quality_str = args_get_value_by_key(self->args, NUM_ARGS, "-q");
-    self->video_quality = GSR_VIDEO_QUALITY_VERY_HIGH;
-    self->video_bitrate = 0;
+    self->settings.video_quality = GSR_VIDEO_QUALITY_VERY_HIGH;
+    self->settings.video_bitrate = 0;
 
-    if(self->bitrate_mode == GSR_BITRATE_MODE_CBR) {
+    if(self->settings.bitrate_mode == GSR_BITRATE_MODE_CBR) {
         if(!quality_str) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "option '-q' is required when using '-bm cbr' option");
             usage();
             return false;
         }
 
-        if(sscanf(quality_str, "%" PRIi64, &self->video_bitrate) != 1) {
+        if(sscanf(quality_str, "%" PRIi64, &self->settings.video_bitrate) != 1) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "-q argument \"%s\" is not an integer value. When using '-bm cbr' option '-q' is expected to be an integer value", quality_str);
             usage();
             return false;
         }
 
-        if(self->video_bitrate < 0) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "-q is expected to be 0 or larger, got %" PRIi64, self->video_bitrate);
+        if(self->settings.video_bitrate < 0) {
+            gsr_log(GSR_LOG_LEVEL_ERROR, "-q is expected to be 0 or larger, got %" PRIi64, self->settings.video_bitrate);
             usage();
             return false;
         }
 
-        self->video_bitrate *= 1000LL;
+        self->settings.video_bitrate *= 1000LL;
     } else {
         if(!quality_str)
             quality_str = "very_high";
 
         if(strcmp(quality_str, "medium") == 0) {
-            self->video_quality = GSR_VIDEO_QUALITY_MEDIUM;
+            self->settings.video_quality = GSR_VIDEO_QUALITY_MEDIUM;
         } else if(strcmp(quality_str, "high") == 0) {
-            self->video_quality = GSR_VIDEO_QUALITY_HIGH;
+            self->settings.video_quality = GSR_VIDEO_QUALITY_HIGH;
         } else if(strcmp(quality_str, "very_high") == 0) {
-            self->video_quality = GSR_VIDEO_QUALITY_VERY_HIGH;
+            self->settings.video_quality = GSR_VIDEO_QUALITY_VERY_HIGH;
         } else if(strcmp(quality_str, "ultra") == 0) {
-            self->video_quality = GSR_VIDEO_QUALITY_ULTRA;
+            self->settings.video_quality = GSR_VIDEO_QUALITY_ULTRA;
         } else {
             gsr_log(GSR_LOG_LEVEL_ERROR, "-q should either be 'medium', 'high', 'very_high' or 'ultra', got: '%s'", quality_str);
             usage();
@@ -358,118 +358,118 @@ static bool args_parser_set_values(args_parser *self) {
         }
     }
 
-    self->output_resolution = (vec2i){0, 0};
+    self->settings.output_resolution = (vec2i){0, 0};
 
     const char *output_resolution_str = args_get_value_by_key(self->args, NUM_ARGS, "-s");
     if(output_resolution_str) {
-        if(sscanf(output_resolution_str, "%dx%d", &self->output_resolution.x, &self->output_resolution.y) != 2) {
+        if(sscanf(output_resolution_str, "%dx%d", &self->settings.output_resolution.x, &self->settings.output_resolution.y) != 2) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "invalid value for option -s '%s', expected a value in format WxH", output_resolution_str);
             usage();
             return false;
         }
 
-        if(self->output_resolution.x < 0 || self->output_resolution.y < 0) {
+        if(self->settings.output_resolution.x < 0 || self->settings.output_resolution.y < 0) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "invalid value for option -s '%s', expected width and height to be greater or equal to 0", output_resolution_str);
             usage();
             return false;
         }
     }
 
-    self->region_size = (vec2i){0, 0};
-    self->region_position = (vec2i){0, 0};
+    self->settings.region_size = (vec2i){0, 0};
+    self->settings.region_position = (vec2i){0, 0};
     const char *region_str = args_get_value_by_key(self->args, NUM_ARGS, "-region");
     if(region_str) {
-        if(sscanf(region_str, "%dx%d+%d+%d", &self->region_size.x, &self->region_size.y, &self->region_position.x, &self->region_position.y) != 4) {
+        if(sscanf(region_str, "%dx%d+%d+%d", &self->settings.region_size.x, &self->settings.region_size.y, &self->settings.region_position.x, &self->settings.region_position.y) != 4) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "invalid value for option -region '%s', expected a value in format WxH+X+Y", region_str);
             usage();
             return false;
         }
 
-        if(self->region_size.x < 0 || self->region_size.y < 0) {
+        if(self->settings.region_size.x < 0 || self->settings.region_size.y < 0) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "invalid value for option -region '%s', expected width and height to be greater or equal to 0", region_str);
             usage();
             return false;
         }
     }
 
-    self->fps = args_get_i64_by_key(self->args, NUM_ARGS, "-f", 60);
-    self->replay_buffer_size_secs = args_get_i64_by_key(self->args, NUM_ARGS, "-r", -1);
-    if(self->replay_buffer_size_secs != -1)
-        self->replay_buffer_size_secs += (int64_t)(self->keyint + 0.5); // Add a few seconds to account of lost packets because of non-keyframe packets skipped
+    self->settings.fps = args_get_i64_by_key(self->args, NUM_ARGS, "-f", 60);
+    self->settings.replay_buffer_size_secs = args_get_i64_by_key(self->args, NUM_ARGS, "-r", -1);
+    if(self->settings.replay_buffer_size_secs != -1)
+        self->settings.replay_buffer_size_secs += (int64_t)(self->settings.keyint + 0.5); // Add a few seconds to account of lost packets because of non-keyframe packets skipped
 
-    self->container_format = args_get_value_by_key(self->args, NUM_ARGS, "-c");
-    if(self->container_format && strcmp(self->container_format, "mkv") == 0)
-        self->container_format = "matroska";
+    self->settings.container_format = args_get_value_by_key(self->args, NUM_ARGS, "-c");
+    if(self->settings.container_format && strcmp(self->settings.container_format, "mkv") == 0)
+        self->settings.container_format = "matroska";
 
-    self->is_replaying = self->replay_buffer_size_secs != -1;
-    self->is_livestream = false;
-    self->filename = args_get_value_by_key(self->args, NUM_ARGS, "-o");
-    if(self->filename) {
-        self->is_livestream = is_livestream_path(self->filename);
-        if(self->is_livestream) {
-            if(self->is_replaying) {
+    self->settings.is_replaying = self->settings.replay_buffer_size_secs != -1;
+    self->settings.is_livestream = false;
+    self->settings.filename = args_get_value_by_key(self->args, NUM_ARGS, "-o");
+    if(self->settings.filename) {
+        self->settings.is_livestream = is_livestream_path(self->settings.filename);
+        if(self->settings.is_livestream) {
+            if(self->settings.is_replaying) {
                 gsr_log(GSR_LOG_LEVEL_ERROR, "replay mode is not applicable to live streaming");
                 return false;
             }
         } else {
-            if(!self->is_replaying) {
+            if(!self->settings.is_replaying) {
                 char directory_buf[PATH_MAX];
-                snprintf(directory_buf, sizeof(directory_buf), "%s", self->filename);
+                snprintf(directory_buf, sizeof(directory_buf), "%s", self->settings.filename);
                 char *directory = dirname(directory_buf);
                 if(strcmp(directory, ".") != 0 && strcmp(directory, "/") != 0) {
                     if(create_directory_recursive(directory) != 0) {
-                        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create directory for output file: %s", self->filename);
+                        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create directory for output file: %s", self->settings.filename);
                         return false;
                     }
                 }
             } else {
-                if(!self->container_format) {
+                if(!self->settings.container_format) {
                     gsr_log(GSR_LOG_LEVEL_ERROR, "option -c is required when using option -r");
                     usage();
                     return false;
                 }
 
                 struct stat buf;
-                if(stat(self->filename, &buf) != -1 && !S_ISDIR(buf.st_mode)) {
-                    gsr_log(GSR_LOG_LEVEL_ERROR, "File \"%s\" exists but it's not a directory", self->filename);
+                if(stat(self->settings.filename, &buf) != -1 && !S_ISDIR(buf.st_mode)) {
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "File \"%s\" exists but it's not a directory", self->settings.filename);
                     usage();
                     return false;
                 }
             }
         }
     } else {
-        if(!self->is_replaying) {
-            self->filename = "/dev/stdout";
+        if(!self->settings.is_replaying) {
+            self->settings.filename = "/dev/stdout";
         } else {
             gsr_log(GSR_LOG_LEVEL_ERROR, "Option -o is required when using option -r");
             usage();
             return false;
         }
 
-        if(!self->container_format) {
+        if(!self->settings.container_format) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "option -c is required when not using option -o");
             usage();
             return false;
         }
     }
 
-    self->is_output_piped = file_is_pipe_or_char_device(self->filename);
-    self->low_latency_recording = self->is_livestream || self->is_output_piped;
-    if(self->write_first_frame_ts && (self->is_livestream || self->is_output_piped)) {
+    self->settings.is_output_piped = file_is_pipe_or_char_device(self->settings.filename);
+    self->settings.low_latency_recording = self->settings.is_livestream || self->settings.is_output_piped;
+    if(self->settings.write_first_frame_ts && (self->settings.is_livestream || self->settings.is_output_piped)) {
         gsr_log(GSR_LOG_LEVEL_WARNING, "-write-first-frame-ts is ignored for livestreaming or when output is piped");
-        self->write_first_frame_ts = false;
+        self->settings.write_first_frame_ts = false;
     }
 
-    self->replay_recording_directory = args_get_value_by_key(self->args, NUM_ARGS, "-ro");
+    self->settings.replay_recording_directory = args_get_value_by_key(self->args, NUM_ARGS, "-ro");
 
-    if(self->is_livestream && self->recording_saved_script) {
+    if(self->settings.is_livestream && self->settings.recording_saved_script) {
         gsr_log(GSR_LOG_LEVEL_WARNING, "live stream detected, -sc script is ignored");
-        self->recording_saved_script = NULL;
+        self->settings.recording_saved_script = NULL;
     }
 
-    self->ffmpeg_opts = args_get_value_by_key(self->args, NUM_ARGS, "-ffmpeg-opts");
-    self->ffmpeg_video_opts = args_get_value_by_key(self->args, NUM_ARGS, "-ffmpeg-video-opts");
-    self->ffmpeg_audio_opts = args_get_value_by_key(self->args, NUM_ARGS, "-ffmpeg-audio-opts");
+    self->settings.ffmpeg_opts = args_get_value_by_key(self->args, NUM_ARGS, "-ffmpeg-opts");
+    self->settings.ffmpeg_video_opts = args_get_value_by_key(self->args, NUM_ARGS, "-ffmpeg-video-opts");
+    self->settings.ffmpeg_audio_opts = args_get_value_by_key(self->args, NUM_ARGS, "-ffmpeg-audio-opts");
 
     return true;
 }
@@ -690,33 +690,33 @@ void args_parser_deinit(args_parser *self) {
 bool args_parser_validate_with_gl_info(args_parser *self, gsr_egl *egl) {
     const bool wayland = gsr_window_get_display_server(egl->window) == GSR_DISPLAY_SERVER_WAYLAND;
 
-    if(self->bitrate_mode == (gsr_bitrate_mode)GSR_BITRATE_MODE_AUTO) {
+    if(self->settings.bitrate_mode == (gsr_bitrate_mode)GSR_BITRATE_MODE_AUTO) {
         // QP is broken on steam deck, see https://github.com/ValveSoftware/SteamOS/issues/1609
-        self->bitrate_mode = egl->gpu_info.is_steam_deck ? GSR_BITRATE_MODE_VBR : GSR_BITRATE_MODE_QP;
+        self->settings.bitrate_mode = egl->gpu_info.is_steam_deck ? GSR_BITRATE_MODE_VBR : GSR_BITRATE_MODE_QP;
     }
 
-    if(egl->gpu_info.is_steam_deck && self->bitrate_mode == GSR_BITRATE_MODE_QP) {
+    if(egl->gpu_info.is_steam_deck && self->settings.bitrate_mode == GSR_BITRATE_MODE_QP) {
         gsr_log(GSR_LOG_LEVEL_WARNING, "qp bitrate mode is not supported on Steam Deck because of Steam Deck driver bugs. Using vbr instead");
-        self->bitrate_mode = GSR_BITRATE_MODE_VBR;
+        self->settings.bitrate_mode = GSR_BITRATE_MODE_VBR;
     }
 
-    if(self->video_encoder == GSR_VIDEO_ENCODER_HW_CPU && self->bitrate_mode == GSR_BITRATE_MODE_VBR) {
+    if(self->settings.video_encoder == GSR_VIDEO_ENCODER_HW_CPU && self->settings.bitrate_mode == GSR_BITRATE_MODE_VBR) {
         gsr_log(GSR_LOG_LEVEL_WARNING, "bitrate mode has been forcefully set to qp because software encoding option doesn't support vbr option");
-        self->bitrate_mode = GSR_BITRATE_MODE_QP;
+        self->settings.bitrate_mode = GSR_BITRATE_MODE_QP;
     }
 
     if(egl->gpu_info.is_steam_deck) {
         gsr_log(GSR_LOG_LEVEL_WARNING, "steam deck has multiple driver issues. One of them has been reported here: https://github.com/ValveSoftware/SteamOS/issues/1609\nIf you have issues with GPU Screen Recorder on steam deck that you don't have on a desktop computer then report the issue to Valve and/or AMD.");
     }
 
-    self->very_old_gpu = false;
+    self->settings.very_old_gpu = false;
     if(egl->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA && egl->gpu_info.gpu_version != 0 && egl->gpu_info.gpu_version < 900) {
         gsr_log(GSR_LOG_LEVEL_INFO, "your gpu appears to be very old (older than maxwell architecture). Switching to lower preset");
-        self->very_old_gpu = true;
+        self->settings.very_old_gpu = true;
     }
 
-    if(video_codec_is_hdr(self->video_codec) && !wayland) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "hdr video codec option %s is not available on X11", video_codec_to_string(self->video_codec));
+    if(video_codec_is_hdr(self->settings.video_codec) && !wayland) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "hdr video codec option %s is not available on X11", video_codec_to_string(self->settings.video_codec));
         usage();
         return false;
     }
