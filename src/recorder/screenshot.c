@@ -128,7 +128,7 @@ int gsr_screenshot_take(const gsr_screenshot_params *params) {
                 gsr_cursor_on_event(&capture_deps->x11_cursor, gsr_window_get_event_data(window));
 
             for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
-        gsr_video_source *video_source = &video_sources->items[video_source_index];
+                gsr_video_source *video_source = &video_sources->items[video_source_index];
                 gsr_capture_on_event(video_source->capture, egl);
             }
         }
@@ -142,7 +142,7 @@ int gsr_screenshot_take(const gsr_screenshot_params *params) {
 
         should_stop_error = false;
         for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
-        gsr_video_source *video_source = &video_sources->items[video_source_index];
+            gsr_video_source *video_source = &video_sources->items[video_source_index];
             gsr_capture_tick(video_source->capture);
             if(gsr_capture_should_stop(video_source->capture, &should_stop_error)) {
                 break;
@@ -151,7 +151,7 @@ int gsr_screenshot_take(const gsr_screenshot_params *params) {
         }
 
         for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
-        gsr_video_source *video_source = &video_sources->items[video_source_index];
+            gsr_video_source *video_source = &video_sources->items[video_source_index];
             if(video_source->capture->pre_capture)
                 video_source->capture->pre_capture(video_source->capture, &video_source->metadata, output_color_conversion);
         }
@@ -163,7 +163,7 @@ int gsr_screenshot_take(const gsr_screenshot_params *params) {
 
         bool all_sources_captured = true;
         for(size_t video_source_index = 0; video_source_index < video_sources->num_items; ++video_source_index) {
-        gsr_video_source *video_source = &video_sources->items[video_source_index];
+            gsr_video_source *video_source = &video_sources->items[video_source_index];
             // It can fail, for example when capturing portal and the target is a monitor that hasn't been updated.
             // This can also happen for example if the system suspends and the monitor to capture's framebuffer is gone, or if the target window disappeared.
             if(gsr_capture_capture(video_source->capture, &video_source->metadata, output_color_conversion) != 0)

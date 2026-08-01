@@ -6,10 +6,6 @@
 #include "../defs.h"
 #include "../vec2.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 typedef struct {
     gsr_video_encoder_hardware video_encoder;
     gsr_pixel_format pixel_format;
@@ -55,9 +51,5 @@ typedef struct {
     vec2i region_size;
     vec2i region_position;
 } gsr_recorder_settings;
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* GSR_RECORDER_SETTINGS_H */

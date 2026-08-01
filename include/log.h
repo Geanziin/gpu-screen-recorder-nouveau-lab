@@ -1,10 +1,6 @@
 #ifndef GSR_LOG_H
 #define GSR_LOG_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 typedef enum {
     GSR_LOG_LEVEL_DEBUG,
     GSR_LOG_LEVEL_INFO,
@@ -20,9 +16,5 @@ void gsr_log(gsr_log_level level, const char *fmt, ...) __attribute__((format(pr
 void gsr_log_set_level(gsr_log_level level);
 /* A NULL |handler| restores the default handler which prints "gsr <level>: <message>" to stderr */
 void gsr_log_set_handler(gsr_log_handler handler, void *userdata);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* GSR_LOG_H */

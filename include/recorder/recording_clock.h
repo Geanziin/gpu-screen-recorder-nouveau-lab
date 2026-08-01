@@ -3,10 +3,6 @@
 
 #include <stdbool.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /* Monotonic clock that excludes the time the recording has been paused. Safe to use from multiple threads */
 typedef struct gsr_recording_clock gsr_recording_clock;
 
@@ -21,9 +17,5 @@ double gsr_recording_clock_get_time(const gsr_recording_clock *self);
 
 void gsr_recording_clock_set_paused(gsr_recording_clock *self, bool paused);
 bool gsr_recording_clock_is_paused(const gsr_recording_clock *self);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* GSR_RECORDER_RECORDING_CLOCK_H */

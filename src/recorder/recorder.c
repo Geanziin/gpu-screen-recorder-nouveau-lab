@@ -434,189 +434,190 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
     gsr_recorder_destroy(self);
     return NULL;
 }
+
 static void recorder_process_events(gsr_recorder *self) {
-while(gsr_window_process_event(self->window)) {
-    if(self->capture_deps->x11_cursor_display && self->settings.record_cursor)
-        gsr_cursor_on_event(&self->capture_deps->x11_cursor, gsr_window_get_event_data(self->window));
+    while(gsr_window_process_event(self->window)) {
+        if(self->capture_deps->x11_cursor_display && self->settings.record_cursor)
+            gsr_cursor_on_event(&self->capture_deps->x11_cursor, gsr_window_get_event_data(self->window));
 
-    gsr_damage_on_event(&self->damage, gsr_window_get_event_data(self->window));
-    for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
-gsr_video_source *video_source = &self->video_sources->items[video_source_index];
-        gsr_capture_on_event(video_source->capture, self->egl);
+        gsr_damage_on_event(&self->damage, gsr_window_get_event_data(self->window));
+        for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
+            gsr_video_source *video_source = &self->video_sources->items[video_source_index];
+            gsr_capture_on_event(video_source->capture, self->egl);
+        }
     }
-}
 
-if(self->capture_deps->x11_cursor_display && self->settings.record_cursor)
-    gsr_cursor_tick(&self->capture_deps->x11_cursor, DefaultRootWindow(self->capture_deps->x11_cursor_display));
+    if(self->capture_deps->x11_cursor_display && self->settings.record_cursor)
+        gsr_cursor_tick(&self->capture_deps->x11_cursor, DefaultRootWindow(self->capture_deps->x11_cursor_display));
 }
 
 static bool recorder_tick_video_sources(gsr_recorder *self) {
-gsr_damage_tick(&self->damage);
+    gsr_damage_tick(&self->damage);
 
-self->should_stop_error = false;
-bool damaged = false;
+    self->should_stop_error = false;
+    bool damaged = false;
 
-if(self->use_damage_tracking)
-    damaged = gsr_damage_is_damaged(&self->damage);
+    if(self->use_damage_tracking)
+        damaged = gsr_damage_is_damaged(&self->damage);
 
-for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
-gsr_video_source *video_source = &self->video_sources->items[video_source_index];
-    gsr_capture_tick(video_source->capture);
+    for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
+        gsr_video_source *video_source = &self->video_sources->items[video_source_index];
+        gsr_capture_tick(video_source->capture);
 
-    if(gsr_capture_should_stop(video_source->capture, &self->should_stop_error)) {
-        self->running = 0;
-        break;
-    }
-
-    if(video_source->capture_source->type == GSR_CAPTURE_SOURCE_TYPE_FOCUSED_WINDOW) {
-        assert(video_source->capture->get_window_id);
-        const Window damage_target_window = video_source->capture->get_window_id(video_source->capture);
-
-        if((int64_t)damage_target_window != video_source->capture_source->window_id) {
-            gsr_damage_stop_tracking_window(&self->damage, video_source->capture_source->window_id);
-            if(damage_target_window != 0)
-                gsr_damage_start_tracking_window(&self->damage, damage_target_window);
+        if(gsr_capture_should_stop(video_source->capture, &self->should_stop_error)) {
+            self->running = 0;
+            break;
         }
 
-        video_source->capture_source->window_id = damage_target_window;
+        if(video_source->capture_source->type == GSR_CAPTURE_SOURCE_TYPE_FOCUSED_WINDOW) {
+            assert(video_source->capture->get_window_id);
+            const Window damage_target_window = video_source->capture->get_window_id(video_source->capture);
+
+            if((int64_t)damage_target_window != video_source->capture_source->window_id) {
+                gsr_damage_stop_tracking_window(&self->damage, video_source->capture_source->window_id);
+                if(damage_target_window != 0)
+                    gsr_damage_start_tracking_window(&self->damage, damage_target_window);
+            }
+
+            video_source->capture_source->window_id = damage_target_window;
+        }
+
+        if(video_source->capture->is_damaged)
+            damaged |= video_source->capture->is_damaged(video_source->capture);
+        else if(!self->use_damage_tracking)
+            damaged = true;
     }
 
-    if(video_source->capture->is_damaged)
-        damaged |= video_source->capture->is_damaged(video_source->capture);
-    else if(!self->use_damage_tracking)
+    damaged |= gsr_plugins_is_damaged(&self->plugins);
+
+    // TODO: Readd wayland sync warning when removing this
+    if(self->settings.framerate_mode != GSR_FRAMERATE_MODE_CONTENT)
         damaged = true;
-}
 
-damaged |= gsr_plugins_is_damaged(&self->plugins);
-
-// TODO: Readd wayland sync warning when removing this
-if(self->settings.framerate_mode != GSR_FRAMERATE_MODE_CONTENT)
-    damaged = true;
-
-if(damaged)
-    ++self->damage_fps_counter;
+    if(damaged)
+        ++self->damage_fps_counter;
 
     return damaged;
 }
 
 static void recorder_update_fps_counters(gsr_recorder *self, bool damaged) {
-++self->fps_counter;
-const double time_now = clock_get_monotonic_seconds();
-//const double frame_timer_elapsed = time_now - frame_timer_start;
-const double elapsed = time_now - self->fps_start_time;
-if (elapsed >= 1.0) {
-    if(self->settings.verbose) {
-        fprintf(stderr, "update fps: %d, damage fps: %d\n", self->fps_counter, self->damage_fps_counter);
+    ++self->fps_counter;
+    const double time_now = clock_get_monotonic_seconds();
+    //const double frame_timer_elapsed = time_now - frame_timer_start;
+    const double elapsed = time_now - self->fps_start_time;
+    if (elapsed >= 1.0) {
+        if(self->settings.verbose) {
+            fprintf(stderr, "update fps: %d, damage fps: %d\n", self->fps_counter, self->damage_fps_counter);
+        }
+        self->fps_start_time = time_now;
+        self->fps_counter = 0;
+        self->damage_fps_counter = 0;
     }
-    self->fps_start_time = time_now;
-    self->fps_counter = 0;
-    self->damage_fps_counter = 0;
-}
 }
 
 static void recorder_capture_and_encode_frame(gsr_recorder *self, bool damaged) {
-const double this_video_frame_time = gsr_recording_clock_get_time(self->recording_clock);
-const int64_t expected_frames = floor((this_video_frame_time - self->record_start_time) / self->target_fps);
-const int64_t num_missed_frames = expected_frames - self->video_pts_counter;
+    const double this_video_frame_time = gsr_recording_clock_get_time(self->recording_clock);
+    const int64_t expected_frames = floor((this_video_frame_time - self->record_start_time) / self->target_fps);
+    const int64_t num_missed_frames = expected_frames - self->video_pts_counter;
 
-if(damaged && num_missed_frames >= 1 && !self->paused) {
-    // TODO: Dont do this if no damage?
-    self->egl->glClear(0);
+    if(damaged && num_missed_frames >= 1 && !self->paused) {
+        // TODO: Dont do this if no damage?
+        self->egl->glClear(0);
 
-    gsr_damage_clear(&self->damage);
-    gsr_plugins_clear_damage(&self->plugins);
-    gsr_capture_deps_cleanup_kms_fds(self->capture_deps);
+        gsr_damage_clear(&self->damage);
+        gsr_plugins_clear_damage(&self->plugins);
+        gsr_capture_deps_cleanup_kms_fds(self->capture_deps);
 
-    gsr_capture_deps_update_kms(self->capture_deps);
+        gsr_capture_deps_update_kms(self->capture_deps);
 
-    bool capture_has_synchronous_task = false;
-    for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
-gsr_video_source *video_source = &self->video_sources->items[video_source_index];
-        if(video_source->capture->clear_damage)
-            video_source->capture->clear_damage(video_source->capture);
+        bool capture_has_synchronous_task = false;
+        for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
+            gsr_video_source *video_source = &self->video_sources->items[video_source_index];
+            if(video_source->capture->clear_damage)
+                video_source->capture->clear_damage(video_source->capture);
 
-        if(video_source->capture->capture_has_synchronous_task) {
-            capture_has_synchronous_task = video_source->capture->capture_has_synchronous_task(video_source->capture);
-            if(capture_has_synchronous_task) {
-                self->paused = true;
-                gsr_recording_clock_set_paused(self->recording_clock, true);
+            if(video_source->capture->capture_has_synchronous_task) {
+                capture_has_synchronous_task = video_source->capture->capture_has_synchronous_task(video_source->capture);
+                if(capture_has_synchronous_task) {
+                    self->paused = true;
+                    gsr_recording_clock_set_paused(self->recording_clock, true);
+                }
             }
         }
-    }
 
-    for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
-gsr_video_source *video_source = &self->video_sources->items[video_source_index];
-        if(video_source->capture->pre_capture)
-            video_source->capture->pre_capture(video_source->capture, &video_source->metadata, self->output_color_conversion);
-    }
+        for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
+            gsr_video_source *video_source = &self->video_sources->items[video_source_index];
+            if(video_source->capture->pre_capture)
+                video_source->capture->pre_capture(video_source->capture, &video_source->metadata, self->output_color_conversion);
+        }
 
-    if(self->output_color_conversion->schedule_clear) {
-        self->output_color_conversion->schedule_clear = false;
-        gsr_color_conversion_clear(self->output_color_conversion);
-    }
+        if(self->output_color_conversion->schedule_clear) {
+            self->output_color_conversion->schedule_clear = false;
+            gsr_color_conversion_clear(self->output_color_conversion);
+        }
 
-    for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
-gsr_video_source *video_source = &self->video_sources->items[video_source_index];
-        gsr_capture_capture(video_source->capture, &video_source->metadata, self->output_color_conversion);
-    }
+        for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
+            gsr_video_source *video_source = &self->video_sources->items[video_source_index];
+            gsr_capture_capture(video_source->capture, &video_source->metadata, self->output_color_conversion);
+        }
 
-    gsr_capture_deps_cleanup_kms_fds(self->capture_deps);
+        gsr_capture_deps_cleanup_kms_fds(self->capture_deps);
 
-    if(self->plugins.num_plugins > 0) {
-        gsr_plugins_draw(&self->plugins);
-        gsr_color_conversion_draw(&self->color_conversion, self->plugins.texture,
+        if(self->plugins.num_plugins > 0) {
+            gsr_plugins_draw(&self->plugins);
+            gsr_color_conversion_draw(&self->color_conversion, self->plugins.texture,
             (vec2i){0, 0}, self->video_size,
             (vec2i){0, 0}, self->video_size,
             self->video_size, GSR_ROT_0, GSR_FLIP_NONE, GSR_SOURCE_COLOR_RGB, false);
-    }
-
-    if(capture_has_synchronous_task) {
-        self->paused = false;
-        gsr_recording_clock_set_paused(self->recording_clock, false);
-    }
-
-    gsr_egl_swap_buffers(self->egl);
-    gsr_video_encoder_copy_textures_to_frame(self->video_encoder, self->video_frame, self->output_color_conversion);
-
-    for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
-gsr_video_source *video_source = &self->video_sources->items[video_source_index];
-        if(self->hdr && !self->hdr_metadata_set && !self->settings.is_replaying && add_hdr_metadata_to_video_stream(video_source->capture, self->video_stream))
-            self->hdr_metadata_set = true;
-    }
-
-    // TODO: Check if duplicate frame can be saved just by writing it with a different pts instead of sending it again
-    const int num_frames_to_encode = self->settings.framerate_mode == GSR_FRAMERATE_MODE_CONSTANT ? num_missed_frames : 1;
-    for(int i = 0; i < num_frames_to_encode; ++i) {
-        if(self->settings.framerate_mode == GSR_FRAMERATE_MODE_CONSTANT) {
-            self->video_frame->pts = self->video_pts_counter + i;
-        } else {
-            self->video_frame->pts = (this_video_frame_time - self->record_start_time) * (double)AV_TIME_BASE;
-            const bool same_pts = self->video_frame->pts == self->video_prev_pts;
-            self->video_prev_pts = self->video_frame->pts;
-            if(same_pts)
-                continue;
         }
 
-        if(self->force_iframe_frame) {
-            self->video_frame->pict_type = AV_PICTURE_TYPE_I;
+        if(capture_has_synchronous_task) {
+            self->paused = false;
+            gsr_recording_clock_set_paused(self->recording_clock, false);
         }
 
-        int ret = avcodec_send_frame(self->video_codec_context, self->video_frame);
-        if(ret == 0) {
-            // TODO: Move to separate thread because this could write to network (for example when livestreaming)
-            gsr_encoder_receive_packets(&self->encoder, self->video_codec_context, self->video_frame->pts, GSR_VIDEO_STREAM_INDEX);
-        } else {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "avcodec_send_frame failed, error: %s", gsr_av_error_to_string(ret));
+        gsr_egl_swap_buffers(self->egl);
+        gsr_video_encoder_copy_textures_to_frame(self->video_encoder, self->video_frame, self->output_color_conversion);
+
+        for(size_t video_source_index = 0; video_source_index < self->video_sources->num_items; ++video_source_index) {
+            gsr_video_source *video_source = &self->video_sources->items[video_source_index];
+            if(self->hdr && !self->hdr_metadata_set && !self->settings.is_replaying && add_hdr_metadata_to_video_stream(video_source->capture, self->video_stream))
+                self->hdr_metadata_set = true;
         }
 
-        if(self->force_iframe_frame) {
-            self->force_iframe_frame = false;
-            self->video_frame->pict_type = AV_PICTURE_TYPE_NONE;
+        // TODO: Check if duplicate frame can be saved just by writing it with a different pts instead of sending it again
+        const int num_frames_to_encode = self->settings.framerate_mode == GSR_FRAMERATE_MODE_CONSTANT ? num_missed_frames : 1;
+        for(int i = 0; i < num_frames_to_encode; ++i) {
+            if(self->settings.framerate_mode == GSR_FRAMERATE_MODE_CONSTANT) {
+                self->video_frame->pts = self->video_pts_counter + i;
+            } else {
+                self->video_frame->pts = (this_video_frame_time - self->record_start_time) * (double)AV_TIME_BASE;
+                const bool same_pts = self->video_frame->pts == self->video_prev_pts;
+                self->video_prev_pts = self->video_frame->pts;
+                if(same_pts)
+                    continue;
+            }
+
+            if(self->force_iframe_frame) {
+                self->video_frame->pict_type = AV_PICTURE_TYPE_I;
+            }
+
+            int ret = avcodec_send_frame(self->video_codec_context, self->video_frame);
+            if(ret == 0) {
+                // TODO: Move to separate thread because this could write to network (for example when livestreaming)
+                gsr_encoder_receive_packets(&self->encoder, self->video_codec_context, self->video_frame->pts, GSR_VIDEO_STREAM_INDEX);
+            } else {
+                gsr_log(GSR_LOG_LEVEL_ERROR, "avcodec_send_frame failed, error: %s", gsr_av_error_to_string(ret));
+            }
+
+            if(self->force_iframe_frame) {
+                self->force_iframe_frame = false;
+                self->video_frame->pict_type = AV_PICTURE_TYPE_NONE;
+            }
         }
+
+        self->video_pts_counter += num_missed_frames;
     }
-
-    self->video_pts_counter += num_missed_frames;
-}
 }
 
 static void recorder_apply_pause_toggle(gsr_recorder *self) {
@@ -775,7 +776,6 @@ int gsr_recorder_run(gsr_recorder *self) {
     self->hdr_metadata_set = false;
     self->hdr = video_codec_is_hdr(self->settings.video_codec);
 
-    
     memset(&self->damage, 0, sizeof(self->damage));
     if(self->settings.framerate_mode == GSR_FRAMERATE_MODE_CONTENT && gsr_capture_sources_has_damage_tracked_target(self->capture_sources)) {
         if(gsr_window_get_display_server(self->window) == GSR_DISPLAY_SERVER_X11) {

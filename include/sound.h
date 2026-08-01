@@ -21,10 +21,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 typedef struct {
     void *handle;
     unsigned int frames;
@@ -76,9 +72,5 @@ int sound_device_read_next_chunk(SoundDevice *device, void **buffer, double time
 void get_pulseaudio_inputs(gsr_audio_devices *audio_devices);
 void gsr_audio_devices_deinit(gsr_audio_devices *self);
 bool pulseaudio_server_is_pipewire(void);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* GSR_SOUND_H */

@@ -1,10 +1,6 @@
 #ifndef GSR_RECORDER_ERROR_H
 #define GSR_RECORDER_ERROR_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /* The negated value of each error is the exit code that gpu-screen-recorder exits with */
 typedef enum {
     GSR_ERROR_OK = 0,
@@ -23,9 +19,5 @@ typedef enum {
 static inline int gsr_error_to_exit_code(int error) {
     return error < 0 ? -error : 0;
 }
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* GSR_RECORDER_ERROR_H */
