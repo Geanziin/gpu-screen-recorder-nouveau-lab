@@ -405,6 +405,65 @@ static gsr_capture* create_capture_impl(const gsr_recorder_settings *settings, g
     return capture;
 }
 
+/* The size and position of a capture source can be relative to the video size, in which case it can't be used to calculate the video size */
+static bool video_source_size_is_relative_to_video_size(const gsr_video_source *self) {
+    return self->capture_source->pos.x_type == VVEC2I_TYPE_SCALAR || self->capture_source->pos.y_type == VVEC2I_TYPE_SCALAR
+        || (self->capture_source->size.x_type == VVEC2I_TYPE_SCALAR && self->capture_source->size.x != 100)
+        || (self->capture_source->size.y_type == VVEC2I_TYPE_SCALAR && self->capture_source->size.y != 100);
+}
+
+/* The video size is the area that all capture sources cover */
+static vec2i video_sources_get_total_size(const gsr_video_sources *self) {
+    vec2i start_pos = {99999, 99999};
+    vec2i end_pos = {-99999, -99999};
+    for(size_t i = 0; i < self->num_items; ++i) {
+        const gsr_video_source *video_source = &self->items[i];
+        if(video_source_size_is_relative_to_video_size(video_source))
+            continue;
+
+        const vec2i video_source_start_pos = {
+            video_source->capture_source->pos.x,
+            video_source->capture_source->pos.y
+        };
+
+        const vec2i video_source_end_pos = {
+            video_source_start_pos.x + video_source->metadata.video_size.x,
+            video_source_start_pos.y + video_source->metadata.video_size.y
+        };
+
+        if(video_source_start_pos.x < start_pos.x)
+            start_pos.x = video_source_start_pos.x;
+        if(video_source_start_pos.y < start_pos.y)
+            start_pos.y = video_source_start_pos.y;
+
+        if(video_source_end_pos.x > end_pos.x)
+            end_pos.x = video_source_end_pos.x;
+        if(video_source_end_pos.y > end_pos.y)
+            end_pos.y = video_source_end_pos.y;
+    }
+
+    /* Every capture source is relative to the video size, so use the size of the capture sources themselves as the video size */
+    if(end_pos.x <= start_pos.x || end_pos.y <= start_pos.y) {
+        start_pos = (vec2i){0, 0};
+        end_pos = (vec2i){0, 0};
+        for(size_t i = 0; i < self->num_items; ++i) {
+            const vec2i capture_size = self->items[i].metadata.video_size;
+            if(capture_size.x > end_pos.x)
+                end_pos.x = capture_size.x;
+            if(capture_size.y > end_pos.y)
+                end_pos.y = capture_size.y;
+        }
+    }
+
+    vec2i video_size = { end_pos.x - start_pos.x, end_pos.y - start_pos.y };
+    if(video_size.x < 0)
+        video_size.x = 0;
+    if(video_size.y < 0)
+        video_size.y = 0;
+
+    return video_size;
+}
+
 int gsr_video_sources_create(gsr_video_sources *self, const gsr_recorder_settings *settings, gsr_egl *egl, gsr_capture_deps *deps, bool prefer_ximage, gsr_capture_sources *capture_sources, vec2i *video_size) {
     memset(self, 0, sizeof(*self));
     if(capture_sources->num_items == 0)
@@ -446,38 +505,7 @@ int gsr_video_sources_create(gsr_video_sources *self, const gsr_recorder_setting
         }
     }
 
-    vec2i start_pos = {99999, 99999};
-    vec2i end_pos = {-99999, -99999};
-    for(size_t i = 0; i < self->num_items; ++i) {
-        const gsr_video_source *video_source = &self->items[i];
-        /* TODO: Skip scalar positions for now, but this should be handled in a better way.
-           Maybe handle scalars at the next loop by multiplying video size by the scalar. */
-        if(video_source->capture_source->pos.x_type == VVEC2I_TYPE_SCALAR || video_source->capture_source->pos.y_type == VVEC2I_TYPE_SCALAR
-            || (video_source->capture_source->size.x_type == VVEC2I_TYPE_SCALAR && video_source->capture_source->size.x != 100)
-            || (video_source->capture_source->size.y_type == VVEC2I_TYPE_SCALAR && video_source->capture_source->size.y != 100))
-        {
-            continue;
-        }
-        const vec2i video_source_start_pos = {video_source->capture_source->pos.x, video_source->capture_source->pos.y};
-        const vec2i video_source_end_pos = {video_source_start_pos.x + video_source->metadata.video_size.x, video_source_start_pos.y + video_source->metadata.video_size.y};
-
-        if(video_source_start_pos.x < start_pos.x)
-            start_pos.x = video_source_start_pos.x;
-        if(video_source_start_pos.y < start_pos.y)
-            start_pos.y = video_source_start_pos.y;
-
-        if(video_source_end_pos.x > end_pos.x)
-            end_pos.x = video_source_end_pos.x;
-        if(video_source_end_pos.y > end_pos.y)
-            end_pos.y = video_source_end_pos.y;
-    }
-
-    video_size->x = end_pos.x - start_pos.x;
-    video_size->y = end_pos.y - start_pos.y;
-    if(video_size->x < 0)
-        video_size->x = 0;
-    if(video_size->y < 0)
-        video_size->y = 0;
+    *video_size = video_sources_get_total_size(self);
 
     for(size_t i = 0; i < self->num_items; ++i) {
         self->items[i].metadata.video_size = *video_size;
