@@ -155,7 +155,7 @@ static void* audio_device_thread(void *userdata) {
     gsr_audio_track *track = thread_userdata->track;
     gsr_audio_device_capture *device = thread_userdata->device;
     gsr_recording_clock *clock = self->clock;
-    const volatile sig_atomic_t *running = self->running;
+    const atomic_int *running = self->running;
 
     const enum AVSampleFormat sound_device_sample_format = audio_format_to_sample_format(audio_codec_context_get_audio_format(track->codec_context));
     /* TODO: Always do conversion for now. This fixes issue with stuttering audio on pulseaudio with opus + multiple audio sources merged */
@@ -194,7 +194,7 @@ static void* audio_device_thread(void *userdata) {
     if(device->sound_device.handle)
         sound_device_flush(&device->sound_device);
 
-    while(*running) {
+    while(atomic_load(running)) {
         void *sound_buffer;
         int sound_buffer_size = -1;
         const double time_before_read_seconds = clock_get_monotonic_seconds();
@@ -332,7 +332,7 @@ static void* audio_device_thread(void *userdata) {
 static void* amix_thread(void *userdata) {
     gsr_audio_capture *self = userdata;
     AVFrame *aframe = av_frame_alloc();
-    while(*self->running) {
+    while(atomic_load(self->running)) {
         pthread_mutex_lock(&self->filter_mutex);
         for(size_t i = 0; i < self->num_tracks; ++i) {
             gsr_audio_track *track = &self->tracks[i];
@@ -360,7 +360,7 @@ static void* amix_thread(void *userdata) {
     return NULL;
 }
 
-int gsr_audio_capture_init(gsr_audio_capture *self, gsr_encoder *encoder, gsr_recording_clock *clock, const volatile sig_atomic_t *running) {
+int gsr_audio_capture_init(gsr_audio_capture *self, gsr_encoder *encoder, gsr_recording_clock *clock, const atomic_int *running) {
     memset(self, 0, sizeof(*self));
     self->encoder = encoder;
     self->clock = clock;

@@ -2,7 +2,7 @@
 #define GSR_RECORDER_SCREENSHOT_H
 
 #include <stdbool.h>
-#include <signal.h>
+#include <stdatomic.h>
 #include "../egl.h"
 #include "../image_writer.h"
 #include "../plugins.h"
@@ -19,7 +19,7 @@ typedef struct {
     gsr_image_format image_format;
     const char **plugin_filepaths;
     int num_plugin_filepaths;
-    const volatile sig_atomic_t *running;
+    const atomic_int *running;
     void (*screenshot_saved)(const char *filepath, void *userdata);
     void *userdata;
 } gsr_screenshot_params;

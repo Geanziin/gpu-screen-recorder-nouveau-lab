@@ -392,6 +392,14 @@ monotonic_microsec	realtime_microsec
 <monotonic_microsec>	<realtime_microsec>
 .fi
 (default: no). Ignored for live streaming and when output is piped.
+.TP
+.BI \-ipc " socket_path"
+Listen for commands on a unix domain socket at
+.I socket_path
+instead of only accepting signals. The socket is created when GPU Screen Recorder starts and removed when it exits.
+See the
+.B IPC
+section for the protocol. Has no effect when taking a screenshot.
 .SS Output Options
 .TP
 .BI \-o " output"
@@ -461,6 +469,74 @@ Use
 .B pkill
 to send signals (e.g.,
 .BR "pkill -SIGUSR1 -f ""^gpu-screen-recorder""" ).
+.SH IPC
+When the
+.B \-ipc
+option is used GPU Screen Recorder also listens for commands on a unix domain socket. This gives the same control as signals,
+except that a replay can be saved with an arbitrary number of seconds. The socket can only be used by the user that
+started GPU Screen Recorder and it's removed when GPU Screen Recorder exits.
+.PP
+Requests and replies are json objects terminated by a newline. Every request is replied to.
+A request has these fields:
+.TP
+.B id
+Number that identifies the request. The reply to the request has the same id.
+.TP
+.B name
+String with the name of the request.
+.TP
+.B data
+Optional, the type depends on the request.
+.PP
+A reply has these fields:
+.TP
+.B id
+The id of the request that this is a reply to, or 0 when the request had no valid id.
+.TP
+.B result
+Either
+.B ok
+or
+.BR error .
+.TP
+.B data
+Optional. For an
+.B error
+result this is a string that describes what went wrong.
+.PP
+These requests are available:
+.TP
+.B stop
+Stop and save recording (stop without save in replay mode).
+.TP
+.B save-replay
+Save replay (replay mode only).
+.B data
+is the number of seconds to save, which has to be larger than 0. The whole replay buffer is saved when
+.B data
+is omitted or null.
+.TP
+.B toggle-pause
+Pause/unpause recording (not for streaming/replay).
+.TP
+.B toggle-replay-recording
+Start/stop regular recording during replay/streaming, which requires the
+.B \-ro
+option.
+.PP
+Example:
+.nf
+.RS
+gpu-screen-recorder -w screen -f 60 -c mp4 -r 60 -o ~/Videos -ipc "$XDG_RUNTIME_DIR/gsr.sock" &
+echo '{"id":1,"name":"save-replay","data":30}' | socat - "UNIX-CONNECT:$XDG_RUNTIME_DIR/gsr.sock"
+.RE
+.fi
+which replies with:
+.nf
+.RS
+{"id":1,"result":"ok"}
+.RE
+.fi
 .SH EXAMPLES
 .B Record monitor at 60 FPS with desktop audio:
 .nf

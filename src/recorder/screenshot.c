@@ -67,7 +67,7 @@ int gsr_screenshot_take(const gsr_screenshot_params *params) {
     gsr_window *window = params->window;
     gsr_capture_deps *capture_deps = params->capture_deps;
     gsr_capture_sources *capture_sources = params->capture_sources;
-    const volatile sig_atomic_t *running = params->running;
+    const atomic_int *running = params->running;
     const int image_quality = video_quality_to_image_quality_value(settings->video_quality);
     const gsr_color_range color_range = image_format_to_color_range(params->image_format, image_quality);
 
@@ -122,7 +122,7 @@ int gsr_screenshot_take(const gsr_screenshot_params *params) {
     bool should_stop_error = false;
     egl->glClear(0);
 
-    while(*running) {
+    while(atomic_load(running)) {
         while(gsr_window_process_event(window)) {
             if(capture_deps->x11_cursor_display && settings->record_cursor)
                 gsr_cursor_on_event(&capture_deps->x11_cursor, gsr_window_get_event_data(window));
@@ -175,7 +175,7 @@ int gsr_screenshot_take(const gsr_screenshot_params *params) {
         if(all_sources_captured)
             break;
 
-        if(*running)
+        if(atomic_load(running))
             usleep(30 * 1000); // 30 ms
     }
 

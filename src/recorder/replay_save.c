@@ -8,7 +8,7 @@
 
 void gsr_replay_save_init(gsr_replay_save *self) {
     memset(self, 0, sizeof(*self));
-    self->finished = 0;
+    atomic_init(&self->finished, 0);
 }
 
 bool gsr_replay_save_is_running(const gsr_replay_save *self) {
@@ -110,7 +110,7 @@ static void* replay_save_thread(void *userdata) {
 
     self->success = success;
     gsr_replay_save_cleanup(self);
-    self->finished = 1;
+    atomic_store(&self->finished, 1);
     return NULL;
 }
 
@@ -123,7 +123,7 @@ bool gsr_replay_save_start(gsr_replay_save *self, AVCodecContext *video_codec_co
     self->video_stream_index = video_stream_index;
     self->output_filepath[0] = '\0';
     self->success = false;
-    self->finished = 0;
+    atomic_store(&self->finished, 0);
 
     pthread_mutex_lock(&encoder->replay_mutex);
     self->cloned_replay_buffer = gsr_replay_buffer_clone(encoder->replay_buffer);
@@ -193,7 +193,7 @@ static bool gsr_replay_save_finish(gsr_replay_save *self, bool *success, const c
 }
 
 bool gsr_replay_save_poll(gsr_replay_save *self, bool *success, const char **output_filepath) {
-    if(!self->thread_created || !self->finished)
+    if(!self->thread_created || !atomic_load(&self->finished))
         return false;
 
     return gsr_replay_save_finish(self, success, output_filepath);

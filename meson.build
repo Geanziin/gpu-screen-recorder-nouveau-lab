@@ -46,6 +46,7 @@ src = [
     'src/recorder/screenshot.c',
     'src/recorder/recorder.c',
     'src/cli/commands.c',
+    'src/cli/ipc.c',
     'src/egl.c',
     'src/cuda.c',
     'src/window_texture.c',

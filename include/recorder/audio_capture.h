@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
-#include <signal.h>
+#include <stdatomic.h>
 #include <pthread.h>
 #include "../sound.h"
 #include "recording_clock.h"
@@ -64,11 +64,11 @@ struct gsr_audio_capture {
 
     gsr_encoder *encoder;
     gsr_recording_clock *clock;
-    const volatile sig_atomic_t *running;
+    const atomic_int *running;
 };
 
 /* Returns a |gsr_error| value */
-int gsr_audio_capture_init(gsr_audio_capture *self, gsr_encoder *encoder, gsr_recording_clock *clock, const volatile sig_atomic_t *running);
+int gsr_audio_capture_init(gsr_audio_capture *self, gsr_encoder *encoder, gsr_recording_clock *clock, const atomic_int *running);
 void gsr_audio_capture_deinit(gsr_audio_capture *self);
 
 bool gsr_audio_capture_add_track(gsr_audio_capture *self, const gsr_audio_track *track);

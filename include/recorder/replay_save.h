@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <limits.h>
 #include <pthread.h>
-#include <signal.h>
+#include <stdatomic.h>
 #include "muxer.h"
 #include "audio_capture.h"
 #include "capture_setup.h"
@@ -25,7 +25,7 @@ typedef struct {
 typedef struct {
     pthread_t thread;
     bool thread_created;
-    volatile sig_atomic_t finished;
+    atomic_int finished;
     bool success;
     char output_filepath[PATH_MAX];
 

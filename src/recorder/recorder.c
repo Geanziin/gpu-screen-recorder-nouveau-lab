@@ -26,6 +26,7 @@
 #include <assert.h>
 #include <limits.h>
 #include <unistd.h>
+#include <stdatomic.h>
 
 #include <libavutil/time.h>
 #include <libavformat/avformat.h>
@@ -85,10 +86,10 @@ struct gsr_recorder {
     int64_t video_prev_pts;
     bool hdr_metadata_set;
 
-    volatile sig_atomic_t running;
-    volatile sig_atomic_t toggle_pause;
-    volatile sig_atomic_t toggle_replay_recording;
-    volatile sig_atomic_t save_replay_seconds;
+    atomic_int running;
+    atomic_int toggle_pause;
+    atomic_int toggle_replay_recording;
+    atomic_int save_replay_seconds;
     bool should_stop_error;
     bool force_iframe_frame;
     int audio_max_frame_size;
@@ -400,7 +401,10 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
     self->capture_deps = params->capture_deps;
     self->capture_sources = params->capture_sources;
     self->audio_input_tracks = params->audio_input_tracks;
-    self->running = 1;
+    atomic_init(&self->running, 1);
+    atomic_init(&self->toggle_pause, 0);
+    atomic_init(&self->toggle_replay_recording, 0);
+    atomic_init(&self->save_replay_seconds, 0);
     self->audio_max_frame_size = 1024;
     int error_code = GSR_ERROR_GENERIC;
     self->hdr = video_codec_is_hdr(params->settings->video_codec);
@@ -465,7 +469,7 @@ static bool recorder_tick_video_sources(gsr_recorder *self) {
         gsr_capture_tick(video_source->capture);
 
         if(gsr_capture_should_stop(video_source->capture, &self->should_stop_error)) {
-            self->running = 0;
+            atomic_store(&self->running, 0);
             break;
         }
 
@@ -621,23 +625,23 @@ static void recorder_capture_and_encode_frame(gsr_recorder *self, bool damaged) 
 }
 
 static void recorder_apply_pause_toggle(gsr_recorder *self) {
-    if(self->toggle_pause == 1 && !self->settings.is_replaying) {
+    if(atomic_load(&self->toggle_pause) == 1 && !self->settings.is_replaying) {
         self->paused = !self->paused;
         gsr_recording_clock_set_paused(self->recording_clock, self->paused);
         gsr_log(GSR_LOG_LEVEL_INFO, self->paused ? "Paused" : "Unpaused");
-        self->toggle_pause = 0;
+        atomic_store(&self->toggle_pause, 0);
     }
 }
 
 static void recorder_apply_replay_recording_toggle(gsr_recorder *self) {
-    if(self->toggle_replay_recording && !self->settings.replay_recording_directory) {
-        self->toggle_replay_recording = 0;
+    if(atomic_load(&self->toggle_replay_recording) && !self->settings.replay_recording_directory) {
+        atomic_store(&self->toggle_replay_recording, 0);
         if(self->callbacks.recording_started)
             self->callbacks.recording_started(NULL, self->callbacks.userdata);
     }
 
-    if(self->toggle_replay_recording && self->settings.replay_recording_directory) {
-        self->toggle_replay_recording = 0;
+    if(atomic_load(&self->toggle_replay_recording) && self->settings.replay_recording_directory) {
+        atomic_store(&self->toggle_replay_recording, 0);
         const bool new_replay_recording_state = !self->replay_recording;
         if(new_replay_recording_state) {
             gsr_audio_capture_lock_filter(&self->audio_capture);
@@ -704,12 +708,12 @@ static void recorder_poll_replay_save(gsr_recorder *self) {
             self->callbacks.replay_saved(replay_save_output_filepath[0] == '\0' || !replay_save_result ? NULL : replay_save_output_filepath, self->callbacks.userdata);
     }
 
-    if(self->save_replay_seconds != 0 && !gsr_replay_save_is_running(&self->replay_save) && self->settings.is_replaying) {
-        int current_save_replay_seconds = self->save_replay_seconds;
+    if(atomic_load(&self->save_replay_seconds) != 0 && !gsr_replay_save_is_running(&self->replay_save) && self->settings.is_replaying) {
+        int current_save_replay_seconds = atomic_load(&self->save_replay_seconds);
         if(current_save_replay_seconds > 0)
             current_save_replay_seconds += self->settings.keyint;
 
-        self->save_replay_seconds = 0;
+        atomic_store(&self->save_replay_seconds, 0);
         const bool replay_start_result = gsr_replay_save_start(&self->replay_save, self->video_codec_context, GSR_VIDEO_STREAM_INDEX, &self->audio_capture, &self->encoder, &self->settings, self->file_extension, self->hdr, self->video_sources, current_save_replay_seconds);
         if(!replay_start_result && self->callbacks.replay_saved)
             self->callbacks.replay_saved(NULL, self->callbacks.userdata);
@@ -762,7 +766,7 @@ int gsr_recorder_run(gsr_recorder *self) {
 
     if(gsr_audio_capture_start(&self->audio_capture, self->audio_max_frame_size, self->uses_amix) != GSR_ERROR_OK) {
         /* The audio threads that did start have to stop before they can be joined */
-        self->running = 0;
+        atomic_store(&self->running, 0);
         return GSR_ERROR_GENERIC;
     }
 
@@ -802,7 +806,7 @@ int gsr_recorder_run(gsr_recorder *self) {
         }
     }
 
-    while(self->running) {
+    while(atomic_load(&self->running)) {
         recorder_process_events(self);
         const bool damaged = recorder_tick_video_sources(self);
         recorder_update_fps_counters(self);
@@ -818,7 +822,7 @@ int gsr_recorder_run(gsr_recorder *self) {
 }
 
 static void gsr_recorder_stop_recording(gsr_recorder *self) {
-    self->running = 0;
+    atomic_store(&self->running, 0);
 
     bool final_replay_save_result = false;
     const char *final_replay_save_output_filepath = NULL;
@@ -894,17 +898,17 @@ void gsr_recorder_destroy(gsr_recorder *self) {
 }
 
 void gsr_recorder_stop(gsr_recorder *self) {
-    self->running = 0;
+    atomic_store(&self->running, 0);
 }
 
 void gsr_recorder_toggle_pause(gsr_recorder *self) {
-    self->toggle_pause = 1;
+    atomic_store(&self->toggle_pause, 1);
 }
 
 void gsr_recorder_toggle_replay_recording(gsr_recorder *self) {
-    self->toggle_replay_recording = 1;
+    atomic_store(&self->toggle_replay_recording, 1);
 }
 
 void gsr_recorder_save_replay(gsr_recorder *self, int seconds) {
-    self->save_replay_seconds = seconds;
+    atomic_store(&self->save_replay_seconds, seconds);
 }

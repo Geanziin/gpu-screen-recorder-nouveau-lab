@@ -16,6 +16,7 @@
 */
 
 #include "../../include/cli/commands.h"
+#include "../../include/cli/ipc.h"
 #include "../../include/recorder/recorder.h"
 #include "../../include/recorder/screenshot.h"
 #include "../../include/recorder/capture_source.h"
@@ -39,10 +40,11 @@
 #include <assert.h>
 #include <locale.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <unistd.h>
 #include <malloc.h>
 
-static volatile sig_atomic_t running = 1;
+static atomic_int running = 1;
 static gsr_recorder *recorder = NULL;
 /* Signals that are received before the recorder has been created are applied when it has been created */
 static volatile sig_atomic_t pending_toggle_pause = 0;
@@ -51,7 +53,7 @@ static volatile sig_atomic_t pending_save_replay_seconds = 0;
 
 static void stop_handler(int signal_value) {
     (void)signal_value;
-    running = 0;
+    atomic_store(&running, 0);
     if(recorder)
         gsr_recorder_stop(recorder);
 }
@@ -130,6 +132,48 @@ static void save_replay_10_minutes_handler(int signal_value) {
 static void save_replay_30_minutes_handler(int signal_value) {
     (void)signal_value;
     save_replay_seconds_handler(recorder, 60*30);
+}
+
+static bool ipc_stop_handler(char *error_message, size_t error_message_size, void *userdata) {
+    (void)error_message;
+    (void)error_message_size;
+    (void)userdata;
+    atomic_store(&running, 0);
+    gsr_recorder_stop(recorder);
+    return true;
+}
+
+static bool ipc_toggle_pause_handler(char *error_message, size_t error_message_size, void *userdata) {
+    const gsr_recorder_settings *settings = userdata;
+    if(settings->is_replaying) {
+        snprintf(error_message, error_message_size, "pausing is not supported when recording a replay");
+        return false;
+    }
+
+    gsr_recorder_toggle_pause(recorder);
+    return true;
+}
+
+static bool ipc_toggle_replay_recording_handler(char *error_message, size_t error_message_size, void *userdata) {
+    const gsr_recorder_settings *settings = userdata;
+    if(!settings->replay_recording_directory) {
+        snprintf(error_message, error_message_size, "option -ro is required to start a recording");
+        return false;
+    }
+
+    gsr_recorder_toggle_replay_recording(recorder);
+    return true;
+}
+
+static bool ipc_save_replay_handler(int seconds, char *error_message, size_t error_message_size, void *userdata) {
+    const gsr_recorder_settings *settings = userdata;
+    if(!settings->is_replaying) {
+        snprintf(error_message, error_message_size, "option -r is required to save a replay");
+        return false;
+    }
+
+    gsr_recorder_save_replay(recorder, seconds);
+    return true;
 }
 
 static void install_signal_handlers(void) {
@@ -366,7 +410,7 @@ static int take_screenshot(args_parser *arg_parser, gsr_windowing *windowing, gs
     return gsr_screenshot_take(&screenshot_params);
 }
 
-static int record(args_parser *arg_parser, gsr_windowing *windowing, gsr_capture_deps *capture_deps, gsr_capture_sources *capture_sources, gsr_audio_input_tracks *audio_input_tracks) {
+static int record(args_parser *arg_parser, gsr_windowing *windowing, gsr_capture_deps *capture_deps, gsr_capture_sources *capture_sources, gsr_audio_input_tracks *audio_input_tracks, gsr_ipc *ipc) {
     const Arg *plugin_arg = args_parser_get_arg(arg_parser, "-p");
     assert(plugin_arg);
 
@@ -396,10 +440,21 @@ static int record(args_parser *arg_parser, gsr_windowing *windowing, gsr_capture
         return error;
 
     apply_pending_signals(recorder);
-    if(!running)
+    if(!atomic_load(&running))
         gsr_recorder_stop(recorder);
 
-    const int run_result = gsr_recorder_run(recorder);
+    gsr_ipc_handlers ipc_handlers;
+    ipc_handlers.stop = ipc_stop_handler;
+    ipc_handlers.toggle_pause = ipc_toggle_pause_handler;
+    ipc_handlers.toggle_replay_recording = ipc_toggle_replay_recording_handler;
+    ipc_handlers.save_replay = ipc_save_replay_handler;
+    ipc_handlers.userdata = &arg_parser->settings;
+
+    int run_result = gsr_ipc_start(ipc, &ipc_handlers);
+    if(run_result == GSR_ERROR_OK)
+        run_result = gsr_recorder_run(recorder);
+
+    gsr_ipc_stop(ipc);
     gsr_recorder_destroy(recorder);
     recorder = NULL;
     return run_result;
@@ -413,10 +468,15 @@ static int run(args_parser *arg_parser) {
     gsr_app_audio_names app_audio_names;
     gsr_windowing windowing;
     gsr_capture_deps capture_deps;
+    gsr_ipc ipc;
     memset(&audio_input_tracks, 0, sizeof(audio_input_tracks));
     memset(&app_audio_names, 0, sizeof(app_audio_names));
     memset(&windowing, 0, sizeof(windowing));
+    memset(&ipc, 0, sizeof(ipc));
     gsr_capture_deps_init(&capture_deps);
+
+    const Arg *ipc_arg = args_parser_get_arg(arg_parser, "-ipc");
+    assert(ipc_arg);
 
     const int parse_capture_sources_result = gsr_capture_sources_parse(&capture_sources, arg_parser->settings.capture_source, arg_parser->settings.region_position, arg_parser->settings.region_size);
     if(parse_capture_sources_result != GSR_ERROR_OK) {
@@ -434,6 +494,11 @@ static int run(args_parser *arg_parser) {
     const int validate_args_result = validate_args_with_capture_sources(arg_parser, &capture_sources);
     if(validate_args_result != GSR_ERROR_OK) {
         exit_code = gsr_error_to_exit_code(validate_args_result);
+        goto done;
+    }
+
+    if(ipc_arg->num_values > 0 && gsr_ipc_init(&ipc, ipc_arg->values[0]) != GSR_ERROR_OK) {
+        exit_code = 1;
         goto done;
     }
 
@@ -518,12 +583,16 @@ static int run(args_parser *arg_parser) {
             goto done;
         }
 
+        if(ipc_arg->num_values > 0)
+            gsr_log(GSR_LOG_LEVEL_WARNING, "option -ipc has no effect when taking a screenshot");
+
         exit_code = gsr_error_to_exit_code(take_screenshot(arg_parser, &windowing, &capture_deps, &capture_sources, image_format));
     } else {
-        exit_code = gsr_error_to_exit_code(record(arg_parser, &windowing, &capture_deps, &capture_sources, &audio_input_tracks));
+        exit_code = gsr_error_to_exit_code(record(arg_parser, &windowing, &capture_deps, &capture_sources, &audio_input_tracks, &ipc));
     }
 
     done:
+    gsr_ipc_deinit(&ipc);
     gsr_capture_deps_deinit(&capture_deps);
     gsr_windowing_deinit(&windowing);
 #ifdef GSR_APP_AUDIO

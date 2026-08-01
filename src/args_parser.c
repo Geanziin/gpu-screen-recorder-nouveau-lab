@@ -206,7 +206,7 @@ static void usage_header(void) {
            "[-cursor yes|no] [-keyint <value>] [-restore-portal-session yes|no] [-portal-session-token-filepath filepath] [-encoder gpu|cpu] "
            "[-fallback-cpu-encoding yes|no] [-o <output_file>] [-ro <output_directory>] [-ffmpeg-opts <options>] [--list-capture-options [card_path]] "
            "[--list-monitors] [--list-audio-devices] [--list-application-audio] [--list-v4l2-devices] [-write-first-frame-ts yes|no] [-low-power yes|no] "
-           "[-v yes|no] [-gl-debug yes|no] [-exclude-metadata yes|no] [--version] [-h|--help]\n", program_name);
+           "[-ipc <socket_path>] [-v yes|no] [-gl-debug yes|no] [-exclude-metadata yes|no] [--version] [-h|--help]\n", program_name);
     fflush(stdout);
 }
 
@@ -571,6 +571,7 @@ args_parse_result args_parser_parse(args_parser *self, int argc, char **argv, co
     self->args[arg_index++] = (Arg){ .key = "-write-first-frame-ts",          .optional = true,  .list = false, .type = ARG_TYPE_BOOLEAN };
     self->args[arg_index++] = (Arg){ .key = "-low-power",                     .optional = true,  .list = false, .type = ARG_TYPE_BOOLEAN };
     self->args[arg_index++] = (Arg){ .key = "-exclude-metadata",              .optional = true,  .list = false, .type = ARG_TYPE_BOOLEAN };
+    self->args[arg_index++] = (Arg){ .key = "-ipc",                           .optional = true,  .list = false, .type = ARG_TYPE_STRING  };
     assert(arg_index == NUM_ARGS);
 
     for(int i = 1; i < argc; i += 2) {
