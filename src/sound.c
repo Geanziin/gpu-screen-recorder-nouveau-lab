@@ -1,15 +1,13 @@
-#include "../include/sound.hpp"
+#include "../include/sound.h"
 #include "../include/log.h"
-extern "C" {
 #include "../include/utils.h"
-}
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <cmath>
 #include <time.h>
-#include <mutex>
+#include <assert.h>
+#include <pthread.h>
 
 #include <pulse/pulseaudio.h>
 #include <pulse/mainloop.h>
@@ -34,13 +32,13 @@ extern "C" {
         }                                                               \
     } while(false);
 
-enum class DeviceType {
-    STANDARD,
-    DEFAULT_OUTPUT,
-    DEFAULT_INPUT
-};
+typedef enum {
+    DEVICE_TYPE_STANDARD,
+    DEVICE_TYPE_DEFAULT_OUTPUT,
+    DEVICE_TYPE_DEFAULT_INPUT
+} DeviceType;
 
-struct pa_handle {
+typedef struct {
     pa_context *context;
     pa_stream *stream;
     pa_mainloop *mainloop;
@@ -57,7 +55,8 @@ struct pa_handle {
     pa_buffer_attr attr;
     pa_sample_spec ss;
 
-    std::mutex reconnect_mutex;
+    pthread_mutex_t reconnect_mutex;
+    bool reconnect_mutex_initialized;
     DeviceType device_type;
     char stream_name[256];
     char node_name[256];
@@ -70,7 +69,7 @@ struct pa_handle {
 
     pa_proplist *proplist;
     bool connected;
-};
+} pa_handle;
 
 static void pa_sound_device_free(pa_handle *p) {
     assert(p);
@@ -101,17 +100,23 @@ static void pa_sound_device_free(pa_handle *p) {
         p->output_data = NULL;
     }
 
+    if (p->reconnect_mutex_initialized) {
+        pthread_mutex_destroy(&p->reconnect_mutex);
+        p->reconnect_mutex_initialized = false;
+    }
+
     pa_xfree(p);
 }
 
-static void subscribe_update_default_devices(pa_context*, const pa_server_info *server_info, void *userdata) {
+static void subscribe_update_default_devices(pa_context *ctx, const pa_server_info *server_info, void *userdata) {
+    (void)ctx;
     pa_handle *handle = (pa_handle*)userdata;
-    std::lock_guard<std::mutex> lock(handle->reconnect_mutex);
+    pthread_mutex_lock(&handle->reconnect_mutex);
 
     if(server_info->default_sink_name) {
         // TODO: Size check
         snprintf(handle->default_output_device_name, sizeof(handle->default_output_device_name), "%s.monitor", server_info->default_sink_name);
-        if(handle->device_type == DeviceType::DEFAULT_OUTPUT && strcmp(handle->device_name, handle->default_output_device_name) != 0) {
+        if(handle->device_type == DEVICE_TYPE_DEFAULT_OUTPUT && strcmp(handle->device_name, handle->default_output_device_name) != 0) {
             handle->reconnect = true;
             handle->reconnect_last_tried_seconds = clock_get_monotonic_seconds();
             // TODO: Size check
@@ -122,13 +127,15 @@ static void subscribe_update_default_devices(pa_context*, const pa_server_info *
     if(server_info->default_source_name) {
         // TODO: Size check
         snprintf(handle->default_input_device_name, sizeof(handle->default_input_device_name), "%s", server_info->default_source_name);
-        if(handle->device_type == DeviceType::DEFAULT_INPUT && strcmp(handle->device_name, handle->default_input_device_name) != 0) {
+        if(handle->device_type == DEVICE_TYPE_DEFAULT_INPUT && strcmp(handle->device_name, handle->default_input_device_name) != 0) {
             handle->reconnect = true;
             handle->reconnect_last_tried_seconds = clock_get_monotonic_seconds();
             // TODO: Size check
             snprintf(handle->device_name, sizeof(handle->device_name), "%s", handle->default_input_device_name);
         }
     }
+
+    pthread_mutex_unlock(&handle->reconnect_mutex);
 }
 
 static void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t idx, void *userdata) {
@@ -141,7 +148,8 @@ static void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t
     }
 }
 
-static void store_default_devices(pa_context*, const pa_server_info *server_info, void *userdata) {
+static void store_default_devices(pa_context *ctx, const pa_server_info *server_info, void *userdata) {
+    (void)ctx;
     pa_handle *handle = (pa_handle*)userdata;
     if(server_info->default_sink_name)
         snprintf(handle->default_output_device_name, sizeof(handle->default_output_device_name), "%s.monitor", server_info->default_sink_name);
@@ -152,7 +160,7 @@ static void store_default_devices(pa_context*, const pa_server_info *server_info
 static bool startup_get_default_devices(pa_handle *p, const char *device_name) {
     pa_operation *pa = pa_context_get_server_info(p->context, store_default_devices, p);
     while(pa) {
-        pa_operation_state state = pa_operation_get_state(pa);
+        pa_operation_state_t state = pa_operation_get_state(pa);
         if(state == PA_OPERATION_DONE) {
             pa_operation_unref(pa);
             break;
@@ -170,13 +178,13 @@ static bool startup_get_default_devices(pa_handle *p, const char *device_name) {
 
     if(strcmp(device_name, "default_output") == 0) {
         snprintf(p->device_name, sizeof(p->device_name), "%s", p->default_output_device_name);
-        p->device_type = DeviceType::DEFAULT_OUTPUT;
+        p->device_type = DEVICE_TYPE_DEFAULT_OUTPUT;
     } else if(strcmp(device_name, "default_input") == 0) {
         snprintf(p->device_name, sizeof(p->device_name), "%s", p->default_input_device_name);
-        p->device_type = DeviceType::DEFAULT_INPUT;
+        p->device_type = DEVICE_TYPE_DEFAULT_INPUT;
     } else {
         snprintf(p->device_name, sizeof(p->device_name), "%s", device_name);
-        p->device_type = DeviceType::STANDARD;
+        p->device_type = DEVICE_TYPE_STANDARD;
     }
 
     return true;
@@ -199,17 +207,26 @@ static pa_handle* pa_sound_device_new(const char *server,
     snprintf(p->node_name, sizeof(p->node_name), "%s", name);
     snprintf(p->stream_name, sizeof(p->stream_name), "%s", stream_name);
 
+    if(pthread_mutex_init(&p->reconnect_mutex, NULL) != 0) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to initialize reconnect mutex");
+        *rerror = -1;
+        pa_xfree(p);
+        return NULL;
+    }
+    p->reconnect_mutex_initialized = true;
+
     p->reconnect = true;
     p->reconnect_last_tried_seconds = clock_get_monotonic_seconds() - (RECONNECT_TRY_TIMEOUT_SECONDS * 1000.0 * 2.0);
     p->default_output_device_name[0] = '\0';
     p->default_input_device_name[0] = '\0';
-    p->device_type = DeviceType::STANDARD;
+    p->device_type = DEVICE_TYPE_STANDARD;
 
     const int buffer_size = attr->fragsize;
     void *buffer = malloc(buffer_size);
     if(!buffer) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "failed to allocate buffer for audio");
         *rerror = -1;
+        pa_sound_device_free(p);
         return NULL;
     }
 
@@ -291,7 +308,7 @@ static bool pa_sound_device_handle_context_recreate(pa_handle *p) {
         goto fail;
     }
 
-    if(pa_context_connect(p->context, nullptr, PA_CONTEXT_NOFLAGS, NULL) < 0) {
+    if(pa_context_connect(p->context, NULL, PA_CONTEXT_NOFLAGS, NULL) < 0) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "pa_context_connect failed");
         goto fail;
     }
@@ -310,7 +327,8 @@ static bool pa_sound_device_handle_context_recreate(pa_handle *p) {
 }
 
 static bool pa_sound_device_should_reconnect(pa_handle *p, double now, char *device_name, size_t device_name_size) {
-    std::lock_guard<std::mutex> lock(p->reconnect_mutex);
+    bool should_reconnect = false;
+    pthread_mutex_lock(&p->reconnect_mutex);
 
     if(!p->reconnect && (!p->stream || !PA_STREAM_IS_GOOD(pa_stream_get_state(p->stream)))) {
         p->reconnect = true;
@@ -321,10 +339,11 @@ static bool pa_sound_device_should_reconnect(pa_handle *p, double now, char *dev
         p->reconnect_last_tried_seconds = now;
         // TODO: Size check
         snprintf(device_name, device_name_size, "%s", p->device_name);
-        return true;
+        should_reconnect = true;
     }
 
-    return false;
+    pthread_mutex_unlock(&p->reconnect_mutex);
+    return should_reconnect;
 }
 
 static bool pa_sound_device_handle_reconnect(pa_handle *p, char *device_name, size_t device_name_size, double now) {
@@ -363,8 +382,9 @@ static bool pa_sound_device_handle_reconnect(pa_handle *p, char *device_name, si
 
     pa_mainloop_iterate(p->mainloop, 0, NULL);
 
-    std::lock_guard<std::mutex> lock(p->reconnect_mutex);
+    pthread_mutex_lock(&p->reconnect_mutex);
     p->reconnect = false;
+    pthread_mutex_unlock(&p->reconnect_mutex);
     return true;
 }
 
@@ -453,7 +473,7 @@ static int pa_sound_device_read(pa_handle *p, double timeout_seconds) {
             p->read_data = NULL;
             p->read_length = 0;
             p->read_index = 0;
-            
+
             if(pa_stream_drop(p->stream) != 0)
                 goto fail;
 
@@ -470,27 +490,27 @@ static int pa_sound_device_read(pa_handle *p, double timeout_seconds) {
     return success ? 0 : -1;
 }
 
-static pa_sample_format_t audio_format_to_pulse_audio_format(AudioFormat audio_format) {
+static pa_sample_format_t audio_format_to_pulse_audio_format(gsr_audio_format audio_format) {
     switch(audio_format) {
-        case S16: return PA_SAMPLE_S16LE;
-        case S32: return PA_SAMPLE_S32LE;
-        case F32: return PA_SAMPLE_FLOAT32LE;
+        case GSR_AUDIO_FORMAT_S16: return PA_SAMPLE_S16LE;
+        case GSR_AUDIO_FORMAT_S32: return PA_SAMPLE_S32LE;
+        case GSR_AUDIO_FORMAT_F32: return PA_SAMPLE_FLOAT32LE;
     }
     assert(false);
     return PA_SAMPLE_S16LE;
 }
 
-static int audio_format_to_get_bytes_per_sample(AudioFormat audio_format) {
+static int audio_format_to_get_bytes_per_sample(gsr_audio_format audio_format) {
     switch(audio_format) {
-        case S16: return 2;
-        case S32: return 4;
-        case F32: return 4;
+        case GSR_AUDIO_FORMAT_S16: return 2;
+        case GSR_AUDIO_FORMAT_S32: return 4;
+        case GSR_AUDIO_FORMAT_F32: return 4;
     }
     assert(false);
     return 2;
 }
 
-int sound_device_get_by_name(SoundDevice *device, const char *node_name, const char *device_name, const char *description, unsigned int num_channels, unsigned int period_frame_size, AudioFormat audio_format) {
+int sound_device_get_by_name(SoundDevice *device, const char *node_name, const char *device_name, const char *description, unsigned int num_channels, unsigned int period_frame_size, gsr_audio_format audio_format) {
     pa_sample_spec ss;
     ss.format = audio_format_to_pulse_audio_format(audio_format);
     ss.rate = 48000;
@@ -504,7 +524,7 @@ int sound_device_get_by_name(SoundDevice *device, const char *node_name, const c
     buffer_attr.maxlength = buffer_attr.fragsize;
 
     int error = 0;
-    pa_handle *handle = pa_sound_device_new(nullptr, node_name, device_name, description, &ss, &buffer_attr, &error);
+    pa_handle *handle = pa_sound_device_new(NULL, node_name, device_name, description, &ss, &buffer_attr, &error);
     if(!handle) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "pa_sound_device_new() failed: %s. Audio input device %s might not be valid", pa_strerror(error), device_name);
         return -1;
@@ -544,7 +564,7 @@ void sound_device_flush(SoundDevice *device) {
 int sound_device_read_next_chunk(SoundDevice *device, void **buffer, double timeout_sec, double *latency_seconds) {
     pa_handle *pa = (pa_handle*)device->handle;
     if(pa_sound_device_read(pa, timeout_sec) < 0) {
-        //fprintf(stderr, "pa_simple_read() failed: %s\n", pa_strerror(error));
+        //gsr_log(GSR_LOG_LEVEL_ERROR, "pa_simple_read() failed: %s", pa_strerror(error));
         *latency_seconds = 0.0;
         return -1;
     }
@@ -554,7 +574,7 @@ int sound_device_read_next_chunk(SoundDevice *device, void **buffer, double time
 }
 
 static void pa_state_cb(pa_context *c, void *userdata) {
-    pa_context_state state = pa_context_get_state(c);
+    pa_context_state_t state = pa_context_get_state(c);
     int *pa_ready = (int*)userdata;
     switch(state) {
         case PA_CONTEXT_UNCONNECTED:
@@ -573,29 +593,38 @@ static void pa_state_cb(pa_context *c, void *userdata) {
     }
 }
 
-static void pa_sourcelist_cb(pa_context*, const pa_source_info *source_info, int eol, void *userdata) {
+static void pa_sourcelist_cb(pa_context *ctx, const pa_source_info *source_info, int eol, void *userdata) {
+    (void)ctx;
     if(eol > 0)
         return;
 
-    AudioDevices *audio_devices = (AudioDevices*)userdata;
-    audio_devices->audio_inputs.push_back({ source_info->name, source_info->description });
+    gsr_audio_devices *audio_devices = (gsr_audio_devices*)userdata;
+    if(!gsr_array_ensure_capacity((void**)&audio_devices->items, audio_devices->num_items, &audio_devices->capacity_items, sizeof(gsr_audio_device)))
+        return;
+
+    gsr_audio_device *audio_device = &audio_devices->items[audio_devices->num_items];
+    snprintf(audio_device->name, sizeof(audio_device->name), "%s", source_info->name);
+    snprintf(audio_device->description, sizeof(audio_device->description), "%s", source_info->description);
+    ++audio_devices->num_items;
 }
 
-static void pa_server_info_cb(pa_context*, const pa_server_info *server_info, void *userdata) {
-    AudioDevices *audio_devices = (AudioDevices*)userdata;
+static void pa_server_info_cb(pa_context *ctx, const pa_server_info *server_info, void *userdata) {
+    (void)ctx;
+    gsr_audio_devices *audio_devices = (gsr_audio_devices*)userdata;
     if(server_info->default_sink_name)
-        audio_devices->default_output = std::string(server_info->default_sink_name) + ".monitor";
+        snprintf(audio_devices->default_output, sizeof(audio_devices->default_output), "%s.monitor", server_info->default_sink_name);
     if(server_info->default_source_name)
-        audio_devices->default_input = server_info->default_source_name;
+        snprintf(audio_devices->default_input, sizeof(audio_devices->default_input), "%s", server_info->default_source_name);
 }
 
-static void server_info_callback(pa_context*, const pa_server_info *server_info, void *userdata) {
+static void server_info_callback(pa_context *ctx, const pa_server_info *server_info, void *userdata) {
+    (void)ctx;
     bool *is_server_pipewire = (bool*)userdata;
     if(server_info->server_name && strstr(server_info->server_name, "PipeWire"))
         *is_server_pipewire = true;
 }
 
-static void get_pulseaudio_default_inputs(AudioDevices &audio_devices) {
+static void get_pulseaudio_default_inputs(gsr_audio_devices *audio_devices) {
     int state = 0;
     int pa_ready = 0;
     pa_operation *pa_op = NULL;
@@ -619,7 +648,7 @@ static void get_pulseaudio_default_inputs(AudioDevices &audio_devices) {
 
         switch(state) {
             case 0: {
-                pa_op = pa_context_get_server_info(ctx, pa_server_info_cb, &audio_devices);
+                pa_op = pa_context_get_server_info(ctx, pa_server_info_cb, audio_devices);
                 ++state;
                 break;
             }
@@ -640,8 +669,9 @@ static void get_pulseaudio_default_inputs(AudioDevices &audio_devices) {
     pa_mainloop_free(main_loop);
 }
 
-AudioDevices get_pulseaudio_inputs() {
-    AudioDevices audio_devices;
+void get_pulseaudio_inputs(gsr_audio_devices *audio_devices) {
+    memset(audio_devices, 0, sizeof(*audio_devices));
+
     int state = 0;
     int pa_ready = 0;
     pa_operation *pa_op = NULL;
@@ -651,7 +681,7 @@ AudioDevices get_pulseaudio_inputs() {
 
     pa_mainloop *main_loop = pa_mainloop_new();
     if(!main_loop)
-        return audio_devices;
+        return;
 
     pa_context *ctx = pa_context_new(pa_mainloop_get_api(main_loop), "gpu-screen-recorder");
     if(pa_context_connect(ctx, NULL, PA_CONTEXT_NOFLAGS, NULL) < 0)
@@ -668,7 +698,7 @@ AudioDevices get_pulseaudio_inputs() {
 
         switch(state) {
             case 0: {
-                pa_op = pa_context_get_source_info_list(ctx, pa_sourcelist_cb, &audio_devices);
+                pa_op = pa_context_get_source_info_list(ctx, pa_sourcelist_cb, audio_devices);
                 ++state;
                 break;
             }
@@ -687,10 +717,20 @@ AudioDevices get_pulseaudio_inputs() {
     pa_context_disconnect(ctx);
     pa_context_unref(ctx);
     pa_mainloop_free(main_loop);
-    return audio_devices;
 }
 
-bool pulseaudio_server_is_pipewire() {
+void gsr_audio_devices_deinit(gsr_audio_devices *self) {
+    if(self->items) {
+        free(self->items);
+        self->items = NULL;
+    }
+    self->num_items = 0;
+    self->capacity_items = 0;
+    self->default_output[0] = '\0';
+    self->default_input[0] = '\0';
+}
+
+bool pulseaudio_server_is_pipewire(void) {
     int state = 0;
     int pa_ready = 0;
     pa_operation *pa_op = NULL;

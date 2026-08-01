@@ -15,51 +15,39 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-#ifndef GPU_SCREEN_RECORDER_H
-#define GPU_SCREEN_RECORDER_H
+#ifndef GSR_SOUND_H
+#define GSR_SOUND_H
 
-#include <optional>
-#include <vector>
-#include <string>
+#include <stdbool.h>
+#include <stddef.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct {
     void *handle;
     unsigned int frames;
 } SoundDevice;
 
-struct AudioDevice {
-    std::string name;
-    std::string description;
-};
+typedef struct {
+    char name[256];
+    char description[256];
+} gsr_audio_device;
 
-struct AudioDevices {
-    std::string default_output;
-    std::string default_input;
-    std::vector<AudioDevice> audio_inputs;
-};
-
-enum class AudioInputType {
-    DEVICE,
-    APPLICATION
-};
-
-struct AudioInput {
-    std::string name;
-    AudioInputType type = AudioInputType::DEVICE;
-    bool inverted = false;
-};
-
-struct MergedAudioInputs {
-    std::optional<std::string> custom_name;
-    std::string track_name;
-    std::vector<AudioInput> audio_inputs;
-};
+typedef struct {
+    char default_output[256];
+    char default_input[256];
+    gsr_audio_device *items;
+    size_t num_items;
+    size_t capacity_items;
+} gsr_audio_devices;
 
 typedef enum {
-    S16,
-    S32,
-    F32
-} AudioFormat;
+    GSR_AUDIO_FORMAT_S16,
+    GSR_AUDIO_FORMAT_S32,
+    GSR_AUDIO_FORMAT_F32
+} gsr_audio_format;
 
 /*
     Get a sound device by name, returning the device into the |device| parameter.
@@ -68,7 +56,7 @@ typedef enum {
     device is records from when the default output/input is changed in the system audio settings.
     Returns 0 on success, or a negative value on failure.
 */
-int sound_device_get_by_name(SoundDevice *device, const char *node_name, const char *device_name, const char *description, unsigned int num_channels, unsigned int period_frame_size, AudioFormat audio_format);
+int sound_device_get_by_name(SoundDevice *device, const char *node_name, const char *device_name, const char *description, unsigned int num_channels, unsigned int period_frame_size, gsr_audio_format audio_format);
 
 void sound_device_close(SoundDevice *device);
 
@@ -85,7 +73,12 @@ void sound_device_flush(SoundDevice *device);
 */
 int sound_device_read_next_chunk(SoundDevice *device, void **buffer, double timeout_sec, double *latency_seconds);
 
-AudioDevices get_pulseaudio_inputs();
-bool pulseaudio_server_is_pipewire();
+void get_pulseaudio_inputs(gsr_audio_devices *audio_devices);
+void gsr_audio_devices_deinit(gsr_audio_devices *self);
+bool pulseaudio_server_is_pipewire(void);
 
-#endif /* GPU_SCREEN_RECORDER_H */
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* GSR_SOUND_H */

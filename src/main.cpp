@@ -36,6 +36,8 @@ extern "C" {
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
+#include <vector>
+#include <optional>
 #include <thread>
 #include <mutex>
 #include <signal.h>
@@ -46,7 +48,7 @@ extern "C" {
 #include <libgen.h>
 #include <malloc.h>
 
-#include "../include/sound.hpp"
+#include "../include/sound.h"
 
 extern "C" {
 #include <libavutil/pixfmt.h>
@@ -67,6 +69,23 @@ extern "C" {
 #ifndef GSR_VERSION
 #define GSR_VERSION "unknown"
 #endif
+
+enum class AudioInputType {
+    DEVICE,
+    APPLICATION
+};
+
+struct AudioInput {
+    std::string name;
+    AudioInputType type = AudioInputType::DEVICE;
+    bool inverted = false;
+};
+
+struct MergedAudioInputs {
+    std::optional<std::string> custom_name;
+    std::string track_name;
+    std::vector<AudioInput> audio_inputs;
+};
 
 // TODO: If options are not supported then they are returned (allocated) in the options. This should be free'd.
 
@@ -227,21 +246,21 @@ static int64_t audio_codec_get_get_bitrate(gsr_audio_codec audio_codec) {
     return 128000;
 }
 
-static AudioFormat audio_codec_context_get_audio_format(const AVCodecContext *audio_codec_context) {
+static gsr_audio_format audio_codec_context_get_audio_format(const AVCodecContext *audio_codec_context) {
     switch(audio_codec_context->sample_fmt) {
-        case AV_SAMPLE_FMT_FLT:   return F32;
-        case AV_SAMPLE_FMT_FLTP:  return S32;
-        case AV_SAMPLE_FMT_S16:   return S16;
-        case AV_SAMPLE_FMT_S32:   return S32;
-        default:                  return S16;
+        case AV_SAMPLE_FMT_FLT:   return GSR_AUDIO_FORMAT_F32;
+        case AV_SAMPLE_FMT_FLTP:  return GSR_AUDIO_FORMAT_S32;
+        case AV_SAMPLE_FMT_S16:   return GSR_AUDIO_FORMAT_S16;
+        case AV_SAMPLE_FMT_S32:   return GSR_AUDIO_FORMAT_S32;
+        default:                  return GSR_AUDIO_FORMAT_S16;
     }
 }
 
-static AVSampleFormat audio_format_to_sample_format(const AudioFormat audio_format) {
+static AVSampleFormat audio_format_to_sample_format(const gsr_audio_format audio_format) {
     switch(audio_format) {
-        case S16:   return AV_SAMPLE_FMT_S16;
-        case S32:   return AV_SAMPLE_FMT_S32;
-        case F32:   return AV_SAMPLE_FMT_FLT;
+        case GSR_AUDIO_FORMAT_S16:   return AV_SAMPLE_FMT_S16;
+        case GSR_AUDIO_FORMAT_S32:   return AV_SAMPLE_FMT_S32;
+        case GSR_AUDIO_FORMAT_F32:   return AV_SAMPLE_FMT_FLT;
     }
     assert(false);
     return AV_SAMPLE_FMT_S16;
@@ -1220,10 +1239,10 @@ static bool save_replay_async(AVCodecContext *video_codec_context, int video_str
     return true;
 }
 
-static const AudioDevice* get_audio_device_by_name(const std::vector<AudioDevice> &audio_devices, const char *name) {
-    for(const auto &audio_device : audio_devices) {
-        if(strcmp(audio_device.name.c_str(), name) == 0)
-            return &audio_device;
+static const gsr_audio_device* get_audio_device_by_name(const gsr_audio_devices *audio_devices, const char *name) {
+    for(size_t i = 0; i < audio_devices->num_items; ++i) {
+        if(strcmp(audio_devices->items[i].name, name) == 0)
+            return &audio_devices->items[i];
     }
     return nullptr;
 }
@@ -1840,18 +1859,20 @@ static void info_command(void *userdata) {
 
 static void list_audio_devices_command(void *userdata) {
     (void)userdata;
-    const AudioDevices audio_devices = get_pulseaudio_inputs();
+    gsr_audio_devices audio_devices;
+    get_pulseaudio_inputs(&audio_devices);
 
-    if(!audio_devices.default_output.empty())
+    if(audio_devices.default_output[0] != '\0')
         puts("default_output|Default output");
 
-    if(!audio_devices.default_input.empty())
+    if(audio_devices.default_input[0] != '\0')
         puts("default_input|Default input");
 
-    for(const auto &audio_input : audio_devices.audio_inputs) {
-        printf("%s|%s\n", audio_input.name.c_str(), audio_input.description.c_str());
+    for(size_t i = 0; i < audio_devices.num_items; ++i) {
+        printf("%s|%s\n", audio_devices.items[i].name, audio_devices.items[i].description);
     }
 
+    gsr_audio_devices_deinit(&audio_devices);
     fflush(stdout);
     _exit(0);
 }
@@ -2549,7 +2570,7 @@ struct AudioTrackDescription {
 // Manually check if the audio inputs we give exist. This is only needed for pipewire, not pulseaudio.
 // Pipewire instead DEFAULTS TO THE DEFAULT AUDIO INPUT. THAT'S RETARDED.
 // OH, YOU MISSPELLED THE AUDIO INPUT? FUCK YOU
-static std::vector<MergedAudioInputs> parse_audio_inputs(const AudioDevices &audio_devices, const Arg *audio_input_arg) {
+static std::vector<MergedAudioInputs> parse_audio_inputs(const gsr_audio_devices *audio_devices, const Arg *audio_input_arg) {
     std::vector<MergedAudioInputs> requested_audio_inputs;
 
     for(int i = 0; i < audio_input_arg->num_values; ++i) {
@@ -2574,21 +2595,21 @@ static std::vector<MergedAudioInputs> parse_audio_inputs(const AudioDevices &aud
             bool match = false;
 
             if(request_audio_input.name == "default_output") {
-                if(audio_devices.default_output.empty()) {
+                if(audio_devices->default_output[0] == '\0') {
                     gsr_log(GSR_LOG_LEVEL_ERROR, "-a default_output was specified but no default audio output is specified in the audio server");
                     _exit(2);
                 }
                 match = true;
                 audio_track_description.devices.push_back("Default output");
             } else if(request_audio_input.name == "default_input") {
-                if(audio_devices.default_input.empty()) {
+                if(audio_devices->default_input[0] == '\0') {
                     gsr_log(GSR_LOG_LEVEL_ERROR, "-a default_input was specified but no default audio input is specified in the audio server");
                     _exit(2);
                 }
                 match = true;
                 audio_track_description.devices.push_back("Default input");
             } else {
-                const AudioDevice *audio_device = get_audio_device_by_name(audio_devices.audio_inputs, request_audio_input.name.c_str());
+                const gsr_audio_device *audio_device = get_audio_device_by_name(audio_devices, request_audio_input.name.c_str());
                 if(audio_device) {
                     match = true;
                     audio_track_description.devices.push_back(audio_device->description);
@@ -2597,12 +2618,12 @@ static std::vector<MergedAudioInputs> parse_audio_inputs(const AudioDevices &aud
 
             if(!match) {
                 gsr_log(GSR_LOG_LEVEL_ERROR, "Audio device '%s' is not a valid audio device, expected one of:", request_audio_input.name.c_str());
-                if(!audio_devices.default_output.empty())
+                if(audio_devices->default_output[0] != '\0')
                     fprintf(stderr, "    default_output (Default output)\n");
-                if(!audio_devices.default_input.empty())
+                if(audio_devices->default_input[0] != '\0')
                     fprintf(stderr, "    default_input (Default input)\n");
-                for(const auto &audio_device_input : audio_devices.audio_inputs) {
-                    fprintf(stderr, "    %s (%s)\n", audio_device_input.name.c_str(), audio_device_input.description.c_str());
+                for(size_t j = 0; j < audio_devices->num_items; ++j) {
+                    fprintf(stderr, "    %s (%s)\n", audio_devices->items[j].name, audio_devices->items[j].description);
                 }
                 _exit(50);
             }
@@ -3671,11 +3692,13 @@ int main(int argc, char **argv) {
     const Arg *audio_input_arg = args_parser_get_arg(&arg_parser, "-a");
     assert(audio_input_arg);
 
-    AudioDevices audio_devices;
+    gsr_audio_devices audio_devices;
+    memset(&audio_devices, 0, sizeof(audio_devices));
     if(audio_input_arg->num_values > 0)
-        audio_devices = get_pulseaudio_inputs();
+        get_pulseaudio_inputs(&audio_devices);
 
-    std::vector<MergedAudioInputs> requested_audio_inputs = parse_audio_inputs(audio_devices, audio_input_arg);
+    std::vector<MergedAudioInputs> requested_audio_inputs = parse_audio_inputs(&audio_devices, audio_input_arg);
+    gsr_audio_devices_deinit(&audio_devices);
 
     const bool uses_app_audio = merged_audio_inputs_has_app_audio(requested_audio_inputs);
     std::vector<std::string> app_audio_names;

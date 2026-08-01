@@ -46,7 +46,7 @@ src = [
     'src/defs.c',
     'src/plugins.c',
     'src/wayland_host_bridge.c',
-    'src/sound.cpp',
+    'src/sound.c',
     'src/main.cpp',
 ]
 
