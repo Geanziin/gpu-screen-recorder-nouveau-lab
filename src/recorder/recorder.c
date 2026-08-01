@@ -94,14 +94,6 @@ struct gsr_recorder {
 
 static void gsr_recorder_stop_recording(gsr_recorder *self);
 
-static int64_t gsr_max_int64(int64_t a, int64_t b) {
-    return a > b ? a : b;
-}
-
-static int64_t gsr_min_int64(int64_t a, int64_t b) {
-    return a < b ? a : b;
-}
-
 gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_recorder_callbacks *callbacks, int *error) {
     *error = GSR_ERROR_GENERIC;
 
@@ -122,13 +114,13 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
     self->audio_input_tracks = params->audio_input_tracks;
     self->running = 1;
     self->audio_max_frame_size = 1024;
+    int error_code = GSR_ERROR_GENERIC;
     self->hdr = video_codec_is_hdr(params->settings->video_codec);
     self->plugin_filepaths = params->plugin_filepaths;
     self->num_plugin_filepaths = params->num_plugin_filepaths;
 #ifdef GSR_APP_AUDIO
     self->pipewire_audio = params->pipewire_audio;
 #endif
-
 
     // The output format is automatically guessed by the file extension
     avformat_alloc_output_context2(&self->av_format_context, NULL, self->settings.container_format, self->settings.filename);
@@ -138,9 +130,11 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
         } else {
             gsr_log(GSR_LOG_LEVEL_ERROR, "Failed to deduce container format from file extension. Use the '-c' option to specify container format");
             args_parser_print_usage();
-            _exit(1);
+            error_code = GSR_ERROR_GENERIC;
+            goto fail;
         }
-        _exit(1);
+        error_code = GSR_ERROR_GENERIC;
+        goto fail;
     }
 
     set_format_context_options(self->av_format_context);
@@ -165,8 +159,10 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
 
     self->video_size = (vec2i){0, 0};
     const int video_sources_result = gsr_video_sources_create(&self->video_sources_data, &self->settings, self->egl, self->capture_deps, false, self->capture_sources, &self->video_size);
-    if(video_sources_result != GSR_ERROR_OK)
-        _exit(gsr_error_to_exit_code(video_sources_result));
+    if(video_sources_result != GSR_ERROR_OK) {
+        error_code = video_sources_result;
+        goto fail;
+    }
 
     self->video_sources = &self->video_sources_data;
 
@@ -178,22 +174,27 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
         memset(&silent_audio_track, 0, sizeof(silent_audio_track));
         gsr_audio_input silent_audio_input;
         memset(&silent_audio_input, 0, sizeof(silent_audio_input));
-        if(!gsr_merged_audio_inputs_add(&silent_audio_track, &silent_audio_input) || !gsr_audio_input_tracks_add(self->audio_input_tracks, &silent_audio_track))
-            _exit(1);
+        if(!gsr_merged_audio_inputs_add(&silent_audio_track, &silent_audio_input) || !gsr_audio_input_tracks_add(self->audio_input_tracks, &silent_audio_track)) {
+            error_code = GSR_ERROR_GENERIC;
+            goto fail;
+        }
     }
 
     self->video_stream = NULL;
 
     if(self->settings.video_encoder == GSR_VIDEO_ENCODER_HW_CPU && self->settings.video_codec != (gsr_video_codec)GSR_VIDEO_CODEC_AUTO && self->settings.video_codec != GSR_VIDEO_CODEC_H264) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "-self->encoder cpu was specified but a codec other than h264 was specified. -self->encoder cpu supports only h264 at the moment");
-        _exit(1);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "-encoder cpu was specified but a codec other than h264 was specified. -encoder cpu supports only h264 at the moment");
+        error_code = GSR_ERROR_GENERIC;
+        goto fail;
     }
 
     self->low_power = false;
     const AVCodec *video_codec_f = NULL;
     const int select_video_codec_result = select_video_codec_with_fallback(self->video_size, &self->settings, self->file_extension, self->egl, &self->low_power, &video_codec_f);
-    if(select_video_codec_result != GSR_ERROR_OK)
-        _exit(gsr_error_to_exit_code(select_video_codec_result));
+    if(select_video_codec_result != GSR_ERROR_OK) {
+        error_code = select_video_codec_result;
+        goto fail;
+    }
 
     const enum AVPixelFormat video_pix_fmt = get_pixel_format(self->settings.video_codec, self->egl->gpu_info.vendor, self->settings.video_encoder == GSR_VIDEO_ENCODER_HW_CPU);
     self->video_codec_context = create_video_codec_context(video_pix_fmt, video_codec_f, self->egl, &self->settings, self->video_size.x, self->video_size.y);
@@ -203,7 +204,8 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
     self->video_frame = av_frame_alloc();
     if(!self->video_frame) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "Failed to allocate video frame");
-        _exit(1);
+        error_code = GSR_ERROR_GENERIC;
+        goto fail;
     }
     self->video_frame->format = self->video_codec_context->pix_fmt;
     self->video_frame->width = self->video_size.x;
@@ -216,23 +218,29 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
 
     const size_t estimated_replay_buffer_packets = calculate_estimated_replay_buffer_packets(self->settings.replay_buffer_size_secs, self->settings.fps, self->settings.audio_codec, self->audio_input_tracks);
     self->recording_clock = gsr_recording_clock_create();
-    if(!self->recording_clock)
-        _exit(1);
+    if(!self->recording_clock) {
+        error_code = GSR_ERROR_GENERIC;
+        goto fail;
+    }
 
+    self->encoder_initialized = true;
     if(!gsr_encoder_init(&self->encoder, self->settings.replay_storage, estimated_replay_buffer_packets, self->settings.replay_buffer_size_secs, self->settings.filename)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create self->encoder");
-        _exit(1);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create encoder");
+        error_code = GSR_ERROR_GENERIC;
+        goto fail;
     }
 
     self->video_encoder = create_video_encoder(self->egl, &self->settings);
     if(!self->video_encoder) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create video self->encoder");
-        _exit(1);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create video encoder");
+        error_code = GSR_ERROR_GENERIC;
+        goto fail;
     }
 
     if(!gsr_video_encoder_start(self->video_encoder, self->video_codec_context, self->video_frame)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to start video self->encoder");
-        _exit(1);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to start video encoder");
+        error_code = GSR_ERROR_GENERIC;
+        goto fail;
     }
 
     self->video_size.x = self->video_codec_context->width;
@@ -241,8 +249,11 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
 
     memset(&self->plugins, 0, sizeof(self->plugins));
 
-    if(gsr_load_plugins(&self->plugins, self->plugin_filepaths, self->num_plugin_filepaths, &self->settings, self->egl, self->video_size) != GSR_ERROR_OK)
-        _exit(1);
+    if(gsr_load_plugins(&self->plugins, self->plugin_filepaths, self->num_plugin_filepaths, &self->settings, self->egl, self->video_size) != GSR_ERROR_OK) {
+        error_code = GSR_ERROR_GENERIC;
+        goto fail;
+
+    }
 
     gsr_color_conversion_params color_conversion_params;
     memset(&color_conversion_params, 0, sizeof(color_conversion_params));
@@ -251,9 +262,11 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
     color_conversion_params.load_external_image_shader = gsr_video_sources_uses_external_image(self->video_sources);
     gsr_video_encoder_get_textures(self->video_encoder, color_conversion_params.destination_textures, color_conversion_params.destination_textures_size, &color_conversion_params.num_destination_textures, &color_conversion_params.destination_color);
 
+    self->color_conversion_initialized = true;
     if(gsr_color_conversion_init(&self->color_conversion, &color_conversion_params) != 0) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "main: failed to create color conversion");
-        _exit(1);
+        error_code = GSR_ERROR_GENERIC;
+        goto fail;
     }
 
     gsr_color_conversion_clear(&self->color_conversion);
@@ -261,25 +274,32 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
     self->output_color_conversion = self->plugins.num_plugins > 0 ? &self->plugins.color_conversion : &self->color_conversion;
 
     if(self->settings.video_encoder == GSR_VIDEO_ENCODER_HW_CPU) {
-        if(!open_video_software(self->video_codec_context, &self->settings))
-            _exit(1);
+        if(!open_video_software(self->video_codec_context, &self->settings)) {
+            error_code = GSR_ERROR_GENERIC;
+            goto fail;
+        }
     } else {
-        if(!open_video_hardware(self->video_codec_context, self->low_power, self->egl, &self->settings))
-            _exit(1);
+        if(!open_video_hardware(self->video_codec_context, self->low_power, self->egl, &self->settings)) {
+            error_code = GSR_ERROR_GENERIC;
+            goto fail;
+        }
     }
 
     if(self->video_stream) {
         avcodec_parameters_from_context(self->video_stream->codecpar, self->video_codec_context);
         const size_t video_destination_id = gsr_encoder_add_recording_destination(&self->encoder, self->video_codec_context, self->av_format_context, self->video_stream, 0);
         if(self->settings.write_first_frame_ts && video_destination_id != (size_t)-1) {
-            char ts_filepath[PATH_MAX];
+            char ts_filepath[PATH_MAX + 4];
             snprintf(ts_filepath, sizeof(ts_filepath), "%s.ts", self->settings.filename);
             gsr_encoder_set_recording_destination_first_frame_ts_filepath(&self->encoder, video_destination_id, ts_filepath);
         }
     }
 
-    if(gsr_audio_capture_init(&self->audio_capture, &self->encoder, self->recording_clock, &self->running) != GSR_ERROR_OK)
-        _exit(1);
+    if(gsr_audio_capture_init(&self->audio_capture, &self->encoder, self->recording_clock, &self->running) != GSR_ERROR_OK) {
+        error_code = GSR_ERROR_GENERIC;
+        goto fail;
+
+    }
 
     
     int audio_stream_index = GSR_VIDEO_STREAM_INDEX + 1;
@@ -287,8 +307,10 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
         const gsr_merged_audio_inputs *merged_audio_inputs = &self->audio_input_tracks->items[audio_track_index];
         const bool use_amix = gsr_audio_inputs_should_use_amix(merged_audio_inputs);
         AVCodecContext *audio_codec_context = create_audio_codec_context(self->settings.fps, self->settings.audio_codec, use_amix, self->settings.audio_bitrate);
-        if(!audio_codec_context)
-            _exit(1);
+        if(!audio_codec_context) {
+            error_code = GSR_ERROR_GENERIC;
+            goto fail;
+        }
 
         AVStream *audio_stream = NULL;
         if(!self->settings.is_replaying) {
@@ -300,8 +322,11 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
         if(audio_stream && merged_audio_inputs->track_name[0] != '\0' && !self->settings.exclude_metadata)
             av_dict_set(&audio_stream->metadata, "title", merged_audio_inputs->track_name, 0);
 
-        if(!open_audio(audio_codec_context, self->settings.ffmpeg_audio_opts))
-            _exit(1);
+        if(!open_audio(audio_codec_context, self->settings.ffmpeg_audio_opts)) {
+            error_code = GSR_ERROR_GENERIC;
+            goto fail;
+
+        }
         if(audio_stream)
             avcodec_parameters_from_context(audio_stream->codecpar, audio_codec_context);
 
@@ -319,12 +344,14 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
         if(use_amix) {
             if(merged_audio_inputs->num_items > GSR_MAX_AUDIO_SOURCES_PER_TRACK) {
                 gsr_log(GSR_LOG_LEVEL_ERROR, "too many audio sources for one audio track, the maximum is %d", GSR_MAX_AUDIO_SOURCES_PER_TRACK);
-                _exit(1);
+                error_code = GSR_ERROR_GENERIC;
+                goto fail;
             }
 
             if(gsr_audio_init_filter_graph(audio_codec_context, &graph, &sink, src_filter_ctx, merged_audio_inputs->num_items) < 0) {
                 gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create audio filter");
-                _exit(1);
+                error_code = GSR_ERROR_GENERIC;
+                goto fail;
             }
         }
 
@@ -355,11 +382,17 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
             audio_track_result = gsr_audio_track_init_device_inputs(&audio_track, merged_audio_inputs, audio_codec_context, num_channels, num_audio_frames_shift, src_filter_ctx, use_amix);
         }
 
-        if(audio_track_result != GSR_ERROR_OK)
-            _exit(gsr_error_to_exit_code(audio_track_result));
+        if(audio_track_result != GSR_ERROR_OK) {
+            error_code = audio_track_result;
+            goto fail;
 
-        if(!gsr_audio_capture_add_track(&self->audio_capture, &audio_track))
-            _exit(1);
+        }
+
+        if(!gsr_audio_capture_add_track(&self->audio_capture, &audio_track)) {
+            error_code = GSR_ERROR_GENERIC;
+            goto fail;
+
+        }
         ++audio_stream_index;
 
         if(audio_codec_context->frame_size > self->audio_max_frame_size)
@@ -372,7 +405,8 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
         const int ret = avio_open(&self->av_format_context->pb, self->settings.filename, AVIO_FLAG_WRITE);
         if(ret < 0) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "Could not open '%s': %s", self->settings.filename, gsr_av_error_to_string(ret));
-            _exit(1);
+            error_code = GSR_ERROR_GENERIC;
+            goto fail;
         }
     }
 
@@ -381,6 +415,11 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
 
     *error = GSR_ERROR_OK;
     return self;
+
+    fail:
+    *error = error_code;
+    gsr_recorder_destroy(self);
+    return NULL;
 }
 
 int gsr_recorder_run(gsr_recorder *self) {
@@ -396,14 +435,13 @@ int gsr_recorder_run(gsr_recorder *self) {
 
     gsr_replay_save_init(&self->replay_save);
 
-
     self->force_iframe_frame = false;
 
     gsr_recording_clock_start(self->recording_clock);
     const double record_start_time = gsr_recording_clock_get_start_time(self->recording_clock);
 
     if(gsr_audio_capture_start(&self->audio_capture, self->audio_max_frame_size, self->uses_amix) != GSR_ERROR_OK)
-        _exit(1);
+        return GSR_ERROR_GENERIC;
 
     // Set update_fps to 24 to test if duplicate/delayed frames cause video/audio desync or too fast/slow video.
     //const double update_fps = fps + 190;
@@ -641,7 +679,7 @@ int gsr_recorder_run(gsr_recorder *self) {
                 if(filepath_created && gsr_recording_output_start(&self->replay_recording_output, self->replay_recording_filepath, &self->settings, self->video_codec_context, &self->audio_capture, self->hdr, self->video_sources)) {
                     const size_t video_recording_destination_id = gsr_encoder_add_recording_destination(&self->encoder, self->video_codec_context, self->replay_recording_output.av_format_context, self->replay_recording_output.video_stream, self->video_frame->pts);
                     if(self->settings.write_first_frame_ts && video_recording_destination_id != (size_t)-1) {
-                        char ts_filepath[PATH_MAX];
+                        char ts_filepath[PATH_MAX + 4];
                         snprintf(ts_filepath, sizeof(ts_filepath), "%s.ts", self->replay_recording_filepath);
                         gsr_encoder_set_recording_destination_first_frame_ts_filepath(&self->encoder, video_recording_destination_id, ts_filepath);
                     }
@@ -772,38 +810,42 @@ static void gsr_recorder_stop_recording(gsr_recorder *self) {
         //fprintf(stderr, "Failed to write trailer\n");
     }
 
-    if(!self->settings.is_replaying && !(self->av_format_context->oformat->flags & AVFMT_NOFILE)) {
-        avio_close(self->av_format_context->pb);
-        avformat_free_context(self->av_format_context);
-    }
-
-    gsr_damage_deinit(&self->damage);
-    gsr_color_conversion_deinit(&self->color_conversion);
-    gsr_video_encoder_destroy(self->video_encoder, self->video_codec_context);
-    gsr_encoder_deinit(&self->encoder);
-    gsr_video_sources_deinit(self->video_sources);
-#ifdef GSR_APP_AUDIO
-    gsr_pipewire_audio_deinit(self->pipewire_audio);
-#endif
-    gsr_capture_deps_deinit(self->capture_deps);
-
     if(!self->settings.is_replaying && self->callbacks.recording_stopped)
         self->callbacks.recording_stopped(self->settings.filename, self->callbacks.userdata);
-
-    if(self->windowing->display) {
-        // TODO: This causes a crash, why? maybe some other library dlclose xlib and that also happened to unload this???
-        //XCloseDisplay(dpy);
-    }
-
-    //gsr_egl_unload(self->egl);
-    //gsr_window_destroy(&window);
-
-    //av_frame_free(&self->video_frame);
 }
 
 void gsr_recorder_destroy(gsr_recorder *self) {
     if(!self)
         return;
+
+    gsr_audio_capture_deinit(&self->audio_capture);
+    gsr_plugins_deinit(&self->plugins);
+
+    if(self->use_damage_tracking)
+        gsr_damage_deinit(&self->damage);
+
+    if(self->color_conversion_initialized)
+        gsr_color_conversion_deinit(&self->color_conversion);
+
+    if(self->video_encoder)
+        gsr_video_encoder_destroy(self->video_encoder, self->video_codec_context);
+
+    if(self->encoder_initialized)
+        gsr_encoder_deinit(&self->encoder);
+
+    gsr_video_sources_deinit(&self->video_sources_data);
+
+    if(self->video_frame)
+        av_frame_free(&self->video_frame);
+
+    if(self->video_codec_context)
+        avcodec_free_context(&self->video_codec_context);
+
+    if(self->av_format_context) {
+        if(self->av_format_context->pb && !(self->av_format_context->oformat->flags & AVFMT_NOFILE))
+            avio_close(self->av_format_context->pb);
+        avformat_free_context(self->av_format_context);
+    }
 
     gsr_recording_clock_destroy(self->recording_clock);
     free(self);
