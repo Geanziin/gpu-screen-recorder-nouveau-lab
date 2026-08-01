@@ -1,4 +1,5 @@
 #include "../include/utils.h"
+#include "../include/log.h"
 #include "../include/window/window.h"
 #include "../include/capture/capture.h"
 
@@ -33,7 +34,7 @@ double clock_get_monotonic_seconds(void) {
 bool generate_random_characters(char *buffer, int buffer_size, const char *alphabet, size_t alphabet_size) {
     /* TODO: Use other functions on other platforms than linux */
     if(getrandom(buffer, buffer_size, 0) < buffer_size) {
-        fprintf(stderr, "Failed to get random bytes, error: %s\n", strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to get random bytes, error: %s", strerror(errno));
         return false;
     }
 
@@ -197,7 +198,7 @@ static bool connector_get_property_by_name(int drmfd, drmModeConnectorPtr props,
 static void for_each_active_monitor_output_drm(const char *card_path, active_monitor_callback callback, void *userdata) {
     int fd = open(card_path, O_RDONLY);
     if(fd == -1) {
-        fprintf(stderr, "gsr error: for_each_active_monitor_output_drm failed, failed to open \"%s\", error: %s\n", card_path, strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "for_each_active_monitor_output_drm failed, failed to open \"%s\", error: %s", card_path, strerror(errno));
         return;
     }
 
@@ -365,14 +366,14 @@ bool gl_get_gpu_info(gsr_egl *egl, gsr_gpu_info *info) {
     info->is_steam_deck = false;
 
     if(!gl_vendor) {
-        fprintf(stderr, "gsr error: failed to get gpu vendor\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to get gpu vendor");
         return false;
     }
 
     if(gl_renderer) {
         for(int i = 0; software_renderers[i]; ++i) {
             if(strstr(gl_renderer, software_renderers[i])) {
-                fprintf(stderr, "gsr error: your opengl environment is not properly setup. It's using %s (software rendering) for opengl instead of your graphics card. Please make sure your graphics driver is properly installed\n", software_renderers[i]);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "your opengl environment is not properly setup. It's using %s (software rendering) for opengl instead of your graphics card. Please make sure your graphics driver is properly installed", software_renderers[i]);
                 return false;
             }
         }
@@ -389,7 +390,7 @@ bool gl_get_gpu_info(gsr_egl *egl, gsr_gpu_info *info) {
     else if(strstr(gl_vendor, "Broadcom"))
         info->vendor = GSR_GPU_VENDOR_BROADCOM;
     else {
-        fprintf(stderr, "gsr error: unknown gpu vendor: %s\n", gl_vendor);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "unknown gpu vendor: %s", gl_vendor);
         return false;
     }
 
@@ -656,7 +657,7 @@ bool get_nvidia_driver_version(int *major, int *minor) {
 
     FILE *f = fopen("/proc/driver/nvidia/version", "rb");
     if(!f) {
-        fprintf(stderr, "gsr warning: failed to get nvidia driver version (failed to read /proc/driver/nvidia/version)\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "failed to get nvidia driver version (failed to read /proc/driver/nvidia/version)");
         return false;
     }
 
@@ -677,7 +678,7 @@ bool get_nvidia_driver_version(int *major, int *minor) {
     }
 
     if(!success)
-        fprintf(stderr, "gsr warning: failed to get nvidia driver version\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "failed to get nvidia driver version");
 
     fclose(f);
     return success;

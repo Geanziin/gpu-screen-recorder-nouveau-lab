@@ -1,4 +1,5 @@
 #include "../include/damage.h"
+#include "../include/log.h"
 #include "../include/utils.h"
 #include "../include/window/window.h"
 
@@ -46,13 +47,13 @@ static void add_monitor_callback(const gsr_monitor *monitor, void *userdata) {
     }
 
     if(self->num_monitors + 1 > GSR_DAMAGE_MAX_MONITORS) {
-        fprintf(stderr, "gsr error: gsr_damage_on_output_change: max monitors reached\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_damage_on_output_change: max monitors reached");
         return;
     }
 
     char *monitor_name_copy = strdup(monitor->name);
     if(!monitor_name_copy) {
-        fprintf(stderr, "gsr error: gsr_damage_on_output_change: strdup failed for monitor: %s\n", monitor->name);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_damage_on_output_change: strdup failed for monitor: %s", monitor->name);
         return;
     }
 
@@ -71,25 +72,25 @@ bool gsr_damage_init(gsr_damage *self, gsr_egl *egl, gsr_cursor *cursor, bool tr
     self->cursor = cursor;
 
     if(gsr_window_get_display_server(egl->window) != GSR_DISPLAY_SERVER_X11) {
-        fprintf(stderr, "gsr error: gsr_damage_init: damage tracking is not supported on wayland\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_damage_init: damage tracking is not supported on wayland");
         return false;
     }
     self->display = gsr_window_get_display(egl->window);
 
     if(!XDamageQueryExtension(self->display, &self->damage_event, &self->damage_error)) {
-        fprintf(stderr, "gsr error: gsr_damage_init: XDamage is not supported by your X11 server\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_damage_init: XDamage is not supported by your X11 server");
         gsr_damage_deinit(self);
         return false;
     }
 
     if(!XRRQueryExtension(self->display, &self->randr_event, &self->randr_error)) {
-        fprintf(stderr, "gsr error: gsr_damage_init: XRandr is not supported by your X11 server\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_damage_init: XRandr is not supported by your X11 server");
         gsr_damage_deinit(self);
         return false;
     }
 
     if(!xrandr_is_supported(self->display)) {
-        fprintf(stderr, "gsr error: gsr_damage_init: your X11 randr version is too old\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_damage_init: your X11 randr version is too old");
         gsr_damage_deinit(self);
         return false;
     }
@@ -98,7 +99,7 @@ bool gsr_damage_init(gsr_damage *self, gsr_egl *egl, gsr_cursor *cursor, bool tr
 
     self->monitor_damage = XDamageCreate(self->display, DefaultRootWindow(self->display), XDamageReportNonEmpty);
     if(!self->monitor_damage) {
-        fprintf(stderr, "gsr error: gsr_damage_init: XDamageCreate failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_damage_init: XDamageCreate failed");
         gsr_damage_deinit(self);
         return false;
     }
@@ -163,7 +164,7 @@ bool gsr_damage_start_tracking_window(gsr_damage *self, int64_t window) {
     }
 
     if(self->num_windows_tracked + 1 > GSR_DAMAGE_MAX_TRACKED_TARGETS) {
-        fprintf(stderr, "gsr error: gsr_damage_start_tracking_window: max window targets reached\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_damage_start_tracking_window: max window targets reached");
         return false;
     }
 
@@ -173,11 +174,11 @@ bool gsr_damage_start_tracking_window(gsr_damage *self, int64_t window) {
     win_attr.width = 0;
     win_attr.height = 0;
     if(!XGetWindowAttributes(self->display, window, &win_attr))
-        fprintf(stderr, "gsr warning: gsr_damage_start_tracking_window failed: failed to get window attributes: %ld\n", (long)window);
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_damage_start_tracking_window failed: failed to get window attributes: %ld", (long)window);
 
     const Damage damage = XDamageCreate(self->display, window, XDamageReportNonEmpty);
     if(!damage) {
-        fprintf(stderr, "gsr error: gsr_damage_start_tracking_window: XDamageCreate failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_damage_start_tracking_window: XDamageCreate failed");
         return false;
     }
     XDamageSubtract(self->display, damage, None, None);
@@ -250,19 +251,19 @@ bool gsr_damage_start_tracking_monitor(gsr_damage *self, const char *monitor_nam
     }
 
     if(self->num_monitors_tracked + 1 > GSR_DAMAGE_MAX_TRACKED_TARGETS) {
-        fprintf(stderr, "gsr error: gsr_damage_start_tracking_monitor: max monitor targets reached\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_damage_start_tracking_monitor: max monitor targets reached");
         return false;
     }
 
     char *monitor_name_copy = strdup(monitor_name);
     if(!monitor_name_copy) {
-        fprintf(stderr, "gsr error: gsr_damage_start_tracking_monitor: strdup failed for monitor: %s\n", monitor_name);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_damage_start_tracking_monitor: strdup failed for monitor: %s", monitor_name);
         return false;
     }
 
     gsr_monitor *monitor = gsr_damage_get_monitor_by_name(self, monitor_name);
     if(!monitor) {
-        fprintf(stderr, "gsr error: gsr_damage_start_tracking_monitor: failed to find monitor: %s\n", monitor_name);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_damage_start_tracking_monitor: failed to find monitor: %s", monitor_name);
         free(monitor_name_copy);
         return false;
     }

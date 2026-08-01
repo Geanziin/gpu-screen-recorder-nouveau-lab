@@ -1,4 +1,5 @@
 #include "../../include/capture/v4l2.h"
+#include "../../include/log.h"
 #include "../../include/color_conversion.h"
 #include "../../include/egl.h"
 #include "../../include/utils.h"
@@ -367,12 +368,12 @@ static void gsr_capture_v4l2_update_params(int fd) {
         .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
     };
     if(xioctl(fd, VIDIOC_G_PARM, &streamparm) == -1) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_set_framerate: VIDIOC_G_PARM failed, error: %s\n", strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_set_framerate: VIDIOC_G_PARM failed, error: %s", strerror(errno));
         return;
     }
 
     if(xioctl(fd, VIDIOC_S_PARM, &streamparm) == -1) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_set_framerate: VIDIOC_S_PARM failed, error: %s\n", strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_set_framerate: VIDIOC_S_PARM failed, error: %s", strerror(errno));
         return;
     }
 }
@@ -382,19 +383,19 @@ static void gsr_capture_v4l2_set_framerate(int fd, gsr_capture_v4l2_framerate fr
         .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
     };
     if(xioctl(fd, VIDIOC_G_PARM, &streamparm) == -1) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_set_framerate: VIDIOC_G_PARM failed, error: %s\n", strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_set_framerate: VIDIOC_G_PARM failed, error: %s", strerror(errno));
         return;
     }
 
     streamparm.parm.capture.timeperframe.denominator = framerate.denominator;
     streamparm.parm.capture.timeperframe.numerator = framerate.numerator;
     if(xioctl(fd, VIDIOC_S_PARM, &streamparm) == -1) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_set_framerate: VIDIOC_S_PARM failed, error: %s\n", strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_set_framerate: VIDIOC_S_PARM failed, error: %s", strerror(errno));
         return;
     }
 
     if(streamparm.parm.capture.timeperframe.denominator == 0 || streamparm.parm.capture.timeperframe.numerator == 0) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_set_framerate: VIDIOC_S_PARM failed, error: invalid framerate: %u/%u\n", framerate.denominator, framerate.numerator);;
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_set_framerate: VIDIOC_S_PARM failed, error: invalid framerate: %u/%u", framerate.denominator, framerate.numerator);;
         return;
     }
 }
@@ -403,21 +404,21 @@ static bool gsr_capture_v4l2_validate_pixfmt(const gsr_capture_v4l2 *self, const
     switch(self->params.pixfmt) {
         case GSR_CAPTURE_V4L2_PIXFMT_AUTO: {
             if(!supported_pixfmts.yuyv && !supported_pixfmts.mjpeg) {
-                fprintf(stderr, "gsr error: gsr_capture_v4l2_create: %s doesn't support yuyv nor mjpeg. GPU Screen Recorder supports only yuyv and mjpeg at the moment. Report this as an issue, see: https://git.dec05eba.com/?p=about\n", self->params.device_path);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: %s doesn't support yuyv nor mjpeg. GPU Screen Recorder supports only yuyv and mjpeg at the moment. Report this as an issue, see: https://git.dec05eba.com/?p=about", self->params.device_path);
                 return false;
             }
             break;
         }
         case GSR_CAPTURE_V4L2_PIXFMT_YUYV: {
             if(!supported_pixfmts.yuyv) {
-                fprintf(stderr, "gsr error: gsr_capture_v4l2_create: %s doesn't support yuyv. Try recording with pixfmt=mjpeg or pixfmt=auto instead\n", self->params.device_path);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: %s doesn't support yuyv. Try recording with pixfmt=mjpeg or pixfmt=auto instead", self->params.device_path);
                 return false;
             }
             break;
         }
         case GSR_CAPTURE_V4L2_PIXFMT_MJPEG: {
             if(!supported_pixfmts.mjpeg) {
-                fprintf(stderr, "gsr error: gsr_capture_v4l2_create: %s doesn't support mjpeg. Try recording with pixfmt=yuyv or pixfmt=auto instead\n", self->params.device_path);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: %s doesn't support mjpeg. Try recording with pixfmt=yuyv or pixfmt=auto instead", self->params.device_path);
                 return false;
             }
             break;
@@ -432,7 +433,7 @@ static bool gsr_capture_v4l2_create_pbos(gsr_capture_v4l2 *self, int width, int 
     self->params.egl->glGenBuffers(NUM_PBOS, self->pbos);
     for(int i = 0; i < NUM_PBOS; ++i) {
         if(self->pbos[i] == 0) {
-            fprintf(stderr, "gsr error: gsr_capture_v4l2_create_pbos: failed to create pixel buffer objects\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create_pbos: failed to create pixel buffer objects");
             return false;
         }
 
@@ -477,7 +478,7 @@ static bool gsr_capture_v4l2_map_buffer(gsr_capture_v4l2 *self, const struct v4l
                     });
 
                     if(!self->dma_image[i]) {
-                        fprintf(stderr, "gsr error: gsr_capture_v4l2_map_buffer: eglCreateImage failed, error: %d\n", self->params.egl->eglGetError());
+                        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_map_buffer: eglCreateImage failed, error: %d", self->params.egl->eglGetError());
                         return false;
                     }
                 }
@@ -488,7 +489,7 @@ static bool gsr_capture_v4l2_map_buffer(gsr_capture_v4l2 *self, const struct v4l
                 self->params.egl->glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 self->params.egl->glBindTexture(GL_TEXTURE_EXTERNAL_OES, 0);
                 if(self->texture_id[i] == 0) {
-                    fprintf(stderr, "gsr error: gsr_capture_v4l2_map_buffer: failed to create texture\n");
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_map_buffer: failed to create texture");
                     return false;
                 }
             }
@@ -501,14 +502,14 @@ static bool gsr_capture_v4l2_map_buffer(gsr_capture_v4l2 *self, const struct v4l
                 self->dmabuf_size[i] = fmt->fmt.pix.sizeimage;
                 self->dmabuf_map[i] = mmap(NULL, fmt->fmt.pix.sizeimage, PROT_READ, MAP_SHARED, self->dmabuf_fd[i], 0);
                 if(self->dmabuf_map[i] == MAP_FAILED) {
-                    fprintf(stderr, "gsr error: gsr_capture_v4l2_map_buffer: mmap failed, error: %s\n", strerror(errno));
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_map_buffer: mmap failed, error: %s", strerror(errno));
                     return false;
                 }
 
                 // GL_RGBA is intentionally used here instead of GL_RGB, because the performance is much better when using glTexSubImage2D (22% cpu usage compared to 38% cpu usage)
                 self->texture_id[i] = gl_create_texture(self->params.egl, fmt->fmt.pix.width, fmt->fmt.pix.height, GL_RGBA8, GL_RGBA, GL_LINEAR);
                 if(self->texture_id[i] == 0) {
-                    fprintf(stderr, "gsr error: gsr_capture_v4l2_map_buffer: failed to create texture\n");
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_map_buffer: failed to create texture");
                     return false;
                 }
             }
@@ -534,28 +535,28 @@ static bool is_libturbojpeg_library_available(void) {
 static int gsr_capture_v4l2_setup(gsr_capture_v4l2 *self) {
     self->fd = open(self->params.device_path, O_RDWR | O_NONBLOCK);
     if(self->fd < 0) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_create: failed to open %s, error: %s\n", self->params.device_path, strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: failed to open %s, error: %s", self->params.device_path, strerror(errno));
         return -1;
     }
 
     struct v4l2_capability cap = {0};
     if(xioctl(self->fd, VIDIOC_QUERYCAP, &cap) == -1) {
         if(EINVAL == errno) {
-            fprintf(stderr, "gsr error: gsr_capture_v4l2_create: %s isn't a v4l2 device\n", self->params.device_path);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: %s isn't a v4l2 device", self->params.device_path);
             return -1;
         } else {
-            fprintf(stderr, "gsr error: gsr_capture_v4l2_create: VIDIOC_QUERYCAP failed, error: %s\n", strerror(errno));
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: VIDIOC_QUERYCAP failed, error: %s", strerror(errno));
             return -1;
         }
     }
 
     if(!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_create: %s isn't a video capture device\n", self->params.device_path);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: %s isn't a video capture device", self->params.device_path);
         return -1;
     }
 
     if(!(cap.capabilities & V4L2_CAP_STREAMING)) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_create: %s doesn't support streaming i/o\n", self->params.device_path);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: %s doesn't support streaming i/o", self->params.device_path);
         return -1;
     }
 
@@ -563,7 +564,7 @@ static int gsr_capture_v4l2_setup(gsr_capture_v4l2 *self) {
 
     const bool has_libturbojpeg_lib = is_libturbojpeg_library_available();
     if(!has_libturbojpeg_lib && self->params.pixfmt == GSR_CAPTURE_V4L2_PIXFMT_AUTO) {
-        fprintf(stderr, "gsr warning: gsr_capture_v4l2_create: libturbojpeg.so.0 isn't available on the system, yuyv camera capture will be used\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_capture_v4l2_create: libturbojpeg.so.0 isn't available on the system, yuyv camera capture will be used");
         self->params.pixfmt = GSR_CAPTURE_V4L2_PIXFMT_YUYV;
     }
 
@@ -576,12 +577,11 @@ static int gsr_capture_v4l2_setup(gsr_capture_v4l2 *self) {
 
     gsr_capture_v4l2_supported_setup best_supported_setup = {0};
     if(!gsr_capture_v4l2_get_best_matching_setup(supported_setups, num_supported_setups, self->params.pixfmt, self->params.camera_fps, self->params.camera_resolution, &best_supported_setup)) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_create: %s doesn't report any frame resolutions and framerates\n", self->params.device_path);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: %s doesn't report any frame resolutions and framerates", self->params.device_path);
         return -1;
     }
 
-    fprintf(stderr, "gsr info: gsr_capture_v4l2_create: capturing %s at %ux%u@%dhz, pixfmt: %s\n",
-        self->params.device_path,
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_v4l2_create: capturing %s at %ux%u@%dhz, pixfmt: %s", self->params.device_path,
         best_supported_setup.resolution.width,
         best_supported_setup.resolution.height,
         gsr_capture_v4l2_framerate_to_number(best_supported_setup.framerate),
@@ -594,7 +594,7 @@ static int gsr_capture_v4l2_setup(gsr_capture_v4l2 *self) {
         dlerror(); /* clear */
         self->libturbojpeg_lib = dlopen("libturbojpeg.so.0", RTLD_LAZY);
         if(!self->libturbojpeg_lib) {
-            fprintf(stderr, "gsr error: gsr_capture_v4l2_create: failed to load libturbojpeg.so.0 which is required for camera mjpeg capture, error: %s\n", dlerror());
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: failed to load libturbojpeg.so.0 which is required for camera mjpeg capture, error: %s", dlerror());
             return -1;
         }
 
@@ -605,13 +605,13 @@ static int gsr_capture_v4l2_setup(gsr_capture_v4l2 *self) {
         self->tjGetErrorStr2 = (FUNC_tjGetErrorStr2)dlsym(self->libturbojpeg_lib, "tjGetErrorStr2");
 
         if(!self->tjInitDecompress || !self->tjDestroy || !self->tjDecompressHeader2 || !self->tjDecompress2 || !self->tjGetErrorStr2) {
-            fprintf(stderr, "gsr error: gsr_capture_v4l2_create: libturbojpeg.so.0 is missing functions. The libturbojpeg version installed on your system might be outdated\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: libturbojpeg.so.0 is missing functions. The libturbojpeg version installed on your system might be outdated");
             return -1;
         }
 
         self->jpeg_decompressor = self->tjInitDecompress();
         if(!self->jpeg_decompressor) {
-            fprintf(stderr, "gsr error: gsr_capture_v4l2_create: failed to create jpeg decompressor\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: failed to create jpeg decompressor");
             return -1;
         }
     }
@@ -624,12 +624,12 @@ static int gsr_capture_v4l2_setup(gsr_capture_v4l2 *self) {
         .fmt.pix.height = best_supported_setup.resolution.height,
     };
     if(xioctl(self->fd, VIDIOC_S_FMT, &fmt) == -1) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_create: VIDIOC_S_FMT failed, error: %s\n", strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: VIDIOC_S_FMT failed, error: %s", strerror(errno));
         return -1;
     }
 
     if(fmt.fmt.pix.pixelformat != v4l2_pixfmt) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_create: pixel format isn't as requested (got pixel format: %u, requested: %u), error: %s\n", fmt.fmt.pix.pixelformat, v4l2_pixfmt, strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: pixel format isn't as requested (got pixel format: %u, requested: %u), error: %s", fmt.fmt.pix.pixelformat, v4l2_pixfmt, strerror(errno));
         return -1;
     }
 
@@ -644,7 +644,7 @@ static int gsr_capture_v4l2_setup(gsr_capture_v4l2 *self) {
         .count = NUM_BUFFERS
     };
     if(xioctl(self->fd, VIDIOC_REQBUFS, &reqbuf) == -1) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_create: VIDIOC_REQBUFS failed, error: %s\n", strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: VIDIOC_REQBUFS failed, error: %s", strerror(errno));
         return -1;
     }
 
@@ -655,7 +655,7 @@ static int gsr_capture_v4l2_setup(gsr_capture_v4l2 *self) {
             .flags = O_RDONLY
         };
         if(xioctl(self->fd, VIDIOC_EXPBUF, &expbuf) == -1) {
-            fprintf(stderr, "gsr error: gsr_capture_v4l2_create: VIDIOC_EXPBUF failed, error: %s\n", strerror(errno));
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: VIDIOC_EXPBUF failed, error: %s", strerror(errno));
             return -1;
         }
         self->dmabuf_fd[i] = expbuf.fd;
@@ -674,11 +674,11 @@ static int gsr_capture_v4l2_setup(gsr_capture_v4l2 *self) {
     }
 
     if(xioctl(self->fd, VIDIOC_STREAMON, &(enum v4l2_buf_type){V4L2_BUF_TYPE_VIDEO_CAPTURE})) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_create: VIDIOC_STREAMON failed, error: %s\n", strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create: VIDIOC_STREAMON failed, error: %s", strerror(errno));
         return -1;
     }
 
-    fprintf(stderr, "gsr info: gsr_capture_v4l2_create: waiting for camera %s to be ready\n", self->params.device_path);
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_v4l2_create: waiting for camera %s to be ready", self->params.device_path);
     return 0;
 }
 
@@ -707,7 +707,7 @@ static void gsr_capture_v4l2_tick(gsr_capture *cap) {
     if(!self->got_first_frame && !self->should_stop) {
         const double timeout_sec = 5.0;
         if(clock_get_monotonic_seconds() - self->capture_start_time >= timeout_sec) {
-            fprintf(stderr, "gsr error: gsr_capture_v4l2_capture: didn't receive camera data in %f seconds\n", timeout_sec);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_capture: didn't receive camera data in %f seconds", timeout_sec);
             self->should_stop = true;
             self->stop_is_error = true;
         }
@@ -719,12 +719,12 @@ static void gsr_capture_v4l2_decode_jpeg_to_texture(gsr_capture_v4l2 *self, cons
     int jpeg_width = 0;
     int jpeg_height = 0;
     if(self->tjDecompressHeader2(self->jpeg_decompressor, self->dmabuf_map[buf->index], buf->bytesused, &jpeg_width, &jpeg_height, &jpeg_subsamp) != 0) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_capture: failed to decompress camera jpeg header data, error: %s\n", self->tjGetErrorStr2(self->jpeg_decompressor));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_capture: failed to decompress camera jpeg header data, error: %s", self->tjGetErrorStr2(self->jpeg_decompressor));
         return;
     }
 
     if(jpeg_width != self->capture_size.x || jpeg_height != self->capture_size.y) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_capture: got jpeg data of incorrect dimensions. Expected %dx%d, got %dx%d\n", self->capture_size.x, self->capture_size.y, jpeg_width, jpeg_height);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_capture: got jpeg data of incorrect dimensions. Expected %dx%d, got %dx%d", self->capture_size.x, self->capture_size.y, jpeg_width, jpeg_height);
         return;
     }
 
@@ -742,7 +742,7 @@ static void gsr_capture_v4l2_decode_jpeg_to_texture(gsr_capture_v4l2 *self, cons
     void *mapped_buffer = self->params.egl->glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, self->capture_size.x * self->capture_size.y * 4, GL_MAP_WRITE_BIT);
     if(mapped_buffer) {
         if(self->tjDecompress2(self->jpeg_decompressor, self->dmabuf_map[buf->index], buf->bytesused, mapped_buffer, jpeg_width, 0, jpeg_height, TJPF_RGBA, TJFLAG_FASTDCT) != 0)
-            fprintf(stderr, "gsr error: gsr_capture_v4l2_capture: failed to decompress camera jpeg data, error: %s\n", self->tjGetErrorStr2(self->jpeg_decompressor));
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_capture: failed to decompress camera jpeg data, error: %s", self->tjGetErrorStr2(self->jpeg_decompressor));
         self->params.egl->glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
     }
 
@@ -764,7 +764,7 @@ static int gsr_capture_v4l2_capture(gsr_capture *cap, gsr_capture_metadata *capt
 
     if(buf.bytesused > 0 && !(buf.flags & V4L2_BUF_FLAG_ERROR)) {
         if(!self->got_first_frame)
-            fprintf(stderr, "gsr info: gsr_capture_v4l2_capture: camera %s is now ready\n", self->params.device_path);
+            gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_v4l2_capture: camera %s is now ready", self->params.device_path);
         self->got_first_frame = true;
 
         switch(self->buffer_type) {
@@ -852,7 +852,7 @@ static void gsr_capture_v4l2_destroy(gsr_capture *cap) {
 
 gsr_capture* gsr_capture_v4l2_create(const gsr_capture_v4l2_params *params) {
     if(!params) {
-        fprintf(stderr, "gsr error: gsr_capture_v4l2_create params is NULL\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_v4l2_create params is NULL");
         return NULL;
     }
 

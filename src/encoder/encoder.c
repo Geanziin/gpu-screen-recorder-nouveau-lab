@@ -1,4 +1,5 @@
 #include "../../include/encoder/encoder.h"
+#include "../../include/log.h"
 #include "../../include/utils.h"
 
 #include <string.h>
@@ -25,7 +26,7 @@ static void gsr_write_first_frame_timestamp_file(const char *filepath) {
 
     FILE *file = fopen(filepath, "w");
     if(!file) {
-        fprintf(stderr, "gsr warning: failed to open timestamp file '%s': %s\n", filepath, strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_WARNING, "failed to open timestamp file '%s': %s", filepath, strerror(errno));
         return;
     }
 
@@ -41,14 +42,14 @@ bool gsr_encoder_init(gsr_encoder *self, gsr_replay_storage replay_storage, size
     self->first_pts = -1;
 
     if(pthread_mutex_init(&self->file_write_mutex, NULL) != 0) {
-        fprintf(stderr, "gsr error: gsr_encoder_init: failed to create mutex\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_encoder_init: failed to create mutex");
         gsr_encoder_deinit(self);
         return false;
     }
     self->file_write_mutex_created = true;
 
     if(pthread_mutex_init(&self->replay_mutex, NULL) != 0) {
-        fprintf(stderr, "gsr error: gsr_encoder_init: failed to create mutex\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_encoder_init: failed to create mutex");
         gsr_encoder_deinit(self);
         return false;
     }
@@ -57,7 +58,7 @@ bool gsr_encoder_init(gsr_encoder *self, gsr_replay_storage replay_storage, size
     if(replay_buffer_num_packets > 0) {
         self->replay_buffer = gsr_replay_buffer_create(replay_storage, replay_directory, replay_buffer_time, replay_buffer_num_packets);
         if(!self->replay_buffer) {
-            fprintf(stderr, "gsr error: gsr_encoder_init: failed to create replay buffer\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_encoder_init: failed to create replay buffer");
             gsr_encoder_deinit(self);
             return false;
         }
@@ -120,7 +121,7 @@ void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_contex
                 pthread_mutex_lock(&self->replay_mutex);
                 const double time_now = clock_get_monotonic_seconds();
                 if(!gsr_replay_buffer_append(self->replay_buffer, av_packet, time_now))
-                    fprintf(stderr, "gsr error: gsr_encoder_receive_packets: failed to add replay buffer data\n");
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_encoder_receive_packets: failed to add replay buffer data");
                 pthread_mutex_unlock(&self->replay_mutex);
             }
 
@@ -155,7 +156,7 @@ void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_contex
                     char error_buffer[AV_ERROR_MAX_STRING_SIZE];
                     if(av_strerror(ret, error_buffer, sizeof(error_buffer)) < 0)
                         snprintf(error_buffer, sizeof(error_buffer), "Unknown error");
-                    fprintf(stderr, "gsr error: gsr_encoder_receive_packets: failed to write frame index %d to muxer, reason: %s (%d)\n", av_packet->stream_index, error_buffer, ret);
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_encoder_receive_packets: failed to write frame index %d to muxer, reason: %s (%d)", av_packet->stream_index, error_buffer, ret);
                 }
             }
             pthread_mutex_unlock(&self->file_write_mutex);
@@ -167,11 +168,11 @@ void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_contex
             break;
         } else if (res == AVERROR_EOF) { // this is the end of the stream
             av_packet_free(&av_packet);
-            fprintf(stderr, "End of stream!\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_encoder_receive_packets: end of stream");
             break;
         } else {
             av_packet_free(&av_packet);
-            fprintf(stderr, "Unexpected error: %d\n", res);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_encoder_receive_packets: unexpected error: %d", res);
             break;
         }
     }
@@ -179,13 +180,13 @@ void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_contex
 
 size_t gsr_encoder_add_recording_destination(gsr_encoder *self, AVCodecContext *codec_context, AVFormatContext *format_context, AVStream *stream, int64_t start_pts) {
     if(self->num_recording_destinations >= GSR_MAX_RECORDING_DESTINATIONS) {
-        fprintf(stderr, "gsr error: gsr_encoder_add_recording_destination: failed to add destination, reached the max amount of recording destinations (%d)\n", GSR_MAX_RECORDING_DESTINATIONS);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_encoder_add_recording_destination: failed to add destination, reached the max amount of recording destinations (%d)", GSR_MAX_RECORDING_DESTINATIONS);
         return (size_t)-1;
     }
 
     for(size_t i = 0; i < self->num_recording_destinations; ++i) {
         if(self->recording_destinations[i].stream == stream) {
-            fprintf(stderr, "gsr error: gsr_encoder_add_recording_destination: failed to add destination, the stream %p already exists as an output\n", (void*)stream);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_encoder_add_recording_destination: failed to add destination, the stream %p already exists as an output", (void*)stream);
             return (size_t)-1;
         }
     }

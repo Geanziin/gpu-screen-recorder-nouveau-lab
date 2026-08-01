@@ -1,4 +1,5 @@
 #include "../../../include/encoder/video/vulkan.h"
+#include "../../../include/log.h"
 #include "../../../include/utils.h"
 #include "../../../include/egl.h"
 
@@ -73,12 +74,12 @@ typedef struct {
 static bool gsr_vk_funcs_load(gsr_vk_funcs *vk, PFN_vkGetInstanceProcAddr get_inst_proc, VkInstance inst, VkDevice dev) {
     PFN_vkGetDeviceProcAddr get_dev_proc = (PFN_vkGetDeviceProcAddr)get_inst_proc(inst, "vkGetDeviceProcAddr");
     if(!get_dev_proc) {
-        fprintf(stderr, "gsr error: gsr_vk_funcs_load: failed to load vkGetDeviceProcAddr\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_vk_funcs_load: failed to load vkGetDeviceProcAddr");
         return false;
     }
 
-#define LOAD_INST(name) vk->name = (PFN_##name)get_inst_proc(inst, #name); if(!vk->name) { fprintf(stderr, "gsr error: gsr_vk_funcs_load: failed to load " #name "\n"); return false; }
-#define LOAD_DEV(name)  vk->name = (PFN_##name)get_dev_proc(dev, #name);   if(!vk->name) { fprintf(stderr, "gsr error: gsr_vk_funcs_load: failed to load " #name "\n"); return false; }
+#define LOAD_INST(name) vk->name = (PFN_##name)get_inst_proc(inst, #name); if(!vk->name) { gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_vk_funcs_load: failed to load " #name); return false; }
+#define LOAD_DEV(name)  vk->name = (PFN_##name)get_dev_proc(dev, #name);   if(!vk->name) { gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_vk_funcs_load: failed to load " #name); return false; }
 
     LOAD_INST(vkGetPhysicalDeviceMemoryProperties)
     LOAD_DEV(vkCreateImage)
@@ -118,13 +119,13 @@ static bool gsr_video_encoder_vulkan_setup_context(gsr_video_encoder_vulkan *sel
     snprintf(device_index_str, sizeof(device_index_str), "%d", self->params.egl->vulkan_device_index);
 
     if(av_hwdevice_ctx_create(&self->device_ctx, AV_HWDEVICE_TYPE_VULKAN, device_index_str, options, 0) < 0) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_vulkan_setup_context: failed to create hardware device context\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vulkan_setup_context: failed to create hardware device context");
         return false;
     }
 
     AVBufferRef *frame_context = av_hwframe_ctx_alloc(self->device_ctx);
     if(!frame_context) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_vulkan_setup_context: failed to create hwframe context\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vulkan_setup_context: failed to create hwframe context");
         av_buffer_unref(&self->device_ctx);
         return false;
     }
@@ -137,8 +138,7 @@ static bool gsr_video_encoder_vulkan_setup_context(gsr_video_encoder_vulkan *sel
     hw_frame_context->device_ctx = (AVHWDeviceContext*)self->device_ctx->data;
 
     if (av_hwframe_ctx_init(frame_context) < 0) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_vulkan_setup_context: failed to initialize hardware frame context "
-                        "(note: ffmpeg version needs to be > 4.0)\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vulkan_setup_context: failed to initialize hardware frame context (note: ffmpeg version needs to be > 4.0)");
         av_buffer_unref(&self->device_ctx);
         return false;
     }
@@ -230,7 +230,7 @@ static bool create_exportable_image(
     };
 
     if(vk->vkCreateImage(dev, &img_info, NULL, out_image) != VK_SUCCESS) {
-        fprintf(stderr, "gsr error: create_exportable_image: vkCreateImage failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "create_exportable_image: vkCreateImage failed");
         return false;
     }
 
@@ -240,7 +240,7 @@ static bool create_exportable_image(
     uint32_t mem_type_idx = get_memory_type_idx(phys_dev, &mem_reqs,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vk->vkGetPhysicalDeviceMemoryProperties);
     if(mem_type_idx == UINT32_MAX) {
-        fprintf(stderr, "gsr error: create_exportable_image: no suitable memory type\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "create_exportable_image: no suitable memory type");
         vk->vkDestroyImage(dev, *out_image, NULL);
         *out_image = VK_NULL_HANDLE;
         return false;
@@ -263,14 +263,14 @@ static bool create_exportable_image(
     };
 
     if(vk->vkAllocateMemory(dev, &mem_alloc_info, NULL, out_memory) != VK_SUCCESS) {
-        fprintf(stderr, "gsr error: create_exportable_image: vkAllocateMemory failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "create_exportable_image: vkAllocateMemory failed");
         vk->vkDestroyImage(dev, *out_image, NULL);
         *out_image = VK_NULL_HANDLE;
         return false;
     }
 
     if(vk->vkBindImageMemory(dev, *out_image, *out_memory, 0) != VK_SUCCESS) {
-        fprintf(stderr, "gsr error: create_exportable_image: vkBindImageMemory failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "create_exportable_image: vkBindImageMemory failed");
         vk->vkFreeMemory(dev, *out_memory, NULL);
         vk->vkDestroyImage(dev, *out_image, NULL);
         *out_memory = VK_NULL_HANDLE;
@@ -285,7 +285,7 @@ static bool create_exportable_image(
 static bool gsr_video_encoder_vulkan_setup_textures(gsr_video_encoder_vulkan *self, AVCodecContext *video_codec_context, AVFrame *frame) {
     const int res = av_hwframe_get_buffer(video_codec_context->hw_frames_ctx, frame, 0);
     if(res < 0) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_vulkan_setup_textures: av_hwframe_get_buffer failed: %d\n", res);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vulkan_setup_textures: av_hwframe_get_buffer failed: %d", res);
         return false;
     }
 
@@ -293,7 +293,7 @@ static bool gsr_video_encoder_vulkan_setup_textures(gsr_video_encoder_vulkan *se
 
     AVVulkanDeviceContext *vv = video_codec_context_get_vulkan_data(video_codec_context);
     if(!vv) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_vulkan_setup_textures: failed to get vulkan device context\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vulkan_setup_textures: failed to get vulkan device context");
         return false;
     }
 
@@ -327,7 +327,7 @@ static bool gsr_video_encoder_vulkan_setup_textures(gsr_video_encoder_vulkan *se
         };
         int fd = -1;
         if(self->vk.vkGetMemoryFdKHR(vv->act_dev, &fd_info, &fd) != VK_SUCCESS) {
-            fprintf(stderr, "gsr error: gsr_video_encoder_vulkan_setup_textures: vkGetMemoryFdKHR failed for plane %d\n", i);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vulkan_setup_textures: vkGetMemoryFdKHR failed for plane %d", i);
             return false;
         }
 
@@ -338,7 +338,7 @@ static bool gsr_video_encoder_vulkan_setup_textures(gsr_video_encoder_vulkan *se
         self->params.egl->glImportMemoryFdEXT(self->gl_memory_objects[i], self->export_memory_size[i],
                                               GL_HANDLE_TYPE_OPAQUE_FD_EXT, fd);
         if(!self->params.egl->glIsMemoryObjectEXT(self->gl_memory_objects[i])) {
-            fprintf(stderr, "gsr error: gsr_video_encoder_vulkan_setup_textures: failed to import memory FD for plane %d\n", i);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vulkan_setup_textures: failed to import memory FD for plane %d", i);
             return false;
         }
     }
@@ -370,7 +370,7 @@ static bool gsr_video_encoder_vulkan_setup_textures(gsr_video_encoder_vulkan *se
         .queueFamilyIndex = (uint32_t)get_graphics_queue_family(vv),
     };
     if(self->vk.vkCreateCommandPool(vv->act_dev, &pool_info, NULL, &self->command_pool) != VK_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_vulkan_setup_textures: vkCreateCommandPool failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vulkan_setup_textures: vkCreateCommandPool failed");
         return false;
     }
 
@@ -381,7 +381,7 @@ static bool gsr_video_encoder_vulkan_setup_textures(gsr_video_encoder_vulkan *se
         .commandBufferCount = 1,
     };
     if(self->vk.vkAllocateCommandBuffers(vv->act_dev, &cb_alloc_info, &self->command_buffer) != VK_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_vulkan_setup_textures: vkAllocateCommandBuffers failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vulkan_setup_textures: vkAllocateCommandBuffers failed");
         return false;
     }
 
@@ -389,7 +389,7 @@ static bool gsr_video_encoder_vulkan_setup_textures(gsr_video_encoder_vulkan *se
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
     };
     if(self->vk.vkCreateFence(vv->act_dev, &fence_info, NULL, &self->fence) != VK_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_vulkan_setup_textures: vkCreateFence failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vulkan_setup_textures: vkCreateFence failed");
         return false;
     }
 
@@ -484,7 +484,7 @@ static bool gsr_video_encoder_vulkan_start(gsr_video_encoder *encoder, AVCodecCo
     }
 
     if(FFALIGN(video_codec_context->width, 2) != FFALIGN(frame->width, 2) || FFALIGN(video_codec_context->height, 2) != FFALIGN(frame->height, 2)) {
-        fprintf(stderr, "gsr warning: gsr_video_encoder_vulkan_start: black bars have been added to the video because of a bug in AMD drivers/hardware. Record with h264/hevc vulkan codec instead (-k h264_vulkan) to get around this issue\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_video_encoder_vulkan_start: black bars have been added to the video because of a bug in AMD drivers/hardware. Record with h264/hevc vulkan codec instead (-k h264_vulkan) to get around this issue");
     }
 
     if(video_codec_context->width < 128)

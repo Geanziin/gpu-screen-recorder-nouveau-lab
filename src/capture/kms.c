@@ -1,4 +1,5 @@
 #include "../../include/capture/kms.h"
+#include "../../include/log.h"
 #include "../../include/utils.h"
 #include "../../include/color_conversion.h"
 #include "../../include/cursor.h"
@@ -159,7 +160,7 @@ static void monitor_callback(const gsr_monitor *monitor, void *userdata) {
     }
 
     if(monitor_callback_userdata->monitor_id->num_connector_ids == MAX_CONNECTOR_IDS)
-        fprintf(stderr, "gsr warning: reached max connector ids\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "reached max connector ids");
 }
 
 static vec2i rotate_capture_size_if_rotated(gsr_capture_kms *self, vec2i capture_size, gsr_monitor_rotation rotation) {
@@ -191,7 +192,7 @@ static int gsr_capture_kms_start(gsr_capture *cap, gsr_capture_metadata *capture
     for_each_active_monitor_output(self->params.egl->window, self->params.egl->card_path, connection_type, monitor_callback, &monitor_callback_userdata);
 
     if(!get_monitor_by_name(self->params.egl, connection_type, self->params.display_to_capture, &monitor)) {
-        fprintf(stderr, "gsr error: gsr_capture_kms_start: failed to find monitor by name \"%s\"\n", self->params.display_to_capture);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_kms_start: failed to find monitor by name \"%s\"", self->params.display_to_capture);
         gsr_capture_kms_stop(self);
         return -1;
     }
@@ -454,7 +455,7 @@ static void gsr_capture_kms_update_hdr_color_transforms(gsr_capture_kms *self, g
     const bool night_light = self->params.kde_night_light && gsr_kde_night_light_get_inverse_matrix(self->params.kde_night_light, night_light_compensation, night_light_container_primaries, night_light_matrix);
     if(night_light && !self->night_light_message_shown) {
         self->night_light_message_shown = true;
-        fprintf(stderr, "gsr info: gsr_capture_kms_update_hdr_color_transforms: night light is active, removing the night light tint from the capture\n");
+        gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_kms_update_hdr_color_transforms: night light is active, removing the night light tint from the capture");
     }
 
     /* The compositor applies the night light tint at scanout with the crtc gamma lut when it offloads its color transforms to the crtc
@@ -468,24 +469,21 @@ static void gsr_capture_kms_update_hdr_color_transforms(gsr_capture_kms *self, g
         luminance_scale = SDR_WHITE_LUMINANCE_REFERENCE / sdr_white_luminance;
         if(luminance_scale != 1.0f && !self->hdr_luminance_message_shown) {
             self->hdr_luminance_message_shown = true;
-            fprintf(stderr, "gsr info: gsr_capture_kms_update_hdr_color_transforms: scaling the luminance of the hdr video from sdr white at %d nits to sdr white at %d nits (hdr peak luminance: %d nits)\n",
-                (int)sdr_white_luminance, (int)SDR_WHITE_LUMINANCE_REFERENCE, (int)(hdr_peak_luminance * luminance_scale));
+            gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_kms_update_hdr_color_transforms: scaling the luminance of the hdr video from sdr white at %d nits to sdr white at %d nits (hdr peak luminance: %d nits)", (int)sdr_white_luminance, (int)SDR_WHITE_LUMINANCE_REFERENCE, (int)(hdr_peak_luminance * luminance_scale));
         }
     }
 
     const bool convert_sdr_to_hdr = self->params.hdr && !plane_is_hdr;
     if(convert_sdr_to_hdr && !self->hdr_luminance_message_shown) {
         self->hdr_luminance_message_shown = true;
-        fprintf(stderr, "gsr info: gsr_capture_kms_update_hdr_color_transforms: the monitor is in sdr mode, converting the captured sdr image to hdr (BT.709 to BT.2020 with sdr white at %d nits)\n",
-            (int)SDR_WHITE_LUMINANCE_REFERENCE);
+        gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_kms_update_hdr_color_transforms: the monitor is in sdr mode, converting the captured sdr image to hdr (BT.709 to BT.2020 with sdr white at %d nits)", (int)SDR_WHITE_LUMINANCE_REFERENCE);
     }
 
     const bool tone_map_hdr_to_sdr = !self->params.hdr && plane_is_hdr;
     gsr_color_conversion_set_hdr_to_sdr_tone_mapping(color_conversion, tone_map_hdr_to_sdr, hdr_peak_luminance, sdr_white_luminance);
     if(tone_map_hdr_to_sdr && !self->tone_mapping_message_shown) {
         self->tone_mapping_message_shown = true;
-        fprintf(stderr, "gsr info: gsr_capture_kms_update_hdr_color_transforms: the monitor is in hdr mode, tone mapping the hdr content to sdr (sdr white luminance: %d nits, hdr peak luminance: %d nits). Record with -k hevc_hdr or -k av1_hdr video codec option to record hdr instead\n",
-            (int)sdr_white_luminance, (int)hdr_peak_luminance);
+        gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_kms_update_hdr_color_transforms: the monitor is in hdr mode, tone mapping the hdr content to sdr (sdr white luminance: %d nits, hdr peak luminance: %d nits). Record with -k hevc_hdr or -k av1_hdr video codec option to record hdr instead", (int)sdr_white_luminance, (int)hdr_peak_luminance);
     }
 
     if(convert_sdr_to_hdr) {
@@ -615,7 +613,7 @@ static EGLImage gsr_capture_kms_create_egl_image_with_fallback(gsr_capture_kms *
     } else {
         image = gsr_capture_kms_create_egl_image(self, drm_fd, fds, offsets, pitches, modifiers, true);
         if(!image) {
-            fprintf(stderr, "gsr error: gsr_capture_kms_create_egl_image_with_fallback: failed to create egl image with modifiers, trying without modifiers\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_kms_create_egl_image_with_fallback: failed to create egl image with modifiers, trying without modifiers");
             self->no_modifiers_fallback = true;
             image = gsr_capture_kms_create_egl_image(self, drm_fd, fds, offsets, pitches, modifiers, false);
         }
@@ -638,7 +636,7 @@ static void gsr_capture_kms_bind_image_to_input_texture_with_fallback(gsr_captur
         gsr_capture_kms_bind_image_to_texture(self, image, self->external_input_texture_id, true);
     } else {
         if(!gsr_capture_kms_bind_image_to_texture(self, image, self->input_texture_id, false)) {
-            fprintf(stderr, "gsr error: gsr_capture_kms_capture: failed to bind image to texture, trying with external texture\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_kms_capture: failed to bind image to texture, trying with external texture");
             self->external_texture_fallback = true;
             gsr_capture_kms_bind_image_to_texture(self, image, self->external_input_texture_id, true);
         }
@@ -824,7 +822,7 @@ static void gsr_capture_kms_update_connector_ids(gsr_capture_kms *self) {
 
     gsr_monitor monitor;
     if(!get_monitor_by_name(self->params.egl, connection_type, self->params.display_to_capture, &monitor)) {
-        fprintf(stderr, "gsr error: gsr_capture_kms_update_connector_ids: failed to find monitor by name \"%s\"\n", self->params.display_to_capture);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_kms_update_connector_ids: failed to find monitor by name \"%s\"", self->params.display_to_capture);
         return;
     }
 
@@ -851,7 +849,7 @@ static void gsr_capture_kms_pre_capture(gsr_capture *cap, gsr_capture_metadata *
         static bool error_shown = false;
         if(!error_shown) {
             error_shown = true;
-            fprintf(stderr, "gsr error: gsr_capture_kms_pre_capture: no drm found, capture will fail\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_kms_pre_capture: no drm found, capture will fail");
         }
         return;
     }
@@ -1105,7 +1103,7 @@ static void gsr_capture_kms_destroy(gsr_capture *cap) {
 
 gsr_capture* gsr_capture_kms_create(const gsr_capture_kms_params *params) {
     if(!params) {
-        fprintf(stderr, "gsr error: gsr_capture_kms_create params is NULL\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_kms_create params is NULL");
         return NULL;
     }
 

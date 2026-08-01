@@ -1,4 +1,5 @@
 #include "../include/pipewire_audio.h"
+#include "../include/log.h"
 
 #include <pipewire/pipewire.h>
 #include <pipewire/extensions/metadata.h>
@@ -388,7 +389,7 @@ static bool gsr_pipewire_audio_listen_on_metadata(gsr_pipewire_audio *self, uint
 
     self->metadata_proxy = pw_registry_bind(self->registry, id, PW_TYPE_INTERFACE_Metadata, PW_VERSION_METADATA, 0);
     if(!self->metadata_proxy) {
-        fprintf(stderr, "gsr error: gsr_pipewire_audio_listen_on_metadata: failed to bind to registry\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_audio_listen_on_metadata: failed to bind to registry");
         return false;
     }
 
@@ -407,7 +408,7 @@ static bool array_ensure_capacity(void **array, size_t size, size_t *capacity_it
 
         void *new_data = realloc(*array, new_capacity_items * element_size);
         if(!new_data) {
-            fprintf(stderr, "gsr error: pipewire_audio: failed to reallocate memory\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "pipewire_audio: failed to reallocate memory");
             return false;
         }
 
@@ -533,7 +534,7 @@ static void gsr_pipewire_audio_bind_node(gsr_pipewire_audio *self, uint32_t id) 
 
     struct pw_proxy *proxy = pw_registry_bind(self->registry, id, PW_TYPE_INTERFACE_Node, PW_VERSION_NODE, 0);
     if(!proxy) {
-        fprintf(stderr, "gsr error: gsr_pipewire_audio_bind_node: failed to bind to node %u\n", id);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_audio_bind_node: failed to bind to node %u", id);
         free(node_binding);
         return;
     }
@@ -701,14 +702,14 @@ bool gsr_pipewire_audio_init(gsr_pipewire_audio *self) {
     
     self->thread_loop = pw_thread_loop_new("gsr screen capture", NULL);
     if(!self->thread_loop) {
-        fprintf(stderr, "gsr error: gsr_pipewire_audio_init: failed to create pipewire thread\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_audio_init: failed to create pipewire thread");
         gsr_pipewire_audio_deinit(self);
         return false;
     }
 
     self->context = pw_context_new(pw_thread_loop_get_loop(self->thread_loop), NULL, 0);
     if(!self->context) {
-        fprintf(stderr, "gsr error: gsr_pipewire_audio_init: failed to create pipewire context\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_audio_init: failed to create pipewire context");
         gsr_pipewire_audio_deinit(self);
         return false;
     }
@@ -716,7 +717,7 @@ bool gsr_pipewire_audio_init(gsr_pipewire_audio *self) {
     pw_context_load_module(self->context, "libpipewire-module-link-factory", NULL, NULL);
 
     if(pw_thread_loop_start(self->thread_loop) < 0) {
-        fprintf(stderr, "gsr error: gsr_pipewire_audio_init: failed to start thread\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_audio_init: failed to start thread");
         gsr_pipewire_audio_deinit(self);
         return false;
     }

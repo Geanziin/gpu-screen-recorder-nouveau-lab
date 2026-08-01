@@ -1,4 +1,5 @@
 #include "../include/kde_night_light.h"
+#include "../include/log.h"
 
 #ifdef GSR_DBUS
 
@@ -346,7 +347,7 @@ bool gsr_kde_night_light_get_inverse_matrix(gsr_kde_night_light *self, gsr_night
 #include <stddef.h>
 
 gsr_kde_night_light* gsr_kde_night_light_create(void) {
-    fprintf(stderr, "gsr warning: kde night light handling disabled because gsr was compiled without pipewire (which also disables dbus)\n");
+    gsr_log(GSR_LOG_LEVEL_WARNING, "kde night light handling disabled because gsr was compiled without pipewire (which also disables dbus)");
     return NULL;
 }
 

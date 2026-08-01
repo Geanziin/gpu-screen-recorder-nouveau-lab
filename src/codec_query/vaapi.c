@@ -1,4 +1,5 @@
 #include "../../include/codec_query/vaapi.h"
+#include "../../include/log.h"
 #include "../../include/utils.h"
 
 #include <stdlib.h>
@@ -134,7 +135,7 @@ static bool get_supported_video_codecs(VADisplay va_dpy, gsr_supported_video_cod
     int va_major = 0;
     int va_minor = 0;
     if(vaInitialize(va_dpy, &va_major, &va_minor) != VA_STATUS_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vaapi: vaInitialize failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vaapi: vaInitialize failed");
         return false;
     }
 
@@ -207,20 +208,20 @@ bool gsr_get_supported_video_codecs_vaapi(gsr_supported_video_codecs *video_code
 
     char render_path[128];
     if(!gsr_card_path_get_render_path(card_path, render_path)) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vaapi: failed to get /dev/dri/renderDXXX file from %s\n", card_path);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vaapi: failed to get /dev/dri/renderDXXX file from %s", card_path);
         goto done;
     }
 
     drm_fd = open(render_path, O_RDWR);
     if(drm_fd == -1) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vaapi: failed to open device %s\n", render_path);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vaapi: failed to open device %s", render_path);
         goto done;
     }
 
     VADisplay va_dpy = vaGetDisplayDRM(drm_fd);
     if(va_dpy) {
         if(!get_supported_video_codecs(va_dpy, video_codecs, cleanup)) {
-            fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vaapi: failed to query supported video codecs for device %s\n", render_path);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vaapi: failed to query supported video codecs for device %s", render_path);
             goto done;
         }
         success = true;

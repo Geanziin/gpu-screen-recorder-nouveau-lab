@@ -1,4 +1,5 @@
 #include "../../include/codec_query/vulkan.h"
+#include "../../include/log.h"
 #include "../../include/utils.h"
 
 #include <stdio.h>
@@ -162,25 +163,25 @@ bool gsr_get_supported_video_codecs_vulkan(gsr_supported_video_codecs *video_cod
 
     char render_path[128];
     if(!gsr_card_path_get_render_path(card_path, render_path)) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vulkan: failed to get /dev/dri/renderDXXX file from %s\n", card_path);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vulkan: failed to get /dev/dri/renderDXXX file from %s", card_path);
         return false;
     }
 
     libvulkan = dlopen("libvulkan.so.1", RTLD_NOW);
     if (!libvulkan) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vulkan: failed to load libvulkan.so.1, error: %s\n", dlerror());
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vulkan: failed to load libvulkan.so.1, error: %s", dlerror());
         return false;
     }
 
     PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)dlsym(libvulkan, "vkGetInstanceProcAddr");
     if (!vkGetInstanceProcAddr) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vulkan: could not find vkGetInstanceProcAddr in libvulkan.so.1\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vulkan: could not find vkGetInstanceProcAddr in libvulkan.so.1");
         goto done;
     }
 
     PFN_vkCreateInstance vkCreateInstance = (PFN_vkCreateInstance)vkGetInstanceProcAddr(NULL, "vkCreateInstance");
     if(!vkCreateInstance) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vulkan: could not find vkCreateInstance in libvulkan.so.1\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vulkan: could not find vkCreateInstance in libvulkan.so.1");
         goto done;
     }
 
@@ -199,7 +200,7 @@ bool gsr_get_supported_video_codecs_vulkan(gsr_supported_video_codecs *video_cod
     };
 
     if(vkCreateInstance(&instance_create_info, NULL, &instance) != VK_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vulkan: vkCreateInstance failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vulkan: vkCreateInstance failed");
         goto done;
     }
 
@@ -211,7 +212,7 @@ bool gsr_get_supported_video_codecs_vulkan(gsr_supported_video_codecs *video_cod
     PFN_vkDestroyDevice vkDestroyDevice = NULL;
     PFN_vkGetPhysicalDeviceVideoCapabilitiesKHR vkGetPhysicalDeviceVideoCapabilitiesKHR = NULL;
 
-    #define LOAD_INST(name) name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); if(!name) { fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vulkan: could not find " #name " in libvulkan.so.1\n"); goto done; }
+    #define LOAD_INST(name) name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); if(!name) { gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vulkan: could not find " #name " in libvulkan.so.1"); goto done; }
 
         LOAD_INST(vkEnumeratePhysicalDevices)
         LOAD_INST(vkDestroyInstance)
@@ -225,12 +226,12 @@ bool gsr_get_supported_video_codecs_vulkan(gsr_supported_video_codecs *video_cod
 
     uint32_t num_devices = 0;
     if(vkEnumeratePhysicalDevices(instance, &num_devices, NULL) != VK_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vulkan: vkEnumeratePhysicalDevices (query num devices) failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vulkan: vkEnumeratePhysicalDevices (query num devices) failed");
         goto done;
     }
 
     if(num_devices == 0) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vulkan: no vulkan capable device found\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vulkan: no vulkan capable device found");
         goto done;
     }
 
@@ -238,7 +239,7 @@ bool gsr_get_supported_video_codecs_vulkan(gsr_supported_video_codecs *video_cod
         num_devices = MAX_PHYSICAL_DEVICES;
     
     if(vkEnumeratePhysicalDevices(instance, &num_devices, physical_devices) != VK_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vulkan: vkEnumeratePhysicalDevices (get data) failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vulkan: vkEnumeratePhysicalDevices (get data) failed");
         goto done;
     }
 
@@ -267,7 +268,7 @@ bool gsr_get_supported_video_codecs_vulkan(gsr_supported_video_codecs *video_cod
     }
 
     if(!physical_device) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vulkan: failed to find a vulkan device that matches opengl device %s\n", card_path);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vulkan: failed to find a vulkan device that matches opengl device %s", card_path);
         goto done;
     }
 
@@ -284,18 +285,18 @@ bool gsr_get_supported_video_codecs_vulkan(gsr_supported_video_codecs *video_cod
 
     uint32_t num_device_extensions = 0;
     if(vkEnumerateDeviceExtensionProperties(physical_device, NULL, &num_device_extensions, NULL) != VK_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vulkan: vkEnumerateDeviceExtensionProperties (query num device extensions) failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vulkan: vkEnumerateDeviceExtensionProperties (query num device extensions) failed");
         goto done;
     }
 
     device_extensions = calloc(num_device_extensions, sizeof(VkExtensionProperties));
     if(!device_extensions) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vulkan: failed to allocate %d device extensions\n", num_device_extensions);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vulkan: failed to allocate %d device extensions", num_device_extensions);
         goto done;
     }
 
     if(vkEnumerateDeviceExtensionProperties(physical_device, NULL, &num_device_extensions, device_extensions) != VK_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_vulkan: vkEnumerateDeviceExtensionProperties (get data) failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_vulkan: vkEnumerateDeviceExtensionProperties (get data) failed");
         goto done;
     }
 

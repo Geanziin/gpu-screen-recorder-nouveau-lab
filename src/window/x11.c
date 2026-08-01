@@ -1,4 +1,5 @@
 #include "../../include/window/x11.h"
+#include "../../include/log.h"
 
 #include "../../include/vec2.h"
 #include "../../include/defs.h"
@@ -32,7 +33,7 @@ typedef struct {
 static void store_x11_monitor(const gsr_monitor *monitor, void *userdata) {
     gsr_window_x11 *window_x11 = userdata;
     if(window_x11->num_outputs == GSR_MAX_OUTPUTS) {
-        fprintf(stderr, "gsr warning: reached maximum outputs (%d), ignoring output %s\n", GSR_MAX_OUTPUTS, monitor->name);
+        gsr_log(GSR_LOG_LEVEL_WARNING, "reached maximum outputs (%d), ignoring output %s", GSR_MAX_OUTPUTS, monitor->name);
         return;
     }
 
@@ -68,7 +69,7 @@ static void gsr_window_x11_deinit(gsr_window_x11 *self) {
 static bool gsr_window_x11_init(gsr_window_x11 *self) {
     self->window = XCreateWindow(self->display, DefaultRootWindow(self->display), 0, 0, 16, 16, 0, CopyFromParent, InputOutput, CopyFromParent, 0, NULL);
     if(!self->window) {
-        fprintf(stderr, "gsr error: gsr_window_x11_init failed: failed to create gl window\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_window_x11_init failed: failed to create gl window");
         return false;
     }
 

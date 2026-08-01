@@ -1,4 +1,5 @@
 #include "../include/plugins.h"
+#include "../include/log.h"
 #include "../include/utils.h"
 #include <stdio.h>
 #include <string.h>
@@ -23,7 +24,7 @@ bool gsr_plugins_init(gsr_plugins *self, gsr_plugin_init_params init_params, gsr
 
     const unsigned int texture = gl_create_texture(egl, init_params.width, init_params.height, color_depth_to_gl_internal_format(init_params.color_depth), GL_RGBA, GL_LINEAR);
     if(texture == 0) {
-        fprintf(stderr, "gsr error: gsr_plugins_init failed to create texture\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_plugins_init failed to create texture");
         return false;
     }
     self->texture = texture;
@@ -41,7 +42,7 @@ bool gsr_plugins_init(gsr_plugins *self, gsr_plugin_init_params init_params, gsr
     color_conversion_params.destination_textures[0] = self->texture;
 
     if(gsr_color_conversion_init(&self->color_conversion, &color_conversion_params) != 0) {
-        fprintf(stderr, "gsr error: gsr_plugins_init failed to create color conversion\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_plugins_init failed to create color conversion");
         gsr_plugins_deinit(self);
         return false;
     }
@@ -54,7 +55,7 @@ void gsr_plugins_deinit(gsr_plugins *self) {
     for(int i = self->num_plugins - 1; i >= 0; --i) {
         gsr_plugin *plugin = &self->plugins[i];
         plugin->gsr_plugin_deinit(plugin->data.userdata);
-        fprintf(stderr, "gsr info: unloaded plugin: %s\n", plugin->data.name);
+        gsr_log(GSR_LOG_LEVEL_INFO, "unloaded plugin: %s", plugin->data.name);
     }
     self->num_plugins = 0;
 
@@ -68,7 +69,7 @@ void gsr_plugins_deinit(gsr_plugins *self) {
 
 bool gsr_plugins_load_plugin(gsr_plugins *self, const char *plugin_filepath) {
     if(self->num_plugins >= GSR_MAX_PLUGINS) {
-        fprintf(stderr, "gsr error: gsr_plugins_load_plugin failed, more plugins can't load more than %d plugins. Report this as an issue\n", GSR_MAX_PLUGINS);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_plugins_load_plugin failed, more plugins can't load more than %d plugins. Report this as an issue", GSR_MAX_PLUGINS);
         return false;
     }
 
@@ -77,38 +78,38 @@ bool gsr_plugins_load_plugin(gsr_plugins *self, const char *plugin_filepath) {
 
     plugin.lib = dlopen(plugin_filepath, RTLD_LAZY);
     if(!plugin.lib) {
-        fprintf(stderr, "gsr error: gsr_plugins_load_plugin failed to load \"%s\", error: %s\n", plugin_filepath, dlerror());
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_plugins_load_plugin failed to load \"%s\", error: %s", plugin_filepath, dlerror());
         return false;
     }
 
     plugin.gsr_plugin_init = dlsym(plugin.lib, "gsr_plugin_init");
     if(!plugin.gsr_plugin_init) {
-        fprintf(stderr, "gsr error: gsr_plugins_load_plugin failed to find \"gsr_plugin_init\" in plugin \"%s\"\n", plugin_filepath);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_plugins_load_plugin failed to find \"gsr_plugin_init\" in plugin \"%s\"", plugin_filepath);
         goto fail;
     }
 
     plugin.gsr_plugin_deinit = dlsym(plugin.lib, "gsr_plugin_deinit");
     if(!plugin.gsr_plugin_deinit) {
-        fprintf(stderr, "gsr error: gsr_plugins_load_plugin failed to find \"gsr_plugin_deinit\" in plugin \"%s\"\n", plugin_filepath);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_plugins_load_plugin failed to find \"gsr_plugin_deinit\" in plugin \"%s\"", plugin_filepath);
         goto fail;
     }
 
     if(!plugin.gsr_plugin_init(&self->init_params, &plugin.data)) {
-        fprintf(stderr, "gsr error: gsr_plugins_load_plugin failed to load plugin \"%s\", gsr_plugin_init in the plugin failed\n", plugin_filepath);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_plugins_load_plugin failed to load plugin \"%s\", gsr_plugin_init in the plugin failed", plugin_filepath);
         goto fail;
     }
 
     if(!plugin.data.name) {
-        fprintf(stderr, "gsr error: gsr_plugins_load_plugin failed to load plugin \"%s\", the plugin didn't set the name (gsr_plugin_init_return.name)\n", plugin_filepath);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_plugins_load_plugin failed to load plugin \"%s\", the plugin didn't set the name (gsr_plugin_init_return.name)", plugin_filepath);
         goto fail;
     }
 
     if(plugin.data.version == 0) {
-        fprintf(stderr, "gsr error: gsr_plugins_load_plugin failed to load plugin \"%s\", the plugin didn't set the version (gsr_plugin_init_return.version)\n", plugin_filepath);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_plugins_load_plugin failed to load plugin \"%s\", the plugin didn't set the version (gsr_plugin_init_return.version)", plugin_filepath);
         goto fail;
     }
 
-    fprintf(stderr, "gsr info: loaded plugin: %s, name: %s, version: %u\n", plugin_filepath, plugin.data.name, plugin.data.version);
+    gsr_log(GSR_LOG_LEVEL_INFO, "loaded plugin: %s, name: %s, version: %u", plugin_filepath, plugin.data.name, plugin.data.version);
     self->plugins[self->num_plugins] = plugin;
     ++self->num_plugins;
     return true;

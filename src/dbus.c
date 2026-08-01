@@ -1,4 +1,5 @@
 #include "../include/dbus.h"
+#include "../include/log.h"
 
 #include <sys/random.h>
 
@@ -32,7 +33,7 @@ typedef struct {
 static bool generate_random_characters(char *buffer, int buffer_size, const char *alphabet, size_t alphabet_size) {
     /* TODO: Use other functions on other platforms than linux */
     if(getrandom(buffer, buffer_size, 0) < buffer_size) {
-        fprintf(stderr, "Failed to get random bytes, error: %s\n", strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to get random bytes, error: %s", strerror(errno));
         return false;
     }
 
@@ -63,25 +64,25 @@ bool gsr_dbus_init(gsr_dbus *self, const char *screencast_restore_token) {
 
     self->random_str[DBUS_RANDOM_STR_SIZE] = '\0';
     if(!generate_random_characters_standard_alphabet(self->random_str, DBUS_RANDOM_STR_SIZE)) {
-        fprintf(stderr, "gsr error: gsr_dbus_init: failed to generate random string\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_init: failed to generate random string");
         return false;
     }
 
     self->con = dbus_bus_get(DBUS_BUS_SESSION, &self->err);
     if(dbus_error_is_set(&self->err)) {
-        fprintf(stderr, "gsr error: gsr_dbus_init: dbus_bus_get failed with error: %s\n", self->err.message);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_init: dbus_bus_get failed with error: %s", self->err.message);
         return false;
     }
 
     if(!self->con) {
-        fprintf(stderr, "gsr error: gsr_dbus_init: failed to get dbus session\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_init: failed to get dbus session");
         return false;
     }
 
     if(screencast_restore_token) {
         self->screencast_restore_token = strdup(screencast_restore_token);
         if(!self->screencast_restore_token) {
-            fprintf(stderr, "gsr error: gsr_dbus_init: failed to clone restore token\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_init: failed to clone restore token");
             gsr_dbus_deinit(self);
             return false;
         }
@@ -121,7 +122,7 @@ static bool gsr_dbus_desktop_portal_get_property(gsr_dbus *self, const char *int
         "org.freedesktop.DBus.Properties",   // interface to call on
         "Get");                              // method name
     if(!msg) {
-        fprintf(stderr, "gsr error: gsr_dbus_desktop_portal_get_property: dbus_message_new_method_call failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_desktop_portal_get_property: dbus_message_new_method_call failed");
         return false;
     }
 
@@ -129,20 +130,20 @@ static bool gsr_dbus_desktop_portal_get_property(gsr_dbus *self, const char *int
     dbus_message_iter_init_append(msg, &it);
 
     if(!dbus_message_iter_append_basic(&it, DBUS_TYPE_STRING, &interface)) {
-        fprintf(stderr, "gsr error: gsr_dbus_desktop_portal_get_property: failed to add interface\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_desktop_portal_get_property: failed to add interface");
         dbus_message_unref(msg);
         return false;
     }
 
     if(!dbus_message_iter_append_basic(&it, DBUS_TYPE_STRING, &property_name)) {
-        fprintf(stderr, "gsr error: gsr_dbus_desktop_portal_get_property: failed to add property_name\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_desktop_portal_get_property: failed to add property_name");
         dbus_message_unref(msg);
         return false;
     }
 
     DBusPendingCall *pending = NULL;
     if(!dbus_connection_send_with_reply(self->con, msg, &pending, -1) || !pending) { // -1 is default timeout
-        fprintf(stderr, "gsr error: gsr_dbus_desktop_portal_get_property: dbus_connection_send_with_reply failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_desktop_portal_get_property: dbus_connection_send_with_reply failed");
         dbus_message_unref(msg);
         return false;
     }
@@ -157,7 +158,7 @@ static bool gsr_dbus_desktop_portal_get_property(gsr_dbus *self, const char *int
 
     msg = dbus_pending_call_steal_reply(pending);
     if(!msg) {
-        fprintf(stderr, "gsr error: gsr_dbus_desktop_portal_get_property: dbus_pending_call_steal_reply failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_desktop_portal_get_property: dbus_pending_call_steal_reply failed");
         dbus_pending_call_unref(pending);
         dbus_message_unref(msg);
         return false;
@@ -168,7 +169,7 @@ static bool gsr_dbus_desktop_portal_get_property(gsr_dbus *self, const char *int
 
     DBusMessageIter resp_args;
     if(!dbus_message_iter_init(msg, &resp_args)) {
-        fprintf(stderr, "gsr error: gsr_dbus_desktop_portal_get_property: response message is missing arguments\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_desktop_portal_get_property: response message is missing arguments");
         dbus_message_unref(msg);
         return false;
     } else if(DBUS_TYPE_UINT32 == dbus_message_iter_get_arg_type(&resp_args)) {
@@ -180,12 +181,12 @@ static bool gsr_dbus_desktop_portal_get_property(gsr_dbus *self, const char *int
         if(dbus_message_iter_get_arg_type(&variant_iter) == DBUS_TYPE_UINT32) {
             dbus_message_iter_get_basic(&variant_iter, result);
         } else {
-            fprintf(stderr, "gsr error: gsr_dbus_desktop_portal_get_property: response message is not a variant with an uint32, %c\n", dbus_message_iter_get_arg_type(&variant_iter));
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_desktop_portal_get_property: response message is not a variant with an uint32, %c", dbus_message_iter_get_arg_type(&variant_iter));
             dbus_message_unref(msg);
             return false;
         }
     } else {
-        fprintf(stderr, "gsr error: gsr_dbus_desktop_portal_get_property: response message is not an uint32, %c\n", dbus_message_iter_get_arg_type(&resp_args));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_desktop_portal_get_property: response message is not an uint32, %c", dbus_message_iter_get_arg_type(&resp_args));
         dbus_message_unref(msg);
         return false;
         // TODO: Check dbus_error_is_set?
@@ -208,7 +209,7 @@ static bool gsr_dbus_ensure_desktop_portal_rule_added(gsr_dbus *self) {
     dbus_bus_add_match(self->con, DESKTOP_PORTAL_SIGNAL_RULE, &self->err);
     dbus_connection_flush(self->con);
     if(dbus_error_is_set(&self->err)) {
-        fprintf(stderr, "gsr error: gsr_dbus_ensure_desktop_portal_rule_added: failed to add dbus rule %s, error: %s\n", DESKTOP_PORTAL_SIGNAL_RULE, self->err.message);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_ensure_desktop_portal_rule_added: failed to add dbus rule %s, error: %s", DESKTOP_PORTAL_SIGNAL_RULE, self->err.message);
         return false;
     }
     self->desktop_portal_rule_added = true;
@@ -293,7 +294,7 @@ static bool gsr_dbus_call_screencast_method(gsr_dbus *self, const char *method_n
         "org.freedesktop.portal.ScreenCast", // interface to call on
         method_name);                        // method name
     if(!msg) {
-        fprintf(stderr, "gsr error: gsr_dbus_call_screencast_method: dbus_message_new_method_call failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_call_screencast_method: dbus_message_new_method_call failed");
         return false;
     }
 
@@ -302,7 +303,7 @@ static bool gsr_dbus_call_screencast_method(gsr_dbus *self, const char *method_n
 
     if(session_handle) {
         if(!dbus_message_iter_append_basic(&it, DBUS_TYPE_OBJECT_PATH, &session_handle)) {
-            fprintf(stderr, "gsr error: gsr_dbus_call_screencast_method: failed to add session_handle\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_call_screencast_method: failed to add session_handle");
             dbus_message_unref(msg);
             return false;
         }
@@ -310,21 +311,21 @@ static bool gsr_dbus_call_screencast_method(gsr_dbus *self, const char *method_n
 
     if(parent_window) {
         if(!dbus_message_iter_append_basic(&it, DBUS_TYPE_STRING, &parent_window)) {
-            fprintf(stderr, "gsr error: gsr_dbus_call_screencast_method: failed to add parent_window\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_call_screencast_method: failed to add parent_window");
             dbus_message_unref(msg);
             return false;
         }
     }
 
     if(!dbus_add_dict(&it, entries, num_entries)) {
-        fprintf(stderr, "gsr error: gsr_dbus_call_screencast_method: failed to add dict\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_call_screencast_method: failed to add dict");
         dbus_message_unref(msg);
         return false;
     }
 
     DBusPendingCall *pending = NULL;
     if(!dbus_connection_send_with_reply(self->con, msg, &pending, -1) || !pending) { // -1 is default timeout
-        fprintf(stderr, "gsr error: gsr_dbus_call_screencast_method: dbus_connection_send_with_reply failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_call_screencast_method: dbus_connection_send_with_reply failed");
         dbus_message_unref(msg);
         return false;
     }
@@ -339,7 +340,7 @@ static bool gsr_dbus_call_screencast_method(gsr_dbus *self, const char *method_n
 
     msg = dbus_pending_call_steal_reply(pending);
     if(!msg) {
-        fprintf(stderr, "gsr error: gsr_dbus_call_screencast_method: dbus_pending_call_steal_reply failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_call_screencast_method: dbus_pending_call_steal_reply failed");
         dbus_pending_call_unref(pending);
         dbus_message_unref(msg);
         return false;
@@ -350,7 +351,7 @@ static bool gsr_dbus_call_screencast_method(gsr_dbus *self, const char *method_n
 
     DBusMessageIter resp_args;
     if(!dbus_message_iter_init(msg, &resp_args)) {
-        fprintf(stderr, "gsr error: gsr_dbus_call_screencast_method: response message is missing arguments\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_call_screencast_method: response message is missing arguments");
         dbus_message_unref(msg);
         return false;
     } else if (DBUS_TYPE_OBJECT_PATH == dbus_message_iter_get_arg_type(&resp_args)) {
@@ -365,13 +366,13 @@ static bool gsr_dbus_call_screencast_method(gsr_dbus *self, const char *method_n
     } else if(DBUS_TYPE_STRING == dbus_message_iter_get_arg_type(&resp_args)) {
         char *err = NULL;
         dbus_message_iter_get_basic(&resp_args, &err);
-        fprintf(stderr, "gsr error: gsr_dbus_call_screencast_method: failed with error: %s\n", err);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_call_screencast_method: failed with error: %s", err);
 
         dbus_message_unref(msg);
         return false;
         // TODO: Check dbus_error_is_set?
     } else {
-        fprintf(stderr, "gsr error: gsr_dbus_call_screencast_method: response message is not an object path or unix fd\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_call_screencast_method: response message is not an object path or unix fd");
         dbus_message_unref(msg);
         return false;
         // TODO: Check dbus_error_is_set?
@@ -404,7 +405,7 @@ static bool gsr_dbus_call_screencast_method(gsr_dbus *self, const char *method_n
 
 static int gsr_dbus_get_response_status(DBusMessageIter *resp_args) {
     if(dbus_message_iter_get_arg_type(resp_args) != DBUS_TYPE_UINT32) {
-        fprintf(stderr, "gsr error: gsr_dbus_get_response_status: missing uint32 in response\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_get_response_status: missing uint32 in response");
         return -1;
     }
 
@@ -425,7 +426,7 @@ static dict_entry* find_dict_entry_by_key(dict_entry *entries, int num_entries, 
 
 static bool gsr_dbus_get_variant_value(DBusMessageIter *iter, dict_entry *entry) {
     if(dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_VARIANT) {
-        fprintf(stderr, "gsr error: gsr_dbus_get_variant_value: value is not a variant\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_get_variant_value: value is not a variant");
         return false;
     }
 
@@ -435,7 +436,7 @@ static bool gsr_dbus_get_variant_value(DBusMessageIter *iter, dict_entry *entry)
     switch(dbus_message_iter_get_arg_type(&variant_iter)) {
         case DBUS_TYPE_STRING: {
             if(entry->value_type != DICT_TYPE_STRING) {
-                fprintf(stderr, "gsr error: gsr_dbus_get_variant_value: expected entry value to be a(n) %s was a string\n", dict_value_type_to_string(entry->value_type));
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_get_variant_value: expected entry value to be a(n) %s was a string", dict_value_type_to_string(entry->value_type));
                 return false;
             }
 
@@ -443,7 +444,7 @@ static bool gsr_dbus_get_variant_value(DBusMessageIter *iter, dict_entry *entry)
             dbus_message_iter_get_basic(&variant_iter, &value);
 
             if(!value) {
-                fprintf(stderr, "gsr error: gsr_dbus_get_variant_value: failed to get entry value as value\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_get_variant_value: failed to get entry value as value");
                 return false;
             }
 
@@ -454,14 +455,14 @@ static bool gsr_dbus_get_variant_value(DBusMessageIter *iter, dict_entry *entry)
 
             entry->str = strdup(value);
             if(!entry->str) {
-                fprintf(stderr, "gsr error: gsr_dbus_get_variant_value: failed to copy value\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_get_variant_value: failed to copy value");
                 return false;
             }
             return true;
         }
         case DBUS_TYPE_UINT32: {
             if(entry->value_type != DICT_TYPE_UINT32) {
-                fprintf(stderr, "gsr error: gsr_dbus_get_variant_value: expected entry value to be a(n) %s was an uint32\n", dict_value_type_to_string(entry->value_type));
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_get_variant_value: expected entry value to be a(n) %s was an uint32", dict_value_type_to_string(entry->value_type));
                 return false;
             }
 
@@ -470,7 +471,7 @@ static bool gsr_dbus_get_variant_value(DBusMessageIter *iter, dict_entry *entry)
         }
         case DBUS_TYPE_BOOLEAN: {
             if(entry->value_type != DICT_TYPE_BOOL) {
-                fprintf(stderr, "gsr error: gsr_dbus_get_variant_value: expected entry value to be a(n) %s was a boolean\n", dict_value_type_to_string(entry->value_type));
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_get_variant_value: expected entry value to be a(n) %s was a boolean", dict_value_type_to_string(entry->value_type));
                 return false;
             }
 
@@ -479,7 +480,7 @@ static bool gsr_dbus_get_variant_value(DBusMessageIter *iter, dict_entry *entry)
         }
     }
 
-    fprintf(stderr, "gsr error: gsr_dbus_get_variant_value: got unexpected type, expected string, uint32 or boolean\n");
+    gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_get_variant_value: got unexpected type, expected string, uint32 or boolean");
     return false;
 }
 
@@ -492,7 +493,7 @@ static bool gsr_dbus_get_variant_value(DBusMessageIter *iter, dict_entry *entry)
 */
 static bool gsr_dbus_get_map(DBusMessageIter *resp_args, dict_entry *entries, int num_entries) {
     if(dbus_message_iter_get_arg_type(resp_args) != DBUS_TYPE_ARRAY) {
-        fprintf(stderr, "gsr error: gsr_dbus_get_map: missing array in response\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_get_map: missing array in response");
         return false;
     }
 
@@ -508,20 +509,20 @@ static bool gsr_dbus_get_map(DBusMessageIter *resp_args, dict_entry *entries, in
         //         dbus_message_iter_get_arg_type(&subiter),
         //         dbus_message_iter_get_signature(&subiter));
         if(dbus_message_iter_get_arg_type(&subiter) != DBUS_TYPE_DICT_ENTRY) {
-            fprintf(stderr, "gsr error: gsr_dbus_get_map: array value is not an entry\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_get_map: array value is not an entry");
             return false;
         }
 
         dbus_message_iter_recurse(&subiter, &dictiter);
 
         if(dbus_message_iter_get_arg_type(&dictiter) != DBUS_TYPE_STRING) {
-            fprintf(stderr, "gsr error: gsr_dbus_get_map: entry key is not a string\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_get_map: entry key is not a string");
             goto error;
         }
 
         dbus_message_iter_get_basic(&dictiter, &key);
         if(!key) {
-            fprintf(stderr, "gsr error: gsr_dbus_get_map: failed to get entry key as value\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_get_map: failed to get entry key as value");
             goto error;
         }
         
@@ -532,7 +533,7 @@ static bool gsr_dbus_get_map(DBusMessageIter *resp_args, dict_entry *entries, in
         }
 
         if(!dbus_message_iter_next(&dictiter)) {
-            fprintf(stderr, "gsr error: gsr_dbus_get_map: missing entry value\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_get_map: missing entry value");
             goto error;
         }
 
@@ -575,7 +576,7 @@ int gsr_dbus_screencast_create_session(gsr_dbus *self, char **session_handle) {
 
     DBusMessage *response_msg = NULL;
     if(!gsr_dbus_call_screencast_method(self, "CreateSession", NULL, NULL, args, 2, NULL, &response_msg)) {
-        fprintf(stderr, "gsr error: gsr_dbus_screencast_create_session: failed to setup ScreenCast session. Make sure you have a desktop portal running with support for the ScreenCast interface and that the desktop portal matches the Wayland compositor you are running.\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_create_session: failed to setup ScreenCast session. Make sure you have a desktop portal running with support for the ScreenCast interface and that the desktop portal matches the Wayland compositor you are running.");
         return -1;
     }
 
@@ -584,7 +585,7 @@ int gsr_dbus_screencast_create_session(gsr_dbus *self, char **session_handle) {
     //fprintf(stderr, "signature: %s, sender: %s\n", dbus_message_get_signature(msg), dbus_message_get_sender(msg));
     DBusMessageIter resp_args;
     if(!dbus_message_iter_init(response_msg, &resp_args)) {
-        fprintf(stderr, "gsr error: gsr_dbus_screencast_create_session: missing response\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_create_session: missing response");
         dbus_message_unref(response_msg);
         return -1;
     }
@@ -605,7 +606,7 @@ int gsr_dbus_screencast_create_session(gsr_dbus *self, char **session_handle) {
     }
 
     if(!entries[0].str) {
-        fprintf(stderr, "gsr error: gsr_dbus_screencast_create_session: missing \"session_handle\" in response\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_create_session: missing \"session_handle\" in response");
         dbus_message_unref(response_msg);
         return -1;
     }
@@ -644,16 +645,16 @@ int gsr_dbus_screencast_select_sources(gsr_dbus *self, const char *session_handl
     uint32_t available_source_types = 0;
     gsr_dbus_desktop_portal_get_property(self, "org.freedesktop.portal.ScreenCast", "AvailableSourceTypes", &available_source_types);
     if(available_source_types == 0)
-        fprintf(stderr, "gsr error: gsr_dbus_screencast_select_sources: no source types are available\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_select_sources: no source types are available");
     capture_type = unset_unsupported_capture_types(capture_type, available_source_types);
 
     uint32_t available_cursor_modes = 0;
     gsr_dbus_desktop_portal_get_property(self, "org.freedesktop.portal.ScreenCast", "AvailableCursorModes", &available_cursor_modes);
     if(available_cursor_modes == 0)
-        fprintf(stderr, "gsr warning: gsr_dbus_screencast_select_sources: no cursors modes are available\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_dbus_screencast_select_sources: no cursors modes are available");
 
     if(cursor_mode == GSR_PORTAL_CURSOR_MODE_METADATA && !(available_cursor_modes & GSR_PORTAL_CURSOR_MODE_METADATA)) {
-        fprintf(stderr, "gsr warning: gsr_dbus_screencast_select_sources: cursor mode metadata is not available, using cursor mode embedded instead\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_dbus_screencast_select_sources: cursor mode metadata is not available, using cursor mode embedded instead");
         cursor_mode = GSR_PORTAL_CURSOR_MODE_EMBEDDED;
     }
     cursor_mode = unset_unsupported_cursor_modes(cursor_mode, available_cursor_modes);
@@ -696,14 +697,14 @@ int gsr_dbus_screencast_select_sources(gsr_dbus *self, const char *session_handl
             args[5].str = self->screencast_restore_token;
         }
     } else if(self->screencast_restore_token && self->screencast_restore_token[0]) {
-        fprintf(stderr, "gsr warning: gsr_dbus_screencast_select_sources: tried to use restore token but this option is only available in screencast version >= 4, your wayland compositors screencast version is %d\n", screencast_server_version);
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_dbus_screencast_select_sources: tried to use restore token but this option is only available in screencast version >= 4, your wayland compositors screencast version is %d", screencast_server_version);
     }
     
     DBusMessage *response_msg = NULL;
     if(!gsr_dbus_call_screencast_method(self, "SelectSources", session_handle, NULL, args, num_arg_dict, NULL, &response_msg)) {
         if(num_arg_dict == 6) {
             /* We dont know what the error exactly is but assume it may be because of invalid restore token. In that case try without restore token */
-            fprintf(stderr, "gsr warning: gsr_dbus_screencast_select_sources: SelectSources failed, retrying without restore_token\n");
+            gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_dbus_screencast_select_sources: SelectSources failed, retrying without restore_token");
             num_arg_dict = 5;
             if(!gsr_dbus_call_screencast_method(self, "SelectSources", session_handle, NULL, args, num_arg_dict, NULL, &response_msg))
                 return -1;
@@ -716,7 +717,7 @@ int gsr_dbus_screencast_select_sources(gsr_dbus *self, const char *session_handl
     //fprintf(stderr, "signature: %s, sender: %s\n", dbus_message_get_signature(msg), dbus_message_get_sender(msg));
     DBusMessageIter resp_args;
     if(!dbus_message_iter_init(response_msg, &resp_args)) {
-        fprintf(stderr, "gsr error: gsr_dbus_screencast_create_session: missing response\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_create_session: missing response");
         dbus_message_unref(response_msg);
         return -1;
     }
@@ -770,7 +771,7 @@ int gsr_dbus_screencast_start(gsr_dbus *self, const char *session_handle, uint32
     //fprintf(stderr, "signature: %s, sender: %s\n", dbus_message_get_signature(msg), dbus_message_get_sender(msg));
     DBusMessageIter resp_args;
     if(!dbus_message_iter_init(response_msg, &resp_args)) {
-        fprintf(stderr, "gsr error: gsr_dbus_screencast_start: missing response\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_start: missing response");
         dbus_message_unref(response_msg);
         return -1;
     }
@@ -782,7 +783,7 @@ int gsr_dbus_screencast_start(gsr_dbus *self, const char *session_handle, uint32
     }
 
     if(dbus_message_iter_get_arg_type(&resp_args) != DBUS_TYPE_ARRAY) {
-        fprintf(stderr, "gsr error: gsr_dbus_screencast_start: missing array in response\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_start: missing array in response");
         dbus_message_unref(response_msg);
         return -1;
     }
@@ -798,31 +799,31 @@ int gsr_dbus_screencast_start(gsr_dbus *self, const char *session_handle, uint32
         //         dbus_message_iter_get_arg_type(&subiter),
         //         dbus_message_iter_get_signature(&subiter));
         if(dbus_message_iter_get_arg_type(&subiter) != DBUS_TYPE_DICT_ENTRY) {
-            fprintf(stderr, "gsr error: gsr_dbus_screencast_start: array value is not an entry\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_start: array value is not an entry");
             goto error;
         }
 
         dbus_message_iter_recurse(&subiter, &dictiter);
 
         if(dbus_message_iter_get_arg_type(&dictiter) != DBUS_TYPE_STRING) {
-            fprintf(stderr, "gsr error: gsr_dbus_screencast_start: entry key is not a string\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_start: entry key is not a string");
             goto error;
         }
 
         dbus_message_iter_get_basic(&dictiter, &key);
         if(!key) {
-            fprintf(stderr, "gsr error: gsr_dbus_screencast_start: failed to get entry key as value\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_start: failed to get entry key as value");
             goto error;
         }
 
         if(strcmp(key, "restore_token") == 0) {
             if(!dbus_message_iter_next(&dictiter)) {
-                fprintf(stderr, "gsr error: gsr_dbus_screencast_start: missing restore_token value\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_start: missing restore_token value");
                 goto error;
             }
 
             if(dbus_message_iter_get_arg_type(&dictiter) != DBUS_TYPE_VARIANT) {
-                fprintf(stderr, "gsr error: gsr_dbus_screencast_start: restore_token is not a variant\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_start: restore_token is not a variant");
                 goto error;
             }
 
@@ -830,7 +831,7 @@ int gsr_dbus_screencast_start(gsr_dbus *self, const char *session_handle, uint32
             dbus_message_iter_recurse(&dictiter, &variant_iter);
 
             if(dbus_message_iter_get_arg_type(&variant_iter) != DBUS_TYPE_STRING) {
-                fprintf(stderr, "gsr error: gsr_dbus_screencast_start: restore_token is not a string\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_start: restore_token is not a string");
                 goto error;
             }
 
@@ -847,12 +848,12 @@ int gsr_dbus_screencast_start(gsr_dbus *self, const char *session_handle, uint32
             }
         } else if(strcmp(key, "streams") == 0) {
             if(!dbus_message_iter_next(&dictiter)) {
-                fprintf(stderr, "gsr error: gsr_dbus_screencast_start: missing streams value\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_start: missing streams value");
                 goto error;
             }
 
             if(dbus_message_iter_get_arg_type(&dictiter) != DBUS_TYPE_VARIANT) {
-                fprintf(stderr, "gsr error: gsr_dbus_screencast_start: streams value is not a variant\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_start: streams value is not a variant");
                 goto error;
             }
 
@@ -860,7 +861,7 @@ int gsr_dbus_screencast_start(gsr_dbus *self, const char *session_handle, uint32
             dbus_message_iter_recurse(&dictiter, &variant_iter);
 
             if(dbus_message_iter_get_arg_type(&variant_iter) != DBUS_TYPE_ARRAY) {
-                fprintf(stderr, "gsr error: gsr_dbus_screencast_start: streams value is not an array\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_start: streams value is not an array");
                 goto error;
             }
 
@@ -881,7 +882,7 @@ int gsr_dbus_screencast_start(gsr_dbus *self, const char *session_handle, uint32
     }
 
     if(*pipewire_node == 0) {
-        fprintf(stderr, "gsr error: gsr_dbus_screencast_start: no pipewire node returned\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_dbus_screencast_start: no pipewire node returned");
         goto error;
     }
 

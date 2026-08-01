@@ -1,4 +1,5 @@
 #include "../include/image_writer.h"
+#include "../include/log.h"
 #include "../include/egl.h"
 #include "../include/utils.h"
 
@@ -83,7 +84,7 @@ bool gsr_image_writer_init_opengl(gsr_image_writer *self, gsr_egl *egl, int widt
     self->height = height;
     self->texture = gl_create_texture(self->egl, self->width, self->height, GL_RGBA8, GL_RGBA, GL_NEAREST); /* TODO: use GL_RGB16 instead of GL_RGB8 for hdr/10-bit */
     if(self->texture == 0) {
-        fprintf(stderr, "gsr error: gsr_image_writer_init: failed to create texture\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_image_writer_init: failed to create texture");
         return false;
     }
 
@@ -128,7 +129,7 @@ static bool gsr_image_writer_write_memory_to_file(gsr_image_writer *self, const 
     }
 
     if(!success)
-        fprintf(stderr, "gsr error: gsr_image_writer_write_to_file: failed to write image data to output file %s\n", filepath);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_image_writer_write_to_file: failed to write image data to output file %s", filepath);
 
     return success;
 }
@@ -136,7 +137,7 @@ static bool gsr_image_writer_write_memory_to_file(gsr_image_writer *self, const 
 static bool gsr_image_writer_write_opengl_texture_to_file(gsr_image_writer *self, const char *filepath, gsr_image_format image_format, int quality) {
     uint8_t *frame_data = malloc(self->width * self->height * 4);
     if(!frame_data) {
-        fprintf(stderr, "gsr error: gsr_image_writer_write_to_file: failed to allocate memory for image frame\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_image_writer_write_to_file: failed to allocate memory for image frame");
         return false;
     }
 

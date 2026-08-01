@@ -1,4 +1,5 @@
 #include "../../include/window/wayland.h"
+#include "../../include/log.h"
 #include "../../include/wayland_host_bridge.h"
 
 #include "../../include/vec2.h"
@@ -234,12 +235,12 @@ static void registry_add_object(void *data, struct wl_registry *registry, uint32
         window_wayland->compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 1);
     } else if(strcmp(interface, wl_output_interface.name) == 0) {
         if(version < 4) {
-            fprintf(stderr, "gsr warning: wl output interface version is < 4, expected >= 4 to capture a monitor\n");
+            gsr_log(GSR_LOG_LEVEL_WARNING, "wl output interface version is < 4, expected >= 4 to capture a monitor");
             return;
         }
 
         if(window_wayland->num_outputs == GSR_MAX_OUTPUTS) {
-            fprintf(stderr, "gsr warning: reached maximum outputs (%d), ignoring output %u\n", GSR_MAX_OUTPUTS, name);
+            gsr_log(GSR_LOG_LEVEL_WARNING, "reached maximum outputs (%d), ignoring output %u", GSR_MAX_OUTPUTS, name);
             return;
         }
 
@@ -257,7 +258,7 @@ static void registry_add_object(void *data, struct wl_registry *registry, uint32
         wl_output_add_listener(gsr_output->output, &output_listener, gsr_output);
     } else if(strcmp(interface, zxdg_output_manager_v1_interface.name) == 0) {
         if(version < 1) {
-            fprintf(stderr, "gsr warning: xdg output interface version is < 1, expected >= 1 to capture a monitor\n");
+            gsr_log(GSR_LOG_LEVEL_WARNING, "xdg output interface version is < 1, expected >= 1 to capture a monitor");
             return;
         }
 
@@ -326,7 +327,7 @@ static const struct zxdg_output_v1_listener xdg_output_listener = {
 
 static void gsr_window_wayland_set_monitor_outputs_from_xdg_output(gsr_window_wayland *self) {
     if(!self->xdg_output_manager) {
-        fprintf(stderr, "gsr warning: zxdg_output_manager not found. registered monitor positions might be incorrect\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "zxdg_output_manager not found. registered monitor positions might be incorrect");
         return;
     }
 
@@ -464,7 +465,7 @@ static void gsr_window_wayland_deinit(gsr_window_wayland *self) {
 static bool gsr_window_wayland_init(gsr_window_wayland *self) {
     self->display = wayland_connect_to_host();
     if(!self->display) {
-        fprintf(stderr, "gsr error: gsr_window_wayland_init failed: failed to connect to the Wayland server\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_window_wayland_init failed: failed to connect to the Wayland server");
         goto fail;
     }
 
@@ -482,19 +483,19 @@ static bool gsr_window_wayland_init(gsr_window_wayland *self) {
     gsr_window_wayland_set_monitor_real_positions(self);
 
     if(!self->compositor) {
-        fprintf(stderr, "gsr error: gsr_window_wayland_init failed: failed to find compositor\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_window_wayland_init failed: failed to find compositor");
         goto fail;
     }
 
     self->surface = wl_compositor_create_surface(self->compositor);
     if(!self->surface) {
-        fprintf(stderr, "gsr error: gsr_window_wayland_init failed: failed to create surface\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_window_wayland_init failed: failed to create surface");
         goto fail;
     }
 
     self->window = wl_egl_window_create(self->surface, 16, 16);
     if(!self->window) {
-        fprintf(stderr, "gsr error: gsr_window_wayland_init failed: failed to create window\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_window_wayland_init failed: failed to create window");
         goto fail;
     }
 

@@ -1,4 +1,5 @@
 #include "../../../include/encoder/video/nvenc.h"
+#include "../../../include/log.h"
 #include "../../../include/egl.h"
 #include "../../../include/cuda.h"
 #include "../../../include/utils.h"
@@ -25,7 +26,7 @@ typedef struct {
 static bool gsr_video_encoder_nvenc_setup_context(gsr_video_encoder_nvenc *self, AVCodecContext *video_codec_context) {
     self->device_ctx = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_CUDA);
     if(!self->device_ctx) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_nvenc_setup_context failed: failed to create hardware device context\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_nvenc_setup_context failed: failed to create hardware device context");
         return false;
     }
 
@@ -33,14 +34,14 @@ static bool gsr_video_encoder_nvenc_setup_context(gsr_video_encoder_nvenc *self,
     AVCUDADeviceContext *cuda_device_context = (AVCUDADeviceContext*)hw_device_context->hwctx;
     cuda_device_context->cuda_ctx = self->cuda.cu_ctx;
     if(av_hwdevice_ctx_init(self->device_ctx) < 0) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_nvenc_setup_context failed: failed to create hardware device context\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_nvenc_setup_context failed: failed to create hardware device context");
         av_buffer_unref(&self->device_ctx);
         return false;
     }
 
     AVBufferRef *frame_context = av_hwframe_ctx_alloc(self->device_ctx);
     if(!frame_context) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_nvenc_setup_context failed: failed to create hwframe context\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_nvenc_setup_context failed: failed to create hwframe context");
         av_buffer_unref(&self->device_ctx);
         return false;
     }
@@ -53,8 +54,7 @@ static bool gsr_video_encoder_nvenc_setup_context(gsr_video_encoder_nvenc *self,
     hw_frame_context->device_ctx = (AVHWDeviceContext*)self->device_ctx->data;
 
     if (av_hwframe_ctx_init(frame_context) < 0) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_nvenc_setup_context failed: failed to initialize hardware frame context "
-                        "(note: ffmpeg version needs to be > 4.0)\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_nvenc_setup_context failed: failed to initialize hardware frame context (note: ffmpeg version needs to be > 4.0)");
         av_buffer_unref(&self->device_ctx);
         //av_buffer_unref(&frame_context);
         return false;
@@ -72,7 +72,7 @@ static bool cuda_register_opengl_texture(gsr_cuda *cuda, CUgraphicsResource *cud
     if (res != CUDA_SUCCESS) {
         const char *err_str = "unknown";
         cuda->cuGetErrorString(res, &err_str);
-        fprintf(stderr, "gsr error: cuda_register_opengl_texture: cuGraphicsGLRegisterImage failed, error: %s, texture " "id: %u\n", err_str, texture_id);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "cuda_register_opengl_texture: cuGraphicsGLRegisterImage failed, error: %s, texture id: %u", err_str, texture_id);
         return false;
     }
 
@@ -86,7 +86,7 @@ static bool cuda_register_opengl_texture(gsr_cuda *cuda, CUgraphicsResource *cud
 static bool gsr_video_encoder_nvenc_setup_textures(gsr_video_encoder_nvenc *self, AVCodecContext *video_codec_context, AVFrame *frame) {
     const int res = av_hwframe_get_buffer(video_codec_context->hw_frames_ctx, frame, 0);
     if(res < 0) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_nvenc_setup_textures: av_hwframe_get_buffer failed: %d\n", res);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_nvenc_setup_textures: av_hwframe_get_buffer failed: %d", res);
         return false;
     }
 
@@ -99,7 +99,7 @@ static bool gsr_video_encoder_nvenc_setup_textures(gsr_video_encoder_nvenc *self
         self->target_texture_size[i] = (vec2i){ video_codec_context->width / div[i], video_codec_context->height / div[i] };
         self->target_textures[i] = gl_create_texture(self->params.egl, self->target_texture_size[i].x, self->target_texture_size[i].y, self->params.color_depth == GSR_COLOR_DEPTH_8_BITS ? internal_formats_nv12[i] : internal_formats_p010[i], formats[i], GL_NEAREST);
         if(self->target_textures[i] == 0) {
-            fprintf(stderr, "gsr error: gsr_video_encoder_nvenc_setup_textures: failed to create opengl texture\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_nvenc_setup_textures: failed to create opengl texture");
             return false;
         }
 
@@ -117,7 +117,7 @@ static bool gsr_video_encoder_nvenc_start(gsr_video_encoder *encoder, AVCodecCon
     gsr_video_encoder_nvenc *self = encoder->priv;
 
     if(!gsr_cuda_load(&self->cuda)) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_nvenc_start: failed to load cuda\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_nvenc_start: failed to load cuda");
         gsr_video_encoder_nvenc_stop(self, video_codec_context);
         return false;
     }

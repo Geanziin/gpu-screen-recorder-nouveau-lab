@@ -31,6 +31,7 @@ extern "C" {
 #include "../kms/client/kms_client.h"
 }
 
+#include "../include/log.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -196,7 +197,7 @@ static AVSampleFormat audio_codec_get_sample_format(AVCodecContext *audio_codec_
                 supports_s16 = false;
 
             if(!supports_s16 && !supports_flt) {
-                fprintf(stderr, "gsr warning: opus audio codec is chosen but your ffmpeg version does not support s16/flt sample format and performance might be slightly worse.\n");
+                gsr_log(GSR_LOG_LEVEL_WARNING, "opus audio codec is chosen but your ffmpeg version does not support s16/flt sample format and performance might be slightly worse.");
                 fprintf(stderr, "  You can either rebuild ffmpeg with libopus instead of the built-in opus, use the flatpak version of gpu screen recorder or record with aac audio codec instead (-ac aac).\n");
                 fprintf(stderr, "  Falling back to fltp audio sample format instead.\n");
             }
@@ -250,7 +251,7 @@ static AVCodecContext* create_audio_codec_context(int fps, gsr_audio_codec audio
     (void)fps;
     const AVCodec *codec = avcodec_find_encoder(audio_codec_get_id(audio_codec));
     if (!codec) {
-        fprintf(stderr, "gsr error: Could not find %s audio encoder\n", audio_codec_get_name(audio_codec));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "Could not find %s audio encoder", audio_codec_get_name(audio_codec));
         _exit(1);
     }
 
@@ -578,7 +579,7 @@ static void open_video_software(AVCodecContext *codec_context, const args_parser
 
     int ret = avcodec_open2(codec_context, codec_context->codec, &options);
     if (ret < 0) {
-        fprintf(stderr, "gsr error: Could not open video codec: %s\n", av_error_to_string(ret));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "Could not open video codec: %s", av_error_to_string(ret));
         _exit(1);
     }
 }
@@ -728,7 +729,7 @@ static void open_video_hardware(AVCodecContext *codec_context, bool low_power, c
 
     int ret = avcodec_open2(codec_context, codec_context->codec, &options);
     if (ret < 0) {
-        fprintf(stderr, "gsr error: Could not open video codec: %s\n", av_error_to_string(ret));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "Could not open video codec: %s", av_error_to_string(ret));
         _exit(1);
     }
 }
@@ -807,7 +808,7 @@ static std::string get_time_only_str() {
 static AVStream* create_stream(AVFormatContext *av_format_context, AVCodecContext *codec_context) {
     AVStream *stream = avformat_new_stream(av_format_context, nullptr);
     if (!stream) {
-        fprintf(stderr, "gsr error: Could not allocate stream\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "Could not allocate stream");
         _exit(1);
     }
     stream->id = av_format_context->nb_streams - 1;
@@ -821,7 +822,7 @@ static void run_recording_saved_script_async(const char *script_file, const char
     char script_file_full[PATH_MAX];
     script_file_full[0] = '\0';
     if(!realpath(script_file, script_file_full)) {
-        fprintf(stderr, "gsr error: script file not found: %s\n", script_file);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "script file not found: %s", script_file);
         return;
     }
 
@@ -966,7 +967,7 @@ static void set_format_context_options(AVFormatContext *av_format_context) {
         if(strcmp(file_extension, "mp4") != 0 && strcmp(file_extension, "mov") != 0)
             return;
 
-        fprintf(stderr, "gsr warning: your FFmpeg version is known to be buggy (it doesn't have working hybrid_fragmented movflags). If you experience stutter in the mp4 file then update your FFmpeg to at least version 8 or record to a mkv file\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "your FFmpeg version is known to be buggy (it doesn't have working hybrid_fragmented movflags). If you experience stutter in the mp4 file then update your FFmpeg to at least version 8 or record to a mkv file");
     }
 }
 
@@ -1036,7 +1037,7 @@ static RecordingStartResult start_recording_create_streams(const char *filename,
 
     const int open_ret = avio_open(&av_format_context->pb, filename, AVIO_FLAG_WRITE);
     if(open_ret < 0) {
-        fprintf(stderr, "gsr error: start_recording_create_streams: could not open '%s': %s\n", filename, av_error_to_string(open_ret));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "start_recording_create_streams: could not open '%s': %s", filename, av_error_to_string(open_ret));
         return result;
     }
 
@@ -1049,7 +1050,7 @@ static RecordingStartResult start_recording_create_streams(const char *filename,
     const int header_write_ret = avformat_write_header(av_format_context, &options);
     av_dict_free(&options);
     if(header_write_ret < 0) {
-        fprintf(stderr, "gsr error: start_recording_create_streams: error occurred when writing header to output file: %s\n", av_error_to_string(header_write_ret));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "start_recording_create_streams: error occurred when writing header to output file: %s", av_error_to_string(header_write_ret));
         avio_close(av_format_context->pb);
         avformat_free_context(av_format_context);
         return result;
@@ -1085,11 +1086,11 @@ static std::string create_new_recording_filepath_from_timestamp(std::string dire
     if(date_folders) {
         std::string output_folder = directory + '/' + get_date_only_str();
         if(create_directory_recursive(&output_folder[0]) != 0)
-            fprintf(stderr, "gsr error: failed to create directory: %s\n", output_folder.c_str());
+            gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create directory: %s", output_folder.c_str());
         output_filepath = output_folder + "/" + filename_prefix + "_" + get_time_only_str() + "." + file_extension;
     } else {
         if(create_directory_recursive(&directory[0]) != 0)
-            fprintf(stderr, "gsr error: failed to create directory: %s\n", directory.c_str());
+            gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create directory: %s", directory.c_str());
         output_filepath = directory + "/" + filename_prefix + "_" + get_date_str() + "." + file_extension;
     }
     return output_filepath;
@@ -1117,14 +1118,14 @@ static bool save_replay_async(AVCodecContext *video_codec_context, int video_str
     pthread_mutex_unlock(&encoder->replay_mutex);
     if(!cloned_replay_buffer) {
         // TODO: Return this error to mark the replay as failed
-        fprintf(stderr, "gsr error: failed to save replay: failed to clone replay buffer\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to save replay: failed to clone replay buffer");
         return false;
     }
 
     const gsr_replay_buffer_iterator search_start_iterator = current_save_replay_seconds == save_replay_seconds_full ? gsr_replay_buffer_iterator{0, 0} : gsr_replay_buffer_find_packet_index_by_time_passed(cloned_replay_buffer, current_save_replay_seconds);
     const gsr_replay_buffer_iterator video_start_iterator = gsr_replay_buffer_find_keyframe(cloned_replay_buffer, search_start_iterator, video_stream_index, false);
     if(video_start_iterator.packet_index == (size_t)-1) {
-        fprintf(stderr, "gsr error: failed to save replay: failed to find a video keyframe. perhaps replay was saved too fast, before anything has been recorded\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to save replay: failed to find a video keyframe. perhaps replay was saved too fast, before anything has been recorded");
         pthread_mutex_lock(&encoder->replay_mutex);
         gsr_replay_buffer_destroy(cloned_replay_buffer);
         pthread_mutex_unlock(&encoder->replay_mutex);
@@ -1166,13 +1167,13 @@ static bool save_replay_async(AVCodecContext *video_codec_context, int video_str
             }
 
             if(!replay_packet) {
-                fprintf(stderr, "gsr error: save_replay_async: no replay packet\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "save_replay_async: no replay packet");
                 success = false;
                 break;
             }
 
             if(!replay_packet->data && !replay_packet_data) {
-                fprintf(stderr, "gsr error: save_replay_async: no replay packet data\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "save_replay_async: no replay packet data");
                 success = false;
                 break;
             }
@@ -1198,7 +1199,7 @@ static bool save_replay_async(AVCodecContext *video_codec_context, int video_str
             } else {
                 RecordingStartAudio *recording_start_audio = get_recording_start_item_by_stream_index(recording_start_result, av_packet.stream_index);
                 if(!recording_start_audio) {
-                    fprintf(stderr, "gsr error: save_replay_async: failed to find audio stream by index: %d\n", av_packet.stream_index);
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "save_replay_async: failed to find audio stream by index: %d", av_packet.stream_index);
                     free(replay_packet_data);
                     continue;
                 }
@@ -1218,7 +1219,7 @@ static bool save_replay_async(AVCodecContext *video_codec_context, int video_str
 
             const int ret = av_write_frame(recording_start_result.av_format_context, &av_packet);
             if(ret < 0)
-                fprintf(stderr, "gsr error: Failed to write frame index %d to muxer, reason: %s (%d)\n", av_packet.stream_index, av_error_to_string(ret), ret);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "Failed to write frame index %d to muxer, reason: %s (%d)", av_packet.stream_index, av_error_to_string(ret), ret);
 
             free(replay_packet_data);
 
@@ -1388,7 +1389,7 @@ static int init_filter_graph(AVCodecContext* audio_codec_context, AVFilterGraph*
     snprintf(args, sizeof(args), "inputs=%d:normalize=%s", (int)num_sources, normalize ? "true" : "false");
 #else
     snprintf(args, sizeof(args), "inputs=%d", (int)num_sources);
-    fprintf(stderr, "gsr warning: your ffmpeg version doesn't support disabling normalizing of mixed audio. Volume might be lower than expected\n");
+    gsr_log(GSR_LOG_LEVEL_WARNING, "your ffmpeg version doesn't support disabling normalizing of mixed audio. Volume might be lower than expected");
 #endif
 
     err = avfilter_graph_create_filter(&mix_ctx, mix_filter, "amix", args, NULL, filter_graph);
@@ -1807,7 +1808,7 @@ static WindowingSetup setup_windowing(bool setup_egl) {
     setup.dpy = XOpenDisplay(nullptr);
     if (!setup.dpy) {
         wayland = true;
-        fprintf(stderr, "gsr warning: failed to connect to the X server. Assuming wayland is running without Xwayland\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "failed to connect to the X server. Assuming wayland is running without Xwayland");
     }
 
     XSetErrorHandler(x11_error_handler);
@@ -1820,13 +1821,13 @@ static WindowingSetup setup_windowing(bool setup_egl) {
         // Disable prime-run and similar options as it doesn't work, the monitor to capture has to be run on the same device.
         // This is fine on wayland since nvidia uses drm interface there and the monitor query checks the monitors connected
         // to the drm device.
-        fprintf(stderr, "gsr warning: use of prime-run on X11 is not supported. Disabling prime-run\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "use of prime-run on X11 is not supported. Disabling prime-run");
         disable_prime_run();
     }
 
     setup.window = gsr_window_create(setup.dpy, wayland);
     if(!setup.window) {
-        fprintf(stderr, "gsr error: failed to create window\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create window");
         _exit(1);
     }
 
@@ -1834,7 +1835,7 @@ static WindowingSetup setup_windowing(bool setup_egl) {
 
     if(setup_egl) {
         if(!gsr_egl_load(&setup.egl, setup.window, false, false)) {
-            fprintf(stderr, "gsr error: failed to load opengl\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "failed to load opengl");
             _exit(22);
         }
 
@@ -1842,7 +1843,7 @@ static WindowingSetup setup_windowing(bool setup_egl) {
         if(monitor_capture_use_drm(setup.window, setup.egl.gpu_info.vendor)) {
             // TODO: Allow specifying another card, and in other places
             if(!gsr_get_valid_card_path(&setup.egl, setup.egl.card_path, true)) {
-                fprintf(stderr, "gsr error: no /dev/dri/cardX device found. Make sure that you have at least one monitor connected\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "no /dev/dri/cardX device found. Make sure that you have at least one monitor connected");
                 setup.list_monitors = false;
             }
         } else {
@@ -1989,13 +1990,13 @@ static std::string validate_monitor_get_valid(const gsr_egl *egl, const char* wi
             capture_source_result = data.output_name;
             free(data.output_name);
         } else {
-            fprintf(stderr, "gsr error: no usable output found\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "no usable output found");
             _exit(51);
         }
     } else if(capture_use_drm || (strcmp(capture_source_result.c_str(), "screen-direct") != 0 && strcmp(capture_source_result.c_str(), "screen-direct-force") != 0)) {
         gsr_monitor gmon;
         if(!get_monitor_by_name(egl, connection_type, capture_source_result.c_str(), &gmon)) {
-            fprintf(stderr, "gsr error: display \"%s\" not found, expected one of:\n", capture_source_result.c_str());
+            gsr_log(GSR_LOG_LEVEL_ERROR, "display \"%s\" not found, expected one of:", capture_source_result.c_str());
             fprintf(stderr, "  \"screen\"\n");
             if(!capture_use_drm)
                 fprintf(stderr, "  \"screen-direct\"\n");
@@ -2088,7 +2089,7 @@ static gsr_capture* create_monitor_capture(const args_parser &arg_parser, gsr_eg
         const bool direct_capture = strcmp(capture_source.name.c_str(), "screen-direct") == 0 || strcmp(capture_source.name.c_str(), "screen-direct-force") == 0;
         if(direct_capture) {
             capture_source_real = "screen";
-            fprintf(stderr, "gsr warning: %s capture option is not recommended unless you use G-SYNC as Nvidia has driver issues that can cause your system or games to freeze/crash.\n", capture_source.name.c_str());
+            gsr_log(GSR_LOG_LEVEL_WARNING, "%s capture option is not recommended unless you use G-SYNC as Nvidia has driver issues that can cause your system or games to freeze/crash.", capture_source.name.c_str());
         }
 
         gsr_capture_nvfbc_params nvfbc_params;
@@ -2119,7 +2120,7 @@ static std::string region_get_data(gsr_egl *egl, vec2i *region_size, vec2i *regi
     if(window.empty()) {
         const bool is_x11 = gsr_window_get_display_server(egl->window) == GSR_DISPLAY_SERVER_X11;
         const gsr_connection_type connection_type = is_x11 ? GSR_CONNECTION_X11 : GSR_CONNECTION_WAYLAND;
-        fprintf(stderr, "gsr error: the region %dx%d+%d+%d doesn't match any monitor. Available monitors and their regions:\n", region_size->x, region_size->y, region_position->x, region_position->y);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "the region %dx%d+%d+%d doesn't match any monitor. Available monitors and their regions:", region_size->x, region_size->y, region_position->x, region_position->y);
 
         MonitorOutputCallbackUserdata userdata;
         userdata.window = egl->window;
@@ -2151,12 +2152,12 @@ static gsr_capture* create_capture_impl(const args_parser &arg_parser, gsr_egl *
     gsr_capture *capture = nullptr;
     if(capture_source.type == GSR_CAPTURE_SOURCE_TYPE_FOCUSED_WINDOW) {
         if(wayland) {
-            fprintf(stderr, "gsr error: GPU Screen Recorder window capture only works in a pure X11 session. Xwayland is not supported. You can record a monitor instead on wayland\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "GPU Screen Recorder window capture only works in a pure X11 session. Xwayland is not supported. You can record a monitor instead on wayland");
             _exit(2);
         }
 
         if(arg_parser.output_resolution.x <= 0 || arg_parser.output_resolution.y <= 0) {
-            fprintf(stderr, "gsr error: invalid value for option -s '%dx%d' when using -w focused option. expected width and height to be greater than 0\n", arg_parser.output_resolution.x, arg_parser.output_resolution.y);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "invalid value for option -s '%dx%d' when using -w focused option. expected width and height to be greater than 0", arg_parser.output_resolution.x, arg_parser.output_resolution.y);
             args_parser_print_usage();
             _exit(1);
         }
@@ -2166,7 +2167,7 @@ static gsr_capture* create_capture_impl(const args_parser &arg_parser, gsr_egl *
 #ifdef GSR_PORTAL
         // Desktop portal capture on x11 doesn't seem to be hardware accelerated
         if(!wayland) {
-            fprintf(stderr, "gsr error: desktop portal capture is not supported on X11\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "desktop portal capture is not supported on X11");
             _exit(1);
         }
 
@@ -2181,7 +2182,7 @@ static gsr_capture* create_capture_impl(const args_parser &arg_parser, gsr_egl *
         if(!capture)
             _exit(1);
 #else
-        fprintf(stderr, "gsr error: option '-w portal' used but GPU Screen Recorder was compiled without desktop portal support. Please recompile GPU Screen recorder with the -Dportal=true option\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "option '-w portal' used but GPU Screen Recorder was compiled without desktop portal support. Please recompile GPU Screen recorder with the -Dportal=true option");
         _exit(2);
 #endif
     } else if(capture_source.type == GSR_CAPTURE_SOURCE_TYPE_REGION) {
@@ -2209,7 +2210,7 @@ static gsr_capture* create_capture_impl(const args_parser &arg_parser, gsr_egl *
             _exit(1);
     } else {
         if(wayland) {
-            fprintf(stderr, "gsr error: GPU Screen Recorder window capture only works in a pure X11 session. Xwayland is not supported. You can record a monitor instead on wayland or use -w portal option which supports window capture if your wayland compositor supports window capture\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "GPU Screen Recorder window capture only works in a pure X11 session. Xwayland is not supported. You can record a monitor instead on wayland or use -w portal option which supports window capture if your wayland compositor supports window capture");
             _exit(2);
         }
     }
@@ -2280,7 +2281,7 @@ static std::vector<VideoSource> create_video_sources(const args_parser &arg_pars
     for(VideoSource &video_source : video_sources) {
         int capture_result = gsr_capture_start(video_source.capture, &video_source.metadata);
         if(capture_result != 0) {
-            fprintf(stderr, "gsr error: gsr_capture_start failed\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_start failed");
             _exit(capture_result);
         }
     }
@@ -2411,7 +2412,7 @@ static void capture_image_to_file(args_parser &arg_parser, gsr_egl *egl, gsr_win
 
     gsr_image_writer image_writer;
     if(!gsr_image_writer_init_opengl(&image_writer, egl, video_size.x, video_size.y)) {
-        fprintf(stderr, "gsr error: capture_image_to_file: gsr_image_write_gl_init failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "capture_image_to_file: gsr_image_write_gl_init failed");
         _exit(1);
     }
 
@@ -2428,7 +2429,7 @@ static void capture_image_to_file(args_parser &arg_parser, gsr_egl *egl, gsr_win
 
     gsr_color_conversion color_conversion;
     if(gsr_color_conversion_init(&color_conversion, &color_conversion_params) != 0) {
-        fprintf(stderr, "gsr error: capture_image_to_file: failed to create color conversion\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "capture_image_to_file: failed to create color conversion");
         _exit(1);
     }
 
@@ -2456,7 +2457,7 @@ static void capture_image_to_file(args_parser &arg_parser, gsr_egl *egl, gsr_win
 
         if(kms_client_initialized) {
             if(gsr_kms_client_get_kms(&kms_client, &kms_response) != 0)
-                fprintf(stderr, "gsr error: failed to get kms, error: %d (%s)\n", kms_response.result, kms_response.err_msg);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "failed to get kms, error: %d (%s)", kms_response.result, kms_response.err_msg);
         }
 
         should_stop_error = false;
@@ -2507,7 +2508,7 @@ static void capture_image_to_file(args_parser &arg_parser, gsr_egl *egl, gsr_win
 
     if(!should_stop_error) {
         if(!gsr_image_writer_write_to_file(&image_writer, arg_parser.filename, image_format, image_quality)) {
-            fprintf(stderr, "gsr error: capture_image_to_file: failed to write opengl texture to image output file %s\n", arg_parser.filename);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "capture_image_to_file: failed to write opengl texture to image output file %s", arg_parser.filename);
             _exit(1);
         }
 
@@ -2548,7 +2549,7 @@ static void match_app_audio_input_to_available_apps(const std::vector<AudioInput
         }
 
         if(!match) {
-            fprintf(stderr, "gsr warning: no audio application with the name \"%s\" was found, expected one of the following:\n", request_audio_input.name.c_str());
+            gsr_log(GSR_LOG_LEVEL_WARNING, "no audio application with the name \"%s\" was found, expected one of the following:", request_audio_input.name.c_str());
             for(const std::string &app_name : app_audio_names) {
                 fprintf(stderr, "  * %s\n", app_name.c_str());
             }
@@ -2625,14 +2626,14 @@ static std::vector<MergedAudioInputs> parse_audio_inputs(const AudioDevices &aud
 
             if(request_audio_input.name == "default_output") {
                 if(audio_devices.default_output.empty()) {
-                    fprintf(stderr, "gsr error: -a default_output was specified but no default audio output is specified in the audio server\n");
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "-a default_output was specified but no default audio output is specified in the audio server");
                     _exit(2);
                 }
                 match = true;
                 audio_track_description.devices.push_back("Default output");
             } else if(request_audio_input.name == "default_input") {
                 if(audio_devices.default_input.empty()) {
-                    fprintf(stderr, "gsr error: -a default_input was specified but no default audio input is specified in the audio server\n");
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "-a default_input was specified but no default audio input is specified in the audio server");
                     _exit(2);
                 }
                 match = true;
@@ -2646,7 +2647,7 @@ static std::vector<MergedAudioInputs> parse_audio_inputs(const AudioDevices &aud
             }
 
             if(!match) {
-                fprintf(stderr, "gsr error: Audio device '%s' is not a valid audio device, expected one of:\n", request_audio_input.name.c_str());
+                gsr_log(GSR_LOG_LEVEL_ERROR, "Audio device '%s' is not a valid audio device, expected one of:", request_audio_input.name.c_str());
                 if(!audio_devices.default_output.empty())
                     fprintf(stderr, "    default_output (Default output)\n");
                 if(!audio_devices.default_input.empty())
@@ -2783,7 +2784,7 @@ static void parse_capture_source_options(const std::string &capture_source_str, 
             sub += 2;
             size -= 2;
             if(!string_to_int(sub, size, &capture_source.pos.x)) {
-                fprintf(stderr, "gsr error: invalid capture target value for option x: \"%.*s\", expected a number\n", (int)size, sub);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option x: \"%.*s\", expected a number", (int)size, sub);
                 _exit(1);
             }
         } else if(string_starts_with(sub, size, "y=")) {
@@ -2791,7 +2792,7 @@ static void parse_capture_source_options(const std::string &capture_source_str, 
             sub += 2;
             size -= 2;
             if(!string_to_int(sub, size, &capture_source.pos.y)) {
-                fprintf(stderr, "gsr error: invalid capture target value for option y: \"%.*s\", expected a number\n", (int)size, sub);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option y: \"%.*s\", expected a number", (int)size, sub);
                 _exit(1);
             }
 
@@ -2800,7 +2801,7 @@ static void parse_capture_source_options(const std::string &capture_source_str, 
             sub += 6;
             size -= 6;
             if(!string_to_int(sub, size, &capture_source.size.x)) {
-                fprintf(stderr, "gsr error: invalid capture target value for option width: \"%.*s\", expected a number\n", (int)size, sub);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option width: \"%.*s\", expected a number", (int)size, sub);
                 _exit(1);
             }
         } else if(string_starts_with(sub, size, "height=")) {
@@ -2808,28 +2809,28 @@ static void parse_capture_source_options(const std::string &capture_source_str, 
             sub += 7;
             size -= 7;
             if(!string_to_int(sub, size, &capture_source.size.y)) {
-                fprintf(stderr, "gsr error: invalid capture target value for option height: \"%.*s\", expected a number\n", (int)size, sub);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option height: \"%.*s\", expected a number", (int)size, sub);
                 _exit(1);
             }
         } else if(string_starts_with(sub, size, "halign=")) {
             sub += 7;
             size -= 7;
             if(!string_to_capture_alignment(sub, size, &capture_source.halign)) {
-                fprintf(stderr, "gsr error: invalid capture target value for option halign: \"%.*s\", expected a \"start\", \"center\" or \"end\"\n", (int)size, sub);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option halign: \"%.*s\", expected a \"start\", \"center\" or \"end\"", (int)size, sub);
                 _exit(1);
             }
         } else if(string_starts_with(sub, size, "valign=")) {
             sub += 7;
             size -= 7;
             if(!string_to_capture_alignment(sub, size, &capture_source.valign)) {
-                fprintf(stderr, "gsr error: invalid capture target value for option valign: \"%.*s\", expected a \"start\", \"center\" or \"end\"\n", (int)size, sub);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option valign: \"%.*s\", expected a \"start\", \"center\" or \"end\"", (int)size, sub);
                 _exit(1);
             }
         } else if(string_starts_with(sub, size, "pixfmt=")) {
             sub += 7;
             size -= 7;
             if(!string_to_v4l2_pixfmt(sub, size, &capture_source.v4l2_pixfmt)) {
-                fprintf(stderr, "gsr error: invalid v4l2 pixfmt value for option pixfmt: \"%.*s\", expected a \"auto\", \"yuyv\" or \"mjpeg\"\n", (int)size, sub);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid v4l2 pixfmt value for option pixfmt: \"%.*s\", expected a \"auto\", \"yuyv\" or \"mjpeg\"", (int)size, sub);
                 _exit(1);
             }
         } else if(string_starts_with(sub, size, "hflip=")) {
@@ -2837,7 +2838,7 @@ static void parse_capture_source_options(const std::string &capture_source_str, 
             size -= 6;
             bool hflip = false;
             if(!string_to_bool(sub, size, &hflip)) {
-                fprintf(stderr, "gsr error: invalid bool value for option hflip: \"%.*s\", expected a \"true\" or \"false\"\n", (int)size, sub);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid bool value for option hflip: \"%.*s\", expected a \"true\" or \"false\"", (int)size, sub);
                 _exit(1);
             }
 
@@ -2848,7 +2849,7 @@ static void parse_capture_source_options(const std::string &capture_source_str, 
             size -= 6;
             bool vflip = false;
             if(!string_to_bool(sub, size, &vflip)) {
-                fprintf(stderr, "gsr error: invalid bool value for option vflip: \"%.*s\", expected a \"true\" or \"false\"\n", (int)size, sub);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid bool value for option vflip: \"%.*s\", expected a \"true\" or \"false\"", (int)size, sub);
                 _exit(1);
             }
 
@@ -2858,25 +2859,25 @@ static void parse_capture_source_options(const std::string &capture_source_str, 
             sub += 11;
             size -= 11;
             if(!string_to_int(sub, size, &capture_source.camera_fps)) {
-                fprintf(stderr, "gsr error: invalid capture target value for option camera_fps: \"%.*s\", expected a number\n", (int)size, sub);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option camera_fps: \"%.*s\", expected a number", (int)size, sub);
                 _exit(1);
             }
         } else if(string_starts_with(sub, size, "camera_width=")) {
             sub += 13;
             size -= 13;
             if(!string_to_int(sub, size, &capture_source.camera_resolution.x)) {
-                fprintf(stderr, "gsr error: invalid capture target value for option camera_width: \"%.*s\", expected a number\n", (int)size, sub);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option camera_width: \"%.*s\", expected a number", (int)size, sub);
                 _exit(1);
             }
         } else if(string_starts_with(sub, size, "camera_height=")) {
             sub += 14;
             size -= 14;
             if(!string_to_int(sub, size, &capture_source.camera_resolution.y)) {
-                fprintf(stderr, "gsr error: invalid capture target value for option camera_height: \"%.*s\", expected a number\n", (int)size, sub);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target value for option camera_height: \"%.*s\", expected a number", (int)size, sub);
                 _exit(1);
             }
         } else {
-            fprintf(stderr, "gsr error: invalid capture target option \"%.*s\", expected x, y, width, height, halign, valign, pixfmt, hflip, vflip, camera_fps, camera_width or camera_height\n", (int)size, sub);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "invalid capture target option \"%.*s\", expected x, y, width, height, halign, valign, pixfmt, hflip, vflip, camera_fps, camera_width or camera_height", (int)size, sub);
             _exit(1);
         }
 
@@ -2922,7 +2923,7 @@ static std::vector<CaptureSource> parse_capture_source_arg(const char *capture_s
 
         if(capture_source.type == GSR_CAPTURE_SOURCE_TYPE_WINDOW) {
             if(!string_to_int(capture_source.name.c_str(), capture_source.name.size(), &capture_source.window_id)) {
-                fprintf(stderr, "gsr error: invalid window number %s\n", capture_source.name.c_str());
+                gsr_log(GSR_LOG_LEVEL_ERROR, "invalid window number %s", capture_source.name.c_str());
                 args_parser_print_usage();
                 _exit(1);
             }
@@ -2998,7 +2999,7 @@ static void validate_merged_audio_inputs_app_audio(const std::vector<MergedAudio
         match_app_audio_input_to_available_apps(merged_audio_input.audio_inputs, app_audio_names);
 
         if(num_app_audio > 0 && num_app_inverted_audio > 0) {
-            fprintf(stderr, "gsr error: argument -a was provided with both app: and app-inverse:, only one of them can be used for one audio track\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "argument -a was provided with both app: and app-inverse:, only one of them can be used for one audio track");
             _exit(2);
         }
     }
@@ -3010,7 +3011,7 @@ static gsr_audio_codec select_audio_codec_with_fallback(gsr_audio_codec audio_co
             if(file_extension == "webm") {
                 //audio_codec_to_use = "opus";
                 audio_codec = GSR_AUDIO_CODEC_OPUS;
-                fprintf(stderr, "gsr warning: .webm files only support opus audio codec, changing audio codec from aac to opus\n");
+                gsr_log(GSR_LOG_LEVEL_WARNING, ".webm files only support opus audio codec, changing audio codec from aac to opus");
             }
             break;
         }
@@ -3018,7 +3019,7 @@ static gsr_audio_codec select_audio_codec_with_fallback(gsr_audio_codec audio_co
             if(file_extension != "mp4" && file_extension != "mkv" && file_extension != "webm" && file_extension != "ts" && file_extension != "whip") {
                 //audio_codec_to_use = "aac";
                 audio_codec = GSR_AUDIO_CODEC_AAC;
-                fprintf(stderr, "gsr warning: opus audio codec is only supported by .mp4, .mkv, .webm and .ts files, falling back to aac instead\n");
+                gsr_log(GSR_LOG_LEVEL_WARNING, "opus audio codec is only supported by .mp4, .mkv, .webm and .ts files, falling back to aac instead");
             }
             break;
         }
@@ -3027,16 +3028,16 @@ static gsr_audio_codec select_audio_codec_with_fallback(gsr_audio_codec audio_co
             if(file_extension == "webm") {
                 //audio_codec_to_use = "opus";
                 audio_codec = GSR_AUDIO_CODEC_OPUS;
-                fprintf(stderr, "gsr warning: .webm files only support opus audio codec, changing audio codec from flac to opus\n");
+                gsr_log(GSR_LOG_LEVEL_WARNING, ".webm files only support opus audio codec, changing audio codec from flac to opus");
             } else if(file_extension != "mp4" && file_extension != "mkv") {
                 //audio_codec_to_use = "aac";
                 audio_codec = GSR_AUDIO_CODEC_AAC;
-                fprintf(stderr, "gsr warning: flac audio codec is only supported by .mp4 and .mkv files, falling back to aac instead\n");
+                gsr_log(GSR_LOG_LEVEL_WARNING, "flac audio codec is only supported by .mp4 and .mkv files, falling back to aac instead");
             } else if(uses_amix) {
                 // TODO: remove this? is it true anymore?
                 //audio_codec_to_use = "opus";
                 audio_codec = GSR_AUDIO_CODEC_OPUS;
-                fprintf(stderr, "gsr warning: flac audio codec is not supported when mixing audio sources, falling back to opus instead\n");
+                gsr_log(GSR_LOG_LEVEL_WARNING, "flac audio codec is not supported when mixing audio sources, falling back to opus instead");
             }
             break;
         }
@@ -3197,21 +3198,14 @@ static void print_codec_error(gsr_video_codec video_codec) {
         video_codec = GSR_VIDEO_CODEC_H264;
 
     const char *video_codec_name = video_codec_to_string(video_codec);
-    fprintf(stderr, "gsr error: your gpu does not support '%s' video codec. If you are sure that your gpu does support '%s' video encoding and you are using an AMD/Intel GPU,\n"
-        "  then make sure you have installed the GPU specific vaapi packages (intel-media-driver, libva-intel-driver, libva-mesa-driver and linux-firmware).\n"
-        "  It's also possible that your distro has disabled hardware accelerated video encoding for '%s' video codec.\n"
-        "  This may be the case on corporate distros such as Manjaro, Fedora or OpenSUSE.\n"
-        "  You can test this by running 'vainfo | grep VAEntrypointEncSlice' to see if it matches any H264/HEVC/AV1/VP8/VP9 profile.\n"
-        "  On such distros, you need to manually install mesa from source to enable H264/HEVC hardware acceleration, or use a more user friendly distro. Alternatively record with AV1 if supported by your GPU.\n"
-        "  You can alternatively use the flatpak version of GPU Screen Recorder (https://flathub.org/apps/com.dec05eba.gpu_screen_recorder) which bypasses system issues with patented H264/HEVC codecs.\n"
-        "  If your GPU doesn't support hardware accelerated video encoding then you can use '-fallback-cpu-encoding yes' option to encode with your cpu instead.\n", video_codec_name, video_codec_name, video_codec_name);
+    gsr_log(GSR_LOG_LEVEL_ERROR, "your gpu does not support '%s' video codec. If you are sure that your gpu does support '%s' video encoding and you are using an AMD/Intel GPU,\n  then make sure you have installed the GPU specific vaapi packages (intel-media-driver, libva-intel-driver, libva-mesa-driver and linux-firmware).\n  It's also possible that your distro has disabled hardware accelerated video encoding for '%s' video codec.\n  This may be the case on corporate distros such as Manjaro, Fedora or OpenSUSE.\n  You can test this by running 'vainfo | grep VAEntrypointEncSlice' to see if it matches any H264/HEVC/AV1/VP8/VP9 profile.\n  On such distros, you need to manually install mesa from source to enable H264/HEVC hardware acceleration, or use a more user friendly distro. Alternatively record with AV1 if supported by your GPU.\n  You can alternatively use the flatpak version of GPU Screen Recorder (https://flathub.org/apps/com.dec05eba.gpu_screen_recorder) which bypasses system issues with patented H264/HEVC codecs.\n  If your GPU doesn't support hardware accelerated video encoding then you can use '-fallback-cpu-encoding yes' option to encode with your cpu instead.", video_codec_name, video_codec_name, video_codec_name);
 }
 
 static void force_cpu_encoding(args_parser *args_parser) {
     args_parser->video_codec = GSR_VIDEO_CODEC_H264;
     args_parser->video_encoder = GSR_VIDEO_ENCODER_HW_CPU;
     if(args_parser->bitrate_mode == GSR_BITRATE_MODE_VBR) {
-        fprintf(stderr, "gsr warning: bitrate mode has been forcefully set to qp because software encoding option doesn't support vbr option\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "bitrate mode has been forcefully set to qp because software encoding option doesn't support vbr option");
         args_parser->bitrate_mode = GSR_BITRATE_MODE_QP;
     }
 }
@@ -3224,9 +3218,9 @@ static const AVCodec* pick_video_codec(gsr_egl *egl, args_parser *args_parser, b
     if(!video_codec_f && use_fallback_codec && args_parser->video_encoder != GSR_VIDEO_ENCODER_HW_CPU) {
         switch(args_parser->video_codec) {
             case GSR_VIDEO_CODEC_H264: {
-                fprintf(stderr, "gsr error: selected video codec h264 is not supported by your hardware\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "selected video codec h264 is not supported by your hardware");
                 if(args_parser->fallback_cpu_encoding) {
-                    fprintf(stderr, "gsr warning: gpu encoding is not available on your system, trying cpu encoding instead because -fallback-cpu-encoding is enabled. Install the proper vaapi drivers on your system (if supported) if you experience performance issues\n");
+                    gsr_log(GSR_LOG_LEVEL_WARNING, "gpu encoding is not available on your system, trying cpu encoding instead because -fallback-cpu-encoding is enabled. Install the proper vaapi drivers on your system (if supported) if you experience performance issues");
                     force_cpu_encoding(args_parser);
                 }
                 break;
@@ -3234,14 +3228,14 @@ static const AVCodec* pick_video_codec(gsr_egl *egl, args_parser *args_parser, b
             case GSR_VIDEO_CODEC_HEVC:
             case GSR_VIDEO_CODEC_HEVC_HDR:
             case GSR_VIDEO_CODEC_HEVC_10BIT: {
-                fprintf(stderr, "gsr warning: selected video codec hevc is not supported by your hardware, trying h264 instead\n");
+                gsr_log(GSR_LOG_LEVEL_WARNING, "selected video codec hevc is not supported by your hardware, trying h264 instead");
                 args_parser->video_codec = GSR_VIDEO_CODEC_H264;
                 return pick_video_codec(egl, args_parser, true, low_power, supported_video_codecs);
             }
             case GSR_VIDEO_CODEC_AV1:
             case GSR_VIDEO_CODEC_AV1_HDR:
             case GSR_VIDEO_CODEC_AV1_10BIT: {
-                fprintf(stderr, "gsr warning: selected video codec av1 is not supported by your hardware, trying h264 instead\n");
+                gsr_log(GSR_LOG_LEVEL_WARNING, "selected video codec av1 is not supported by your hardware, trying h264 instead");
                 args_parser->video_codec = GSR_VIDEO_CODEC_H264;
                 return pick_video_codec(egl, args_parser, true, low_power, supported_video_codecs);
             }
@@ -3250,11 +3244,11 @@ static const AVCodec* pick_video_codec(gsr_egl *egl, args_parser *args_parser, b
                 // TODO: Cant fallback to other codec because webm only supports vp8/vp9
                 break;
             case GSR_VIDEO_CODEC_H264_VULKAN: {
-                fprintf(stderr, "gsr warning: selected video codec h264_vulkan is not supported by your hardware, trying h264 instead\n");
+                gsr_log(GSR_LOG_LEVEL_WARNING, "selected video codec h264_vulkan is not supported by your hardware, trying h264 instead");
                 args_parser->video_codec = GSR_VIDEO_CODEC_H264;
                 // Need to do a query again because this time it's without vulkan
                 if(!get_supported_video_codecs(egl, args_parser->video_codec, false, true, supported_video_codecs)) {
-                    fprintf(stderr, "gsr error: failed to query for supported video codecs\n");
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "failed to query for supported video codecs");
                     print_codec_error(args_parser->video_codec);
                     _exit(11);
                 }
@@ -3263,11 +3257,11 @@ static const AVCodec* pick_video_codec(gsr_egl *egl, args_parser *args_parser, b
             case GSR_VIDEO_CODEC_HEVC_VULKAN:
             case GSR_VIDEO_CODEC_HEVC_HDR_VULKAN:
             case GSR_VIDEO_CODEC_HEVC_10BIT_VULKAN: {
-                fprintf(stderr, "gsr warning: selected video codec hevc_vulkan is not supported by your hardware, trying hevc instead\n");
+                gsr_log(GSR_LOG_LEVEL_WARNING, "selected video codec hevc_vulkan is not supported by your hardware, trying hevc instead");
                 args_parser->video_codec = GSR_VIDEO_CODEC_HEVC;
                 // Need to do a query again because this time it's without vulkan
                 if(!get_supported_video_codecs(egl, args_parser->video_codec, false, true, supported_video_codecs)) {
-                    fprintf(stderr, "gsr error: failed to query for supported video codecs\n");
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "failed to query for supported video codecs");
                     print_codec_error(args_parser->video_codec);
                     _exit(11);
                 }
@@ -3276,11 +3270,11 @@ static const AVCodec* pick_video_codec(gsr_egl *egl, args_parser *args_parser, b
             case GSR_VIDEO_CODEC_AV1_VULKAN:
             case GSR_VIDEO_CODEC_AV1_HDR_VULKAN:
             case GSR_VIDEO_CODEC_AV1_10BIT_VULKAN: {
-                fprintf(stderr, "gsr warning: selected video codec av1_vulkan is not supported by your hardware, trying av1 instead\n");
+                gsr_log(GSR_LOG_LEVEL_WARNING, "selected video codec av1_vulkan is not supported by your hardware, trying av1 instead");
                 args_parser->video_codec = GSR_VIDEO_CODEC_AV1;
                 // Need to do a query again because this time it's without vulkan
                 if(!get_supported_video_codecs(egl, args_parser->video_codec, false, true, supported_video_codecs)) {
-                    fprintf(stderr, "gsr error: failed to query for supported video codecs\n");
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "failed to query for supported video codecs");
                     print_codec_error(args_parser->video_codec);
                     _exit(11);
                 }
@@ -3304,16 +3298,14 @@ static const AVCodec* pick_video_codec(gsr_egl *egl, args_parser *args_parser, b
 /* Returns -1 if none is available */
 static gsr_video_codec select_appropriate_video_codec_automatically(vec2i video_size, const gsr_supported_video_codecs *supported_video_codecs) {
     if(supported_video_codecs->h264.supported && codec_supports_resolution(supported_video_codecs->h264.max_resolution, video_size)) {
-        fprintf(stderr, "gsr info: using h264 encoder because a codec was not specified\n");
+        gsr_log(GSR_LOG_LEVEL_INFO, "using h264 encoder because a codec was not specified");
         return GSR_VIDEO_CODEC_H264;
     } else if(supported_video_codecs->hevc.supported && codec_supports_resolution(supported_video_codecs->hevc.max_resolution, video_size)) {
-        fprintf(stderr, "gsr info: using hevc encoder because a codec was not specified and h264 supported max resolution (%dx%d) is less than the capture resolution (%dx%d)\n",
-            supported_video_codecs->h264.max_resolution.x, supported_video_codecs->h264.max_resolution.y,
+        gsr_log(GSR_LOG_LEVEL_INFO, "using hevc encoder because a codec was not specified and h264 supported max resolution (%dx%d) is less than the capture resolution (%dx%d)", supported_video_codecs->h264.max_resolution.x, supported_video_codecs->h264.max_resolution.y,
             video_size.x, video_size.y);
         return GSR_VIDEO_CODEC_HEVC;
     } else if(supported_video_codecs->av1.supported && codec_supports_resolution(supported_video_codecs->av1.max_resolution, video_size)) {
-        fprintf(stderr, "gsr info: using av1 encoder because a codec was not specified and hevc supported max resolution (%dx%d) is less than the capture resolution (%dx%d)\n",
-            supported_video_codecs->hevc.max_resolution.x, supported_video_codecs->hevc.max_resolution.y,
+        gsr_log(GSR_LOG_LEVEL_INFO, "using av1 encoder because a codec was not specified and hevc supported max resolution (%dx%d) is less than the capture resolution (%dx%d)", supported_video_codecs->hevc.max_resolution.x, supported_video_codecs->hevc.max_resolution.y,
             video_size.x, video_size.y);
         return GSR_VIDEO_CODEC_AV1;
     } else {
@@ -3335,19 +3327,19 @@ static const AVCodec* select_video_codec_with_fallback(vec2i video_size, args_pa
     const bool video_codec_auto = args_parser->video_codec == (gsr_video_codec)GSR_VIDEO_CODEC_AUTO;
     if(video_codec_auto) {
         if(strcmp(file_extension, "webm") == 0) {
-            fprintf(stderr, "gsr info: using vp8 encoder because a codec was not specified and the file extension is .webm\n");
+            gsr_log(GSR_LOG_LEVEL_INFO, "using vp8 encoder because a codec was not specified and the file extension is .webm");
             args_parser->video_codec = GSR_VIDEO_CODEC_VP8;
         } else if(args_parser->video_encoder == GSR_VIDEO_ENCODER_HW_CPU) {
-            fprintf(stderr, "gsr info: using h264 encoder because a codec was not specified\n");
+            gsr_log(GSR_LOG_LEVEL_INFO, "using h264 encoder because a codec was not specified");
             args_parser->video_codec = GSR_VIDEO_CODEC_H264;
         } else if(args_parser->video_encoder != GSR_VIDEO_ENCODER_HW_CPU) {
             args_parser->video_codec = select_appropriate_video_codec_automatically(video_size, &supported_video_codecs_non_vulkan);
             if(args_parser->video_codec == (gsr_video_codec)-1) {
                 if(args_parser->fallback_cpu_encoding) {
-                    fprintf(stderr, "gsr warning: gpu encoding is not available on your system or your gpu doesn't support recording at the resolution you are trying to record, trying cpu encoding instead because -fallback-cpu-encoding is enabled. Install the proper vaapi drivers on your system (if supported) if you experience performance issues\n");
+                    gsr_log(GSR_LOG_LEVEL_WARNING, "gpu encoding is not available on your system or your gpu doesn't support recording at the resolution you are trying to record, trying cpu encoding instead because -fallback-cpu-encoding is enabled. Install the proper vaapi drivers on your system (if supported) if you experience performance issues");
                     force_cpu_encoding(args_parser);
                 } else {
-                    fprintf(stderr, "gsr error: no video encoder was specified and neither h264, hevc nor av1 are supported on your system or you are trying to capture at a resolution higher than your system supports for each codec.\n");
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "no video encoder was specified and neither h264, hevc nor av1 are supported on your system or you are trying to capture at a resolution higher than your system supports for each codec.");
                     fprintf(stderr, "  Ensure that you have installed the proper vaapi driver. If your gpu doesn't support video encoding then you can run gpu-screen-recorder with \"-fallback-cpu-encoding yes\" option to use cpu encoding.\n");
                     _exit(52);
                 }
@@ -3358,12 +3350,12 @@ static const AVCodec* select_video_codec_with_fallback(vec2i video_size, args_pa
     if(LIBAVFORMAT_VERSION_INT < AV_VERSION_INT(60, 10, 100) && strcmp(file_extension, "flv") == 0) {
         if(args_parser->video_codec != GSR_VIDEO_CODEC_H264) {
             args_parser->video_codec = GSR_VIDEO_CODEC_H264;
-            fprintf(stderr, "gsr warning: hevc/av1 is not compatible with flv in your outdated version of ffmpeg, falling back to h264 instead.\n");
+            gsr_log(GSR_LOG_LEVEL_WARNING, "hevc/av1 is not compatible with flv in your outdated version of ffmpeg, falling back to h264 instead.");
         }
     } else if(strcmp(file_extension, "m3u8") == 0) {
         if(video_codec_is_av1(args_parser->video_codec)) {
             args_parser->video_codec = GSR_VIDEO_CODEC_HEVC;
-            fprintf(stderr, "gsr warning: av1 is not compatible with hls (m3u8), falling back to hevc instead.\n");
+            gsr_log(GSR_LOG_LEVEL_WARNING, "av1 is not compatible with hls (m3u8), falling back to hevc instead.");
         }
     }
 
@@ -3372,8 +3364,7 @@ static const AVCodec* select_video_codec_with_fallback(vec2i video_size, args_pa
     const vec2i codec_max_resolution = codec_get_max_resolution(args_parser->video_codec, args_parser->video_encoder == GSR_VIDEO_ENCODER_HW_CPU, supported_video_codecs);
     if(!codec_supports_resolution(codec_max_resolution, video_size)) {
         const char *video_codec_name = video_codec_to_string(args_parser->video_codec);
-        fprintf(stderr, "gsr error: The max resolution for video codec %s is %dx%d while you are trying to capture at resolution %dx%d. Change capture resolution or video codec and try again\n",
-            video_codec_name, codec_max_resolution.x, codec_max_resolution.y, video_size.x, video_size.y);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "The max resolution for video codec %s is %dx%d while you are trying to capture at resolution %dx%d. Change capture resolution or video codec and try again", video_codec_name, codec_max_resolution.x, codec_max_resolution.y, video_size.x, video_size.y);
         _exit(53);
     }
 
@@ -3398,7 +3389,7 @@ static std::vector<AudioDeviceData> create_device_audio_inputs(const std::vector
         } else {
             const std::string description = "gsr-" + audio_input.name;
             if(sound_device_get_by_name(&audio_device.sound_device, description.c_str(), audio_input.name.c_str(), description.c_str(), num_channels, audio_codec_context->frame_size, audio_codec_context_get_audio_format(audio_codec_context)) != 0) {
-                fprintf(stderr, "gsr error: failed to get \"%s\" audio device\n", audio_input.name.c_str());
+                gsr_log(GSR_LOG_LEVEL_ERROR, "failed to get \"%s\" audio device", audio_input.name.c_str());
                 _exit(1);
             }
         }
@@ -3419,7 +3410,7 @@ static AudioDeviceData create_application_audio_audio_input(const MergedAudioInp
 
     char random_str[8];
     if(!generate_random_characters_standard_alphabet(random_str, sizeof(random_str))) {
-        fprintf(stderr, "gsr error: failed to generate random string\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to generate random string");
         _exit(1);
     }
 
@@ -3428,7 +3419,7 @@ static AudioDeviceData create_application_audio_audio_input(const MergedAudioInp
     combined_sink_name += ".monitor";
 
     if(sound_device_get_by_name(&audio_device.sound_device, combined_sink_name.c_str(), "", "gpu-screen-recorder", num_channels, audio_codec_context->frame_size, audio_codec_context_get_audio_format(audio_codec_context)) != 0) {
-        fprintf(stderr, "gsr error: failed to setup audio recording to combined sink\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to setup audio recording to combined sink");
         _exit(1);
     }
 
@@ -3449,19 +3440,19 @@ static AudioDeviceData create_application_audio_audio_input(const MergedAudioInp
 
     if(!audio_devices_sources.empty()) {
         if(!gsr_pipewire_audio_add_link_from_sources_to_stream(pipewire_audio, audio_devices_sources.data(), audio_devices_sources.size(), combined_sink_name.c_str())) {
-            fprintf(stderr, "gsr error: failed to add application audio link\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "failed to add application audio link");
             _exit(1);
         }
     }
 
     if(app_audio_inverted) {
         if(!gsr_pipewire_audio_add_link_from_apps_to_stream_inverted(pipewire_audio, app_names.data(), app_names.size(), combined_sink_name.c_str())) {
-            fprintf(stderr, "gsr error: failed to add application audio link\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "failed to add application audio link");
             _exit(1);
         }
     } else {
         if(!gsr_pipewire_audio_add_link_from_apps_to_stream(pipewire_audio, app_names.data(), app_names.size(), combined_sink_name.c_str())) {
-            fprintf(stderr, "gsr error: failed to add application audio link\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "failed to add application audio link");
             _exit(1);
         }
     }
@@ -3574,7 +3565,7 @@ static void validate_args_with_capture_sources(args_parser &arg_parser, const st
     assert(region_arg);
 
     if(is_capturing_type(capture_sources, GSR_CAPTURE_SOURCE_TYPE_FOCUSED_WINDOW) && output_resolution_arg->num_values == 0) {
-        fprintf(stderr, "gsr error: option -s is required when using '-w focused' option\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "option -s is required when using '-w focused' option");
         args_parser_print_usage();
         _exit(1);
     }
@@ -3582,22 +3573,22 @@ static void validate_args_with_capture_sources(args_parser &arg_parser, const st
     const bool is_capturing_region = is_capturing_type(capture_sources, GSR_CAPTURE_SOURCE_TYPE_REGION);
     if(region_arg->num_values == 0) {
         if(is_capturing_region && !has_capture_source_with_region_set(capture_sources)) {
-            fprintf(stderr, "gsr error: option -region is required when '-w region' is used\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "option -region is required when '-w region' is used");
             args_parser_print_usage();
             _exit(1);
         }
     } else {
         if(is_capturing_region) {
-            fprintf(stderr, "gsr warning: option -region is deprecated, use -w with region directly instead, for example: -w %s\n", region_arg->values[0]);
+            gsr_log(GSR_LOG_LEVEL_WARNING, "option -region is deprecated, use -w with region directly instead, for example: -w %s", region_arg->values[0]);
         } else {
-            fprintf(stderr, "gsr error: option -region can only be used when option '-w region' is used\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "option -region can only be used when option '-w region' is used");
             args_parser_print_usage();
             _exit(1);
         }
     }
 
     if(!arg_parser.restore_portal_session && is_capturing_type(capture_sources, GSR_CAPTURE_SOURCE_TYPE_PORTAL))
-        fprintf(stderr, "gsr info: option '-w portal' was used without '-restore-portal-session yes'. The previous screencast session will be ignored\n");
+        gsr_log(GSR_LOG_LEVEL_INFO, "option '-w portal' was used without '-restore-portal-session yes'. The previous screencast session will be ignored");
 }
 
 static void install_cuda_no_stable_perf_limit() {
@@ -3606,7 +3597,7 @@ static void install_cuda_no_stable_perf_limit() {
 
     const char *home = getenv("HOME");
     if(!home) {
-        fprintf(stderr, "gsr warning: install_cuda_no_stable_perf_limit: $HOME not set\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "install_cuda_no_stable_perf_limit: $HOME not set");
         return;
     }
 
@@ -3614,7 +3605,7 @@ static void install_cuda_no_stable_perf_limit() {
     snprintf(nv_profiles_path, sizeof(nv_profiles_path), "%s/.nv/nvidia-application-profiles-rc.d", home);
 
     if(create_directory_recursive(nv_profiles_path) != 0) {
-        fprintf(stderr, "gsr warning: install_cuda_no_stable_perf_limit: failed to create directory: %s\n", nv_profiles_path);
+        gsr_log(GSR_LOG_LEVEL_WARNING, "install_cuda_no_stable_perf_limit: failed to create directory: %s", nv_profiles_path);
         return;
     }
 
@@ -3622,7 +3613,7 @@ static void install_cuda_no_stable_perf_limit() {
 
     FILE *f = fopen(nv_profiles_path, "wb");
     if(!f) {
-        fprintf(stderr, "gsr warning: install_cuda_no_stable_perf_limit: failed to create file: %s\n", nv_profiles_path);
+        gsr_log(GSR_LOG_LEVEL_WARNING, "install_cuda_no_stable_perf_limit: failed to create file: %s", nv_profiles_path);
         return;
     }
 
@@ -3683,7 +3674,7 @@ int main(int argc, char **argv) {
     unsetenv("vblank_mode");
 
     if(geteuid() == 0) {
-        fprintf(stderr, "gsr error: don't run gpu-screen-recorder as the root user\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "don't run gpu-screen-recorder as the root user");
         _exit(1);
     }
 
@@ -3711,7 +3702,7 @@ int main(int argc, char **argv) {
 
     std::vector<CaptureSource> capture_sources = parse_capture_source_arg(arg_parser.capture_source, arg_parser);
     if(capture_sources.empty()) {
-        fprintf(stderr, "gsr error: option -w can't be empty. You need to capture video from at least one source\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "option -w can't be empty. You need to capture video from at least one source");
         args_parser_print_usage();
         _exit(1);
     }
@@ -3735,12 +3726,12 @@ int main(int argc, char **argv) {
     memset(&pipewire_audio, 0, sizeof(pipewire_audio));
     if(uses_app_audio) {
         if(!pulseaudio_server_is_pipewire()) {
-            fprintf(stderr, "gsr error: your sound server is not PipeWire. Application audio is only available when running PipeWire audio server\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "your sound server is not PipeWire. Application audio is only available when running PipeWire audio server");
             _exit(2);
         }
 
         if(!gsr_pipewire_audio_init(&pipewire_audio)) {
-            fprintf(stderr, "gsr error: failed to setup PipeWire audio for application audio capture\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "failed to setup PipeWire audio for application audio capture");
             _exit(2);
         }
 
@@ -3752,7 +3743,7 @@ int main(int argc, char **argv) {
     }
 #else
     if(uses_app_audio) {
-        fprintf(stderr, "gsr error: application audio can't be recorded because GPU Screen Recorder is built without application audio support (-Dapp_audio option)\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "application audio can't be recorded because GPU Screen Recorder is built without application audio support (-Dapp_audio option)");
         _exit(2);
     }
 #endif
@@ -3765,7 +3756,7 @@ int main(int argc, char **argv) {
         XSelectInput(dpy, DefaultRootWindow(dpy), PropertyChangeMask);
     } else {
         wayland = true;
-        fprintf(stderr, "gsr warning: failed to connect to the X server. Assuming wayland is running without Xwayland\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "failed to connect to the X server. Assuming wayland is running without Xwayland");
     }
 
     XSetErrorHandler(x11_error_handler);
@@ -3778,31 +3769,31 @@ int main(int argc, char **argv) {
         // Disable prime-run and similar options as it doesn't work, the monitor to capture has to be run on the same device.
         // This is fine on wayland since nvidia uses drm interface there and the monitor query checks the monitors connected
         // to the drm device.
-        fprintf(stderr, "gsr warning: use of prime-run on X11 is not supported. Disabling prime-run\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "use of prime-run on X11 is not supported. Disabling prime-run");
         disable_prime_run();
     }
 
     gsr_window *window = gsr_window_create(dpy, wayland);
     if(!window) {
-        fprintf(stderr, "gsr error: failed to create window\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create window");
         _exit(1);
     }
 
     if(is_capturing_type(capture_sources, GSR_CAPTURE_SOURCE_TYPE_PORTAL)) {
         if(is_using_prime_run()) {
-            fprintf(stderr, "gsr warning: use of prime-run with -w portal option is currently not supported. Disabling prime-run\n");
+            gsr_log(GSR_LOG_LEVEL_WARNING, "use of prime-run with -w portal option is currently not supported. Disabling prime-run");
             disable_prime_run();
         }
 
         if(video_codec_is_hdr(arg_parser.video_codec)) {
-            fprintf(stderr, "gsr warning: portal capture option doesn't support hdr yet (PipeWire doesn't support hdr), the video will be tonemapped from hdr to sdr\n");
+            gsr_log(GSR_LOG_LEVEL_WARNING, "portal capture option doesn't support hdr yet (PipeWire doesn't support hdr), the video will be tonemapped from hdr to sdr");
             arg_parser.video_codec = hdr_video_codec_to_sdr_video_codec(arg_parser.video_codec);
         }
     }
 
     gsr_egl egl;
     if(!gsr_egl_load(&egl, window, is_capturing_monitor_or_region(capture_sources), arg_parser.gl_debug)) {
-        fprintf(stderr, "gsr error: failed to load opengl\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to load opengl");
         _exit(1);
     }
 
@@ -3818,7 +3809,7 @@ int main(int argc, char **argv) {
     if(monitor_capture_use_drm(window, egl.gpu_info.vendor)) {
         // TODO: Allow specifying another card, and in other places
         if(!gsr_get_valid_card_path(&egl, egl.card_path, is_capturing_monitor_or_region(capture_sources))) {
-            fprintf(stderr, "gsr error: no /dev/dri/cardX device found. Make sure that you have at least one monitor connected or record a single window instead on X11 or record with the -w portal option\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "no /dev/dri/cardX device found. Make sure that you have at least one monitor connected or record a single window instead on X11 or record with the -w portal option");
             _exit(2);
         }
     } else {
@@ -3840,7 +3831,7 @@ int main(int argc, char **argv) {
     gsr_image_format image_format;
     if(get_image_format_from_filename(arg_parser.filename, &image_format)) {
         if(audio_input_arg->num_values > 0) {
-            fprintf(stderr, "gsr error: can't record audio (-a) when taking a screenshot\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "can't record audio (-a) when taking a screenshot");
             _exit(1);
         }
 
@@ -3853,9 +3844,9 @@ int main(int argc, char **argv) {
     avformat_alloc_output_context2(&av_format_context, nullptr, arg_parser.container_format, arg_parser.filename);
     if (!av_format_context) {
         if(arg_parser.container_format) {
-            fprintf(stderr, "gsr error: Container format '%s' (argument -c) is not valid\n", arg_parser.container_format);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "Container format '%s' (argument -c) is not valid", arg_parser.container_format);
         } else {
-            fprintf(stderr, "gsr error: Failed to deduce container format from file extension. Use the '-c' option to specify container format\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "Failed to deduce container format from file extension. Use the '-c' option to specify container format");
             args_parser_print_usage();
             _exit(1);
         }
@@ -3888,7 +3879,7 @@ int main(int argc, char **argv) {
     // (Some?) livestreaming services require at least one audio track to work.
     // If not audio is provided then create one silent audio track.
     if(arg_parser.is_livestream && requested_audio_inputs.empty()) {
-        fprintf(stderr, "gsr info: live streaming but no audio track was added. Adding a silent audio track\n");
+        gsr_log(GSR_LOG_LEVEL_INFO, "live streaming but no audio track was added. Adding a silent audio track");
         MergedAudioInputs mai;
         mai.audio_inputs.push_back({""});
         requested_audio_inputs.push_back(std::move(mai));
@@ -3898,7 +3889,7 @@ int main(int argc, char **argv) {
     std::vector<AudioTrack> audio_tracks;
 
     if(arg_parser.video_encoder == GSR_VIDEO_ENCODER_HW_CPU && arg_parser.video_codec != (gsr_video_codec)GSR_VIDEO_CODEC_AUTO && arg_parser.video_codec != GSR_VIDEO_CODEC_H264) {
-        fprintf(stderr, "gsr error: -encoder cpu was specified but a codec other than h264 was specified. -encoder cpu supports only h264 at the moment\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "-encoder cpu was specified but a codec other than h264 was specified. -encoder cpu supports only h264 at the moment");
         _exit(1);
     }
 
@@ -3912,7 +3903,7 @@ int main(int argc, char **argv) {
 
     AVFrame *video_frame = av_frame_alloc();
     if(!video_frame) {
-        fprintf(stderr, "gsr error: Failed to allocate video frame\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "Failed to allocate video frame");
         _exit(1);
     }
     video_frame->format = video_codec_context->pix_fmt;
@@ -3927,18 +3918,18 @@ int main(int argc, char **argv) {
     const size_t estimated_replay_buffer_packets = calculate_estimated_replay_buffer_packets(arg_parser.replay_buffer_size_secs, arg_parser.fps, arg_parser.audio_codec, requested_audio_inputs);
     gsr_encoder encoder;
     if(!gsr_encoder_init(&encoder, arg_parser.replay_storage, estimated_replay_buffer_packets, arg_parser.replay_buffer_size_secs, arg_parser.filename)) {
-        fprintf(stderr, "gsr error: failed to create encoder\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create encoder");
         _exit(1);
     }
 
     gsr_video_encoder *video_encoder = create_video_encoder(&egl, arg_parser);
     if(!video_encoder) {
-        fprintf(stderr, "gsr error: failed to create video encoder\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create video encoder");
         _exit(1);
     }
 
     if(!gsr_video_encoder_start(video_encoder, video_codec_context, video_frame)) {
-        fprintf(stderr, "gsr error: failed to start video encoder\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to start video encoder");
         _exit(1);
     }
 
@@ -3964,7 +3955,7 @@ int main(int argc, char **argv) {
 
     gsr_color_conversion color_conversion;
     if(gsr_color_conversion_init(&color_conversion, &color_conversion_params) != 0) {
-        fprintf(stderr, "gsr error: main: failed to create color conversion\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "main: failed to create color conversion");
         _exit(1);
     }
 
@@ -3997,7 +3988,7 @@ int main(int argc, char **argv) {
         if(!arg_parser.is_replaying) {
             audio_stream = create_stream(av_format_context, audio_codec_context);
             if(gsr_encoder_add_recording_destination(&encoder, audio_codec_context, av_format_context, audio_stream, 0) == (size_t)-1)
-                fprintf(stderr, "gsr error: added too many audio sources\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "added too many audio sources");
         }
 
         if(audio_stream && !merged_audio_inputs.track_name.empty() && !arg_parser.exclude_metadata)
@@ -4021,7 +4012,7 @@ int main(int argc, char **argv) {
         if(use_amix) {
             int err = init_filter_graph(audio_codec_context, &graph, &sink, src_filter_ctx, merged_audio_inputs.audio_inputs.size());
             if(err < 0) {
-                fprintf(stderr, "gsr error: failed to create audio filter\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create audio filter");
                 _exit(1);
             }
         }
@@ -4063,7 +4054,7 @@ int main(int argc, char **argv) {
     if(!arg_parser.is_replaying && !(output_format->flags & AVFMT_NOFILE)) {
         const int ret = avio_open(&av_format_context->pb, arg_parser.filename, AVIO_FLAG_WRITE);
         if(ret < 0) {
-            fprintf(stderr, "gsr error: Could not open '%s': %s\n", arg_parser.filename, av_error_to_string(ret));
+            gsr_log(GSR_LOG_LEVEL_ERROR, "Could not open '%s': %s", arg_parser.filename, av_error_to_string(ret));
             _exit(1);
         }
     }
@@ -4092,7 +4083,7 @@ int main(int argc, char **argv) {
     const size_t audio_buffer_size = audio_max_frame_size * 4 * 2; // max 4 bytes/sample, 2 channels
     uint8_t *empty_audio = (uint8_t*)malloc(audio_buffer_size);
     if(!empty_audio) {
-        fprintf(stderr, "gsr error: failed to create empty audio\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create empty audio");
         _exit(1);
     }
     memset(empty_audio, 0, audio_buffer_size);
@@ -4198,7 +4189,7 @@ int main(int argc, char **argv) {
                             if(audio_track.graph) {
                                 // TODO: av_buffersrc_add_frame
                                 if(av_buffersrc_write_frame(audio_device.src_filter_ctx, audio_device.frame) < 0) {
-                                    fprintf(stderr, "gsr error: failed to add audio frame to filter\n");
+                                    gsr_log(GSR_LOG_LEVEL_ERROR, "failed to add audio frame to filter");
                                 }
                             } else {
                                 ret = avcodec_send_frame(audio_track.codec_context, audio_device.frame);
@@ -4239,7 +4230,7 @@ int main(int argc, char **argv) {
                         if(audio_track.graph) {
                             // TODO: av_buffersrc_add_frame
                             if(av_buffersrc_write_frame(audio_device.src_filter_ctx, audio_device.frame) < 0) {
-                                fprintf(stderr, "gsr error: failed to add audio frame to filter\n");
+                                gsr_log(GSR_LOG_LEVEL_ERROR, "failed to add audio frame to filter");
                             }
                         } else {
                             ret = avcodec_send_frame(audio_track.codec_context, audio_device.frame);
@@ -4335,7 +4326,7 @@ int main(int argc, char **argv) {
                 }
             }
         } else if(is_capturing_monitor_or_region(capture_sources)) {
-            fprintf(stderr, "gsr warning: \"-fm content\" has no effect on Wayland when recording a monitor. Either record a monitor on X11 or capture with desktop portal instead (-w portal)\n");
+            gsr_log(GSR_LOG_LEVEL_WARNING, "\"-fm content\" has no effect on Wayland when recording a monitor. Either record a monitor on X11 or capture with desktop portal instead (-w portal)");
         }
     }
 
@@ -4424,7 +4415,7 @@ int main(int argc, char **argv) {
 
             if(kms_client_initialized) {
                 if(gsr_kms_client_get_kms(&kms_client, &kms_response) != 0)
-                    fprintf(stderr, "gsr error: failed to get kms, error: %d (%s)\n", kms_response.result, kms_response.err_msg);
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "failed to get kms, error: %d (%s)", kms_response.result, kms_response.err_msg);
             }
 
             bool capture_has_synchronous_task = false;
@@ -4500,7 +4491,7 @@ int main(int argc, char **argv) {
                     // TODO: Move to separate thread because this could write to network (for example when livestreaming)
                     gsr_encoder_receive_packets(&encoder, video_codec_context, video_frame->pts, VIDEO_STREAM_INDEX);
                 } else {
-                    fprintf(stderr, "gsr error: avcodec_send_frame failed, error: %s\n", av_error_to_string(ret));
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "avcodec_send_frame failed, error: %s", av_error_to_string(ret));
                 }
 
                 if(force_iframe_frame) {

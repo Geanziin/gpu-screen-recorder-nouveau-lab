@@ -1,4 +1,5 @@
 #include "../include/args_parser.h"
+#include "../include/log.h"
 #include "../include/defs.h"
 #include "../include/egl.h"
 #include "../include/window/window.h"
@@ -116,17 +117,18 @@ static bool arg_get_enum_value_by_name(const Arg *arg, const char *name, int *en
     return false;
 }
 
-static void arg_print_expected_enum_names(const Arg *arg) {
+static void arg_get_expected_enum_names(const Arg *arg, char *buf, size_t buf_size) {
     assert(arg->type == ARG_TYPE_ENUM);
     assert(arg->enum_values);
+    buf[0] = '\0';
+    size_t offset = 0;
     for(int i = 0; i < arg->num_enum_values; ++i) {
-        if(i > 0) {
-            if(i == arg->num_enum_values -1)
-                fprintf(stderr, " or ");
-            else
-                fprintf(stderr, ", ");
-        }
-        fprintf(stderr, "'%s'", arg->enum_values[i].name);
+        const char *separator = "";
+        if(i > 0)
+            separator = i == arg->num_enum_values - 1 ? " or " : ", ";
+        const int written = snprintf(buf + offset, offset < buf_size ? buf_size - offset : 0, "%s'%s'", separator, arg->enum_values[i].name);
+        if(written > 0)
+            offset += written;
     }
 }
 
@@ -280,11 +282,11 @@ static bool args_parser_set_values(args_parser *self) {
     self->keyint = args_get_double_by_key(self->args, NUM_ARGS, "-keyint", 2.0);
 
     if(overclock) {
-        fprintf(stderr, "gsr info: the overclock option (-oc) is deprecated and no longer has any effect as it's no longer needed (on GPUs that are 12 years old or younger)\n");
+        gsr_log(GSR_LOG_LEVEL_INFO, "the overclock option (-oc) is deprecated and no longer has any effect as it's no longer needed (on GPUs that are 12 years old or younger)");
     }
 
     if(self->audio_codec == GSR_AUDIO_CODEC_FLAC) {
-        fprintf(stderr, "gsr warning: flac audio codec is temporary disabled, using opus audio codec instead\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "flac audio codec is temporary disabled, using opus audio codec instead");
         self->audio_codec = GSR_AUDIO_CODEC_OPUS;
     }
 
@@ -292,7 +294,7 @@ static bool args_parser_set_values(args_parser *self) {
     if(self->portal_session_token_filepath) {
         int len = strlen(self->portal_session_token_filepath);
         if(len > 0 && self->portal_session_token_filepath[len - 1] == '/') {
-            fprintf(stderr, "gsr error: -portal-session-token-filepath should be a path to a file but it ends with a /: %s\n", self->portal_session_token_filepath);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "-portal-session-token-filepath should be a path to a file but it ends with a /: %s", self->portal_session_token_filepath);
             return false;
         }
     }
@@ -301,13 +303,13 @@ static bool args_parser_set_values(args_parser *self) {
     if(self->recording_saved_script) {
         struct stat buf;
         if(stat(self->recording_saved_script, &buf) == -1 || !S_ISREG(buf.st_mode)) {
-            fprintf(stderr, "gsr error: Script \"%s\" either doesn't exist or it's not a file\n", self->recording_saved_script);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "Script \"%s\" either doesn't exist or it's not a file", self->recording_saved_script);
             usage();
             return false;
         }
 
         if(!(buf.st_mode & S_IXUSR)) {
-            fprintf(stderr, "gsr error: Script \"%s\" is not executable\n", self->recording_saved_script);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "Script \"%s\" is not executable", self->recording_saved_script);
             usage();
             return false;
         }
@@ -319,19 +321,19 @@ static bool args_parser_set_values(args_parser *self) {
 
     if(self->bitrate_mode == GSR_BITRATE_MODE_CBR) {
         if(!quality_str) {
-            fprintf(stderr, "gsr error: option '-q' is required when using '-bm cbr' option\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "option '-q' is required when using '-bm cbr' option");
             usage();
             return false;
         }
 
         if(sscanf(quality_str, "%" PRIi64, &self->video_bitrate) != 1) {
-            fprintf(stderr, "gsr error: -q argument \"%s\" is not an integer value. When using '-bm cbr' option '-q' is expected to be an integer value\n", quality_str);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "-q argument \"%s\" is not an integer value. When using '-bm cbr' option '-q' is expected to be an integer value", quality_str);
             usage();
             return false;
         }
 
         if(self->video_bitrate < 0) {
-            fprintf(stderr, "gsr error: -q is expected to be 0 or larger, got %" PRIi64 "\n", self->video_bitrate);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "-q is expected to be 0 or larger, got %" PRIi64, self->video_bitrate);
             usage();
             return false;
         }
@@ -350,7 +352,7 @@ static bool args_parser_set_values(args_parser *self) {
         } else if(strcmp(quality_str, "ultra") == 0) {
             self->video_quality = GSR_VIDEO_QUALITY_ULTRA;
         } else {
-            fprintf(stderr, "gsr error: -q should either be 'medium', 'high', 'very_high' or 'ultra', got: '%s'\n", quality_str);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "-q should either be 'medium', 'high', 'very_high' or 'ultra', got: '%s'", quality_str);
             usage();
             return false;
         }
@@ -361,13 +363,13 @@ static bool args_parser_set_values(args_parser *self) {
     const char *output_resolution_str = args_get_value_by_key(self->args, NUM_ARGS, "-s");
     if(output_resolution_str) {
         if(sscanf(output_resolution_str, "%dx%d", &self->output_resolution.x, &self->output_resolution.y) != 2) {
-            fprintf(stderr, "gsr error: invalid value for option -s '%s', expected a value in format WxH\n", output_resolution_str);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "invalid value for option -s '%s', expected a value in format WxH", output_resolution_str);
             usage();
             return false;
         }
 
         if(self->output_resolution.x < 0 || self->output_resolution.y < 0) {
-            fprintf(stderr, "gsr error: invalid value for option -s '%s', expected width and height to be greater or equal to 0\n", output_resolution_str);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "invalid value for option -s '%s', expected width and height to be greater or equal to 0", output_resolution_str);
             usage();
             return false;
         }
@@ -378,13 +380,13 @@ static bool args_parser_set_values(args_parser *self) {
     const char *region_str = args_get_value_by_key(self->args, NUM_ARGS, "-region");
     if(region_str) {
         if(sscanf(region_str, "%dx%d+%d+%d", &self->region_size.x, &self->region_size.y, &self->region_position.x, &self->region_position.y) != 4) {
-            fprintf(stderr, "gsr error: invalid value for option -region '%s', expected a value in format WxH+X+Y\n", region_str);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "invalid value for option -region '%s', expected a value in format WxH+X+Y", region_str);
             usage();
             return false;
         }
 
         if(self->region_size.x < 0 || self->region_size.y < 0) {
-            fprintf(stderr, "gsr error: invalid value for option -region '%s', expected width and height to be greater or equal to 0\n", region_str);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "invalid value for option -region '%s', expected width and height to be greater or equal to 0", region_str);
             usage();
             return false;
         }
@@ -406,7 +408,7 @@ static bool args_parser_set_values(args_parser *self) {
         self->is_livestream = is_livestream_path(self->filename);
         if(self->is_livestream) {
             if(self->is_replaying) {
-                fprintf(stderr, "gsr error: replay mode is not applicable to live streaming\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "replay mode is not applicable to live streaming");
                 return false;
             }
         } else {
@@ -416,20 +418,20 @@ static bool args_parser_set_values(args_parser *self) {
                 char *directory = dirname(directory_buf);
                 if(strcmp(directory, ".") != 0 && strcmp(directory, "/") != 0) {
                     if(create_directory_recursive(directory) != 0) {
-                        fprintf(stderr, "gsr error: failed to create directory for output file: %s\n", self->filename);
+                        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create directory for output file: %s", self->filename);
                         return false;
                     }
                 }
             } else {
                 if(!self->container_format) {
-                    fprintf(stderr, "gsr error: option -c is required when using option -r\n");
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "option -c is required when using option -r");
                     usage();
                     return false;
                 }
 
                 struct stat buf;
                 if(stat(self->filename, &buf) != -1 && !S_ISDIR(buf.st_mode)) {
-                    fprintf(stderr, "gsr error: File \"%s\" exists but it's not a directory\n", self->filename);
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "File \"%s\" exists but it's not a directory", self->filename);
                     usage();
                     return false;
                 }
@@ -439,13 +441,13 @@ static bool args_parser_set_values(args_parser *self) {
         if(!self->is_replaying) {
             self->filename = "/dev/stdout";
         } else {
-            fprintf(stderr, "gsr error: Option -o is required when using option -r\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "Option -o is required when using option -r");
             usage();
             return false;
         }
 
         if(!self->container_format) {
-            fprintf(stderr, "gsr error: option -c is required when not using option -o\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "option -c is required when not using option -o");
             usage();
             return false;
         }
@@ -454,14 +456,14 @@ static bool args_parser_set_values(args_parser *self) {
     self->is_output_piped = file_is_pipe_or_char_device(self->filename);
     self->low_latency_recording = self->is_livestream || self->is_output_piped;
     if(self->write_first_frame_ts && (self->is_livestream || self->is_output_piped)) {
-        fprintf(stderr, "gsr warning: -write-first-frame-ts is ignored for livestreaming or when output is piped\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "-write-first-frame-ts is ignored for livestreaming or when output is piped");
         self->write_first_frame_ts = false;
     }
 
     self->replay_recording_directory = args_get_value_by_key(self->args, NUM_ARGS, "-ro");
 
     if(self->is_livestream && self->recording_saved_script) {
-        fprintf(stderr, "gsr warning: live stream detected, -sc script is ignored\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "live stream detected, -sc script is ignored");
         self->recording_saved_script = NULL;
     }
 
@@ -515,7 +517,7 @@ bool args_parser_parse(args_parser *self, int argc, char **argv, const args_hand
             arg_handlers->list_capture_options(card_path, userdata);
             return true;
         } else {
-            fprintf(stderr, "gsr error: expected --list-capture-options to be called with either no extra arguments or 1 extra argument (card path)\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "expected --list-capture-options to be called with either no extra arguments or 1 extra argument (card path)");
             return false;
         }
     }
@@ -575,19 +577,19 @@ bool args_parser_parse(args_parser *self, int argc, char **argv, const args_hand
         const char *arg_name = argv[i];
         Arg *arg = args_get_by_key(self->args, NUM_ARGS, arg_name);
         if(!arg) {
-            fprintf(stderr, "gsr error: invalid argument '%s'\n", arg_name);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "invalid argument '%s'", arg_name);
             usage();
             return false;
         }
 
         if(arg->num_values > 0 && !arg->list) {
-            fprintf(stderr, "gsr error: expected argument '%s' to only be specified once\n", arg_name);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "expected argument '%s' to only be specified once", arg_name);
             usage();
             return false;
         }
 
         if(i + 1 >= argc) {
-            fprintf(stderr, "gsr error: missing value for argument '%s'\n", arg_name);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "missing value for argument '%s'", arg_name);
             usage();
             return false;
         }
@@ -603,7 +605,7 @@ bool args_parser_parse(args_parser *self, int argc, char **argv, const args_hand
                 } else if(strcmp(arg_value, "no") == 0) {
                     arg->typed_value.boolean = false;
                 } else {
-                    fprintf(stderr, "gsr error: %s should either be 'yes' or 'no', got: '%s'\n", arg_name, arg_value);
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "%s should either be 'yes' or 'no', got: '%s'", arg_name, arg_value);
                     usage();
                     return false;
                 }
@@ -611,9 +613,9 @@ bool args_parser_parse(args_parser *self, int argc, char **argv, const args_hand
             }
             case ARG_TYPE_ENUM: {
                 if(!arg_get_enum_value_by_name(arg, arg_value, &arg->typed_value.enum_value)) {
-                    fprintf(stderr, "gsr error: %s should either be ", arg_name);
-                    arg_print_expected_enum_names(arg);
-                    fprintf(stderr, ", got: '%s'\n", arg_value);
+                    char expected_enum_names[512];
+                    arg_get_expected_enum_names(arg, expected_enum_names, sizeof(expected_enum_names));
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "%s should either be %s, got: '%s'", arg_name, expected_enum_names, arg_value);
                     usage();
                     return false;
                 }
@@ -621,19 +623,19 @@ bool args_parser_parse(args_parser *self, int argc, char **argv, const args_hand
             }
             case ARG_TYPE_I64: {
                 if(sscanf(arg_value, "%" PRIi64, &arg->typed_value.i64_value) != 1) {
-                    fprintf(stderr, "gsr error: %s argument \"%s\" is not an integer\n", arg_name, arg_value);
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "%s argument \"%s\" is not an integer", arg_name, arg_value);
                     usage();
                     return false;
                 }
 
                 if(arg->typed_value.i64_value < arg->integer_value_min) {
-                    fprintf(stderr, "gsr error: %s argument is expected to be larger than %" PRIi64 ", got %" PRIi64 "\n", arg_name, arg->integer_value_min, arg->typed_value.i64_value);
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "%s argument is expected to be larger than %" PRIi64 ", got %" PRIi64, arg_name, arg->integer_value_min, arg->typed_value.i64_value);
                     usage();
                     return false;
                 }
 
                 if(arg->typed_value.i64_value > arg->integer_value_max) {
-                    fprintf(stderr, "gsr error: %s argument is expected to be less than %" PRIi64 ", got %" PRIi64 "\n", arg_name, arg->integer_value_max, arg->typed_value.i64_value);
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "%s argument is expected to be less than %" PRIi64 ", got %" PRIi64, arg_name, arg->integer_value_max, arg->typed_value.i64_value);
                     usage();
                     return false;
                 }
@@ -641,19 +643,19 @@ bool args_parser_parse(args_parser *self, int argc, char **argv, const args_hand
             }
             case ARG_TYPE_DOUBLE: {
                 if(sscanf(arg_value, "%lf", &arg->typed_value.d_value) != 1) {
-                    fprintf(stderr, "gsr error: %s argument \"%s\" is not an floating-point number\n", arg_name, arg_value);
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "%s argument \"%s\" is not an floating-point number", arg_name, arg_value);
                     usage();
                     return false;
                 }
 
                 if(arg->typed_value.d_value < arg->integer_value_min) {
-                    fprintf(stderr, "gsr error: %s argument is expected to be larger than %" PRIi64 ", got %lf\n", arg_name, arg->integer_value_min, arg->typed_value.d_value);
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "%s argument is expected to be larger than %" PRIi64 ", got %lf", arg_name, arg->integer_value_min, arg->typed_value.d_value);
                     usage();
                     return false;
                 }
 
                 if(arg->typed_value.d_value > arg->integer_value_max) {
-                    fprintf(stderr, "gsr error: %s argument is expected to be less than %" PRIi64 ", got %lf\n", arg_name, arg->integer_value_max, arg->typed_value.d_value);
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "%s argument is expected to be less than %" PRIi64 ", got %lf", arg_name, arg->integer_value_max, arg->typed_value.d_value);
                     usage();
                     return false;
                 }
@@ -662,7 +664,7 @@ bool args_parser_parse(args_parser *self, int argc, char **argv, const args_hand
         }
 
         if(!arg_append_value(arg, arg_value)) {
-            fprintf(stderr, "gsr error: failed to append argument, out of memory\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "failed to append argument, out of memory");
             return false;
         }
     }
@@ -670,7 +672,7 @@ bool args_parser_parse(args_parser *self, int argc, char **argv, const args_hand
     for(int i = 0; i < NUM_ARGS; ++i) {
         const Arg *arg = &self->args[i];
         if(!arg->optional && arg->num_values == 0) {
-            fprintf(stderr, "gsr error: missing argument '%s'\n", arg->key);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "missing argument '%s'", arg->key);
             usage();
             return false;
         }
@@ -694,28 +696,27 @@ bool args_parser_validate_with_gl_info(args_parser *self, gsr_egl *egl) {
     }
 
     if(egl->gpu_info.is_steam_deck && self->bitrate_mode == GSR_BITRATE_MODE_QP) {
-        fprintf(stderr, "gsr warning: qp bitrate mode is not supported on Steam Deck because of Steam Deck driver bugs. Using vbr instead\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "qp bitrate mode is not supported on Steam Deck because of Steam Deck driver bugs. Using vbr instead");
         self->bitrate_mode = GSR_BITRATE_MODE_VBR;
     }
 
     if(self->video_encoder == GSR_VIDEO_ENCODER_HW_CPU && self->bitrate_mode == GSR_BITRATE_MODE_VBR) {
-        fprintf(stderr, "gsr warning: bitrate mode has been forcefully set to qp because software encoding option doesn't support vbr option\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "bitrate mode has been forcefully set to qp because software encoding option doesn't support vbr option");
         self->bitrate_mode = GSR_BITRATE_MODE_QP;
     }
 
     if(egl->gpu_info.is_steam_deck) {
-        fprintf(stderr, "gsr warning: steam deck has multiple driver issues. One of them has been reported here: https://github.com/ValveSoftware/SteamOS/issues/1609\n"
-            "If you have issues with GPU Screen Recorder on steam deck that you don't have on a desktop computer then report the issue to Valve and/or AMD.\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "steam deck has multiple driver issues. One of them has been reported here: https://github.com/ValveSoftware/SteamOS/issues/1609\nIf you have issues with GPU Screen Recorder on steam deck that you don't have on a desktop computer then report the issue to Valve and/or AMD.");
     }
 
     self->very_old_gpu = false;
     if(egl->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA && egl->gpu_info.gpu_version != 0 && egl->gpu_info.gpu_version < 900) {
-        fprintf(stderr, "gsr info: your gpu appears to be very old (older than maxwell architecture). Switching to lower preset\n");
+        gsr_log(GSR_LOG_LEVEL_INFO, "your gpu appears to be very old (older than maxwell architecture). Switching to lower preset");
         self->very_old_gpu = true;
     }
 
     if(video_codec_is_hdr(self->video_codec) && !wayland) {
-        fprintf(stderr, "gsr error: hdr video codec option %s is not available on X11\n", video_codec_to_string(self->video_codec));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "hdr video codec option %s is not available on X11", video_codec_to_string(self->video_codec));
         usage();
         return false;
     }

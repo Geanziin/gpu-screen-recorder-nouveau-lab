@@ -1,4 +1,5 @@
 #include "../include/cursor.h"
+#include "../include/log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -81,7 +82,7 @@ int gsr_cursor_init(gsr_cursor *self, gsr_egl *egl, Display *display) {
 
     self->x_fixes_event_base = 0;
     if(!XFixesQueryExtension(self->display, &self->x_fixes_event_base, &x_fixes_error_base)) {
-        fprintf(stderr, "gsr error: gsr_cursor_init: your X11 server is missing the XFixes extension\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_cursor_init: your X11 server is missing the XFixes extension");
         gsr_cursor_deinit(self);
         return -1;
     }

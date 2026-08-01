@@ -1,4 +1,5 @@
 #include "../include/sound.hpp"
+#include "../include/log.h"
 extern "C" {
 #include "../include/utils.h"
 }
@@ -163,7 +164,7 @@ static bool startup_get_default_devices(pa_handle *p, const char *device_name) {
     }
 
     if(p->default_output_device_name[0] == '\0') {
-        fprintf(stderr, "gsr error: failed to find default audio output device\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to find default audio output device");
         return false;
     }
 
@@ -207,7 +208,7 @@ static pa_handle* pa_sound_device_new(const char *server,
     const int buffer_size = attr->fragsize;
     void *buffer = malloc(buffer_size);
     if(!buffer) {
-        fprintf(stderr, "gsr error: failed to allocate buffer for audio\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to allocate buffer for audio");
         *rerror = -1;
         return NULL;
     }
@@ -286,12 +287,12 @@ static bool pa_sound_device_handle_context_recreate(pa_handle *p) {
     }
 
     if (!(p->context = pa_context_new_with_proplist(pa_mainloop_get_api(p->mainloop), p->node_name, p->proplist))) {
-        fprintf(stderr, "gsr error: pa_context_new_with_proplist failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "pa_context_new_with_proplist failed");
         goto fail;
     }
 
     if(pa_context_connect(p->context, nullptr, PA_CONTEXT_NOFLAGS, NULL) < 0) {
-        fprintf(stderr, "gsr error: pa_context_connect failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "pa_context_connect failed");
         goto fail;
     }
 
@@ -505,7 +506,7 @@ int sound_device_get_by_name(SoundDevice *device, const char *node_name, const c
     int error = 0;
     pa_handle *handle = pa_sound_device_new(nullptr, node_name, device_name, description, &ss, &buffer_attr, &error);
     if(!handle) {
-        fprintf(stderr, "gsr error: pa_sound_device_new() failed: %s. Audio input device %s might not be valid\n", pa_strerror(error), device_name);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "pa_sound_device_new() failed: %s. Audio input device %s might not be valid", pa_strerror(error), device_name);
         return -1;
     }
 

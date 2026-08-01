@@ -1,4 +1,5 @@
 #include "../../include/capture/xcomposite.h"
+#include "../../include/log.h"
 #include "../../include/window_texture.h"
 #include "../../include/utils.h"
 #include "../../include/cursor.h"
@@ -63,7 +64,7 @@ static int gsr_capture_xcomposite_start(gsr_capture *cap, gsr_capture_metadata *
     if(self->params.follow_focused) {
         self->net_active_window_atom = XInternAtom(self->display, "_NET_ACTIVE_WINDOW", False);
         if(!self->net_active_window_atom) {
-            fprintf(stderr, "gsr error: gsr_capture_xcomposite_start failed: failed to get _NET_ACTIVE_WINDOW atom\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_xcomposite_start failed: failed to get _NET_ACTIVE_WINDOW atom");
             return -1;
         }
         self->window = get_focused_window(self->display, self->net_active_window_atom);
@@ -75,7 +76,7 @@ static int gsr_capture_xcomposite_start(gsr_capture *cap, gsr_capture_metadata *
 
     XWindowAttributes attr;
     if(!XGetWindowAttributes(self->display, self->window, &attr) && !self->params.follow_focused) {
-        fprintf(stderr, "gsr error: gsr_capture_xcomposite_start failed: invalid window id: %lu\n", self->window);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_xcomposite_start failed: invalid window id: %lu", self->window);
         return -1;
     }
 
@@ -89,7 +90,7 @@ static int gsr_capture_xcomposite_start(gsr_capture *cap, gsr_capture_metadata *
     XSelectInput(self->display, self->window, StructureNotifyMask | ExposureMask);
 
     if(window_texture_init(&self->window_texture, self->display, self->window, self->params.egl) != 0 && !self->params.follow_focused) {
-        fprintf(stderr, "gsr error: gsr_capture_xcomposite_start: failed to get window texture for window %ld\n", (long)self->window);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_xcomposite_start: failed to get window texture for window %ld", (long)self->window);
         return -1;
     }
 
@@ -129,7 +130,7 @@ static void gsr_capture_xcomposite_tick(gsr_capture *cap) {
             attr.width = 0;
             attr.height = 0;
             if(!XGetWindowAttributes(self->display, self->window, &attr))
-                fprintf(stderr, "gsr error: gsr_capture_xcomposite_tick failed: invalid window id: %lu\n", self->window);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_xcomposite_tick failed: invalid window id: %lu", self->window);
 
             self->window_pos.x = attr.x;
             self->window_pos.y = attr.y;
@@ -153,7 +154,7 @@ static void gsr_capture_xcomposite_tick(gsr_capture *cap) {
         self->window_resized = false;
 
         if(window_texture_on_resize(&self->window_texture) != 0) {
-            fprintf(stderr, "gsr error: gsr_capture_xcomposite_tick: window_texture_on_resize failed\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_xcomposite_tick: window_texture_on_resize failed");
             //self->should_stop = true;
             //self->stop_is_error = true;
             return;
@@ -291,7 +292,7 @@ static void gsr_capture_xcomposite_destroy(gsr_capture *cap) {
 
 gsr_capture* gsr_capture_xcomposite_create(const gsr_capture_xcomposite_params *params) {
     if(!params) {
-        fprintf(stderr, "gsr error: gsr_capture_xcomposite_create params is NULL\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_xcomposite_create params is NULL");
         return NULL;
     }
 

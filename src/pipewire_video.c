@@ -1,4 +1,5 @@
 #include "../include/pipewire_video.h"
+#include "../include/log.h"
 #include "../include/egl.h"
 #include "../include/utils.h"
 
@@ -62,11 +63,11 @@ static bool check_pw_version(const gsr_pipewire_video_data_version *pw_version, 
 }
 
 static void update_pw_versions(gsr_pipewire_video *self, const char *version) {
-    fprintf(stderr, "gsr info: pipewire: server version: %s\n", version);
-    fprintf(stderr, "gsr info: pipewire: library version: %s\n", pw_get_library_version());
-    fprintf(stderr, "gsr info: pipewire: header version: %s\n", pw_get_headers_version());
+    gsr_log(GSR_LOG_LEVEL_INFO, "pipewire: server version: %s", version);
+    gsr_log(GSR_LOG_LEVEL_INFO, "pipewire: library version: %s", pw_get_library_version());
+    gsr_log(GSR_LOG_LEVEL_INFO, "pipewire: header version: %s", pw_get_headers_version());
     if(!parse_pw_version(&self->server_version, version))
-        fprintf(stderr, "gsr error: pipewire: failed to parse server version\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "pipewire: failed to parse server version");
 }
 
 static void on_core_info_cb(void *user_data, const struct pw_core_info *info) {
@@ -76,7 +77,7 @@ static void on_core_info_cb(void *user_data, const struct pw_core_info *info) {
 
 static void on_core_error_cb(void *user_data, uint32_t id, int seq, int res, const char *message) {
     gsr_pipewire_video *self = user_data;
-    fprintf(stderr, "gsr error: pipewire: error id:%u seq:%d res:%d: %s\n", id, seq, res, message);
+    gsr_log(GSR_LOG_LEVEL_ERROR, "pipewire: error id:%u seq:%d res:%d: %s", id, seq, res, message);
     pw_thread_loop_signal(self->thread_loop, false);
 }
 
@@ -138,8 +139,7 @@ static void gsr_pipewire_video_read_cursor_metadata(gsr_pipewire_video *self, st
     if(bitmap && bitmap->size.width > 0 && bitmap->size.height > 0 && is_cursor_format_supported(bitmap->format)) {
         /* Animated cursors update the bitmap for every animation frame, only log when the size changes */
         if((int)bitmap->size.width != self->cursor.width || (int)bitmap->size.height != self->cursor.height) {
-            fprintf(stderr, "gsr info: pipewire: cursor bitmap update, size: %dx%d, format: %s\n",
-                (int)bitmap->size.width, (int)bitmap->size.height, spa_debug_type_find_name(spa_type_video_format, bitmap->format));
+            gsr_log(GSR_LOG_LEVEL_INFO, "pipewire: cursor bitmap update, size: %dx%d, format: %s", (int)bitmap->size.width, (int)bitmap->size.height, spa_debug_type_find_name(spa_type_video_format, bitmap->format));
         }
 
         const uint8_t *bitmap_data = SPA_MEMBER(bitmap, bitmap->offset, uint8_t);
@@ -205,7 +205,7 @@ static void on_process_cb(void *user_data) {
     }
 
     if(!got_buffer) {
-        fprintf(stderr, "gsr info: pipewire: out of buffers!\n");
+        gsr_log(GSR_LOG_LEVEL_INFO, "pipewire: out of buffers!");
         return;
     }
 
@@ -315,19 +315,18 @@ static void on_param_changed_cb(void *user_data, uint32_t id, const struct spa_p
     if(has_modifier || check_pw_version(&self->server_version, 0, 3, 24))
         buffer_types |= 1 << SPA_DATA_DmaBuf;
 
-    fprintf(stderr, "gsr info: pipewire: negotiated format:\n");
+    gsr_log(GSR_LOG_LEVEL_INFO, "pipewire: negotiated format:");
 
-    fprintf(stderr, "gsr info: pipewire:    Format: %d (%s)\n",
-         self->format.info.raw.format,
+    gsr_log(GSR_LOG_LEVEL_INFO, "pipewire:    Format: %d (%s)", self->format.info.raw.format,
          spa_debug_type_find_name(spa_type_video_format, self->format.info.raw.format));
 
     self->has_modifier = has_modifier;
     if(self->has_modifier) {
-        fprintf(stderr, "gsr info: pipewire:    Modifier: 0x%" PRIx64 "\n", self->format.info.raw.modifier);
+        gsr_log(GSR_LOG_LEVEL_INFO, "pipewire:    Modifier: 0x%" PRIx64, self->format.info.raw.modifier);
     }
 
-    fprintf(stderr, "gsr info: pipewire:    Size: %dx%d\n", self->format.info.raw.size.width, self->format.info.raw.size.height);
-    fprintf(stderr, "gsr info: pipewire:    Framerate: %d/%d\n", self->format.info.raw.framerate.num, self->format.info.raw.framerate.denom);
+    gsr_log(GSR_LOG_LEVEL_INFO, "pipewire:    Size: %dx%d", self->format.info.raw.size.width, self->format.info.raw.size.height);
+    gsr_log(GSR_LOG_LEVEL_INFO, "pipewire:    Framerate: %d/%d", self->format.info.raw.framerate.num, self->format.info.raw.framerate.denom);
 
     uint8_t params_buffer[2048];
     struct spa_pod_builder pod_builder = SPA_POD_BUILDER_INIT(params_buffer, sizeof(params_buffer));
@@ -378,14 +377,11 @@ static void on_param_changed_cb(void *user_data, uint32_t id, const struct spa_p
 static void on_state_changed_cb(void *user_data, enum pw_stream_state prev_state, enum pw_stream_state new_state, const char *error) {
     gsr_pipewire_video *self = user_data;
 
-    fprintf(stderr, "gsr info: pipewire: stream %p previous state: \"%s\", new state: \"%s\" (error: %s)\n",
-         (void*)self->stream, pw_stream_state_as_string(prev_state), pw_stream_state_as_string(new_state),
+    gsr_log(GSR_LOG_LEVEL_INFO, "pipewire: stream %p previous state: \"%s\", new state: \"%s\" (error: %s)", (void*)self->stream, pw_stream_state_as_string(prev_state), pw_stream_state_as_string(new_state),
          error ? error : "none");
 
     if(new_state == PW_STREAM_STATE_ERROR && error && strstr(error, "alloc buffers")) {
-        fprintf(stderr, "gsr error: pipewire: the desktop portal failed to provide dmabuf (GPU) video frames. This happens when the "
-            "compositor only provides the frames as shared memory (CPU), which gpu-screen-recorder intentionally doesn't support for portal capture. "
-            "Capture the monitor directly (for example '-w screen' or '-w <monitor-name>', see 'gpu-screen-recorder --list-capture-options') instead of '-w portal'.\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "pipewire: the desktop portal failed to provide dmabuf (GPU) video frames. This happens when the compositor only provides the frames as shared memory (CPU), which gpu-screen-recorder intentionally doesn't support for portal capture. Capture the monitor directly (for example '-w screen' or '-w <monitor-name>', see 'gpu-screen-recorder --list-capture-options') instead of '-w portal'.");
     }
 
     pthread_mutex_lock(&self->mutex);
@@ -528,7 +524,7 @@ static void renegotiate_format(void *data, uint64_t expirations) {
     uint8_t params_buffer[8192];
     struct spa_pod_builder pod_builder = SPA_POD_BUILDER_INIT(params_buffer, sizeof(params_buffer));
     if (!gsr_pipewire_video_build_format_params(self, &pod_builder, params, &num_video_formats)) {
-        fprintf(stderr, "gsr error: renegotiate_format: failed to build formats\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "renegotiate_format: failed to build formats");
         pw_thread_loop_unlock(self->thread_loop);
         return;
     }
@@ -541,7 +537,7 @@ static bool spa_video_format_get_modifiers(gsr_pipewire_video *self, const enum 
     *num_modifiers = 0;
 
     if(max_modifiers == 0) {
-        fprintf(stderr, "gsr error: spa_video_format_get_modifiers: no space for modifiers left\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "spa_video_format_get_modifiers: no space for modifiers left");
         //modifiers[0] = DRM_FORMAT_MOD_LINEAR;
         //modifiers[1] = DRM_FORMAT_MOD_INVALID;
         //*num_modifiers = 2;
@@ -549,7 +545,7 @@ static bool spa_video_format_get_modifiers(gsr_pipewire_video *self, const enum 
     }
 
     if(!self->egl->eglQueryDmaBufModifiersEXT) {
-        fprintf(stderr, "gsr error: spa_video_format_get_modifiers: failed to initialize modifiers because eglQueryDmaBufModifiersEXT is not available\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "spa_video_format_get_modifiers: failed to initialize modifiers because eglQueryDmaBufModifiersEXT is not available");
         //modifiers[0] = DRM_FORMAT_MOD_LINEAR;
         //modifiers[1] = DRM_FORMAT_MOD_INVALID;
         //*num_modifiers = 2;
@@ -560,12 +556,12 @@ static bool spa_video_format_get_modifiers(gsr_pipewire_video *self, const enum 
 
     const int64_t drm_format = spa_video_format_to_drm_format(format);
     if(drm_format == DRM_FORMAT_INVALID) {
-        fprintf(stderr, "gsr error: spa_video_format_get_modifiers: unsupported format: %d\n", (int)format);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "spa_video_format_get_modifiers: unsupported format: %d", (int)format);
         return false;
     }
 
     if(!self->egl->eglQueryDmaBufModifiersEXT(self->egl->egl_display, drm_format, max_modifiers, modifiers, NULL, num_modifiers)) {
-        fprintf(stderr, "gsr error: spa_video_format_get_modifiers: eglQueryDmaBufModifiersEXT failed with drm format %d, %" PRIi64 "\n", (int)format, drm_format);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "spa_video_format_get_modifiers: eglQueryDmaBufModifiersEXT failed with drm format %d, %" PRIi64, (int)format, drm_format);
         modifiers[0] = DRM_FORMAT_MOD_INVALID;
         *num_modifiers = 1;
         return false;
@@ -618,18 +614,18 @@ static bool gsr_pipewire_video_setup_stream(gsr_pipewire_video *self) {
 
     self->thread_loop = pw_thread_loop_new("gsr screen capture", NULL);
     if(!self->thread_loop) {
-        fprintf(stderr, "gsr error: gsr_pipewire_video_setup_stream: failed to create pipewire thread\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_video_setup_stream: failed to create pipewire thread");
         goto error;
     }
 
     self->context = pw_context_new(pw_thread_loop_get_loop(self->thread_loop), NULL, 0);
     if(!self->context) {
-        fprintf(stderr, "gsr error: gsr_pipewire_video_setup_stream: failed to create pipewire context\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_video_setup_stream: failed to create pipewire context");
         goto error;
     }
 
     if(pw_thread_loop_start(self->thread_loop) < 0) {
-        fprintf(stderr, "gsr error: gsr_pipewire_video_setup_stream: failed to start thread\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_video_setup_stream: failed to start thread");
         goto error;
     }
 
@@ -639,7 +635,7 @@ static bool gsr_pipewire_video_setup_stream(gsr_pipewire_video *self) {
     self->core = pw_context_connect_fd(self->context, fcntl(self->fd, F_DUPFD_CLOEXEC, 5), NULL, 0);
     if(!self->core) {
         pw_thread_loop_unlock(self->thread_loop);
-        fprintf(stderr, "gsr error: gsr_pipewire_video_setup_stream: failed to connect to fd %d\n", self->fd);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_video_setup_stream: failed to connect to fd %d", self->fd);
         goto error;
     }
 
@@ -655,7 +651,7 @@ static bool gsr_pipewire_video_setup_stream(gsr_pipewire_video *self) {
     self->reneg = pw_loop_add_event(pw_thread_loop_get_loop(self->thread_loop), renegotiate_format, self);
     if(!self->reneg) {
         pw_thread_loop_unlock(self->thread_loop);
-        fprintf(stderr, "gsr error: gsr_pipewire_video_setup_stream: pw_loop_add_event failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_video_setup_stream: pw_loop_add_event failed");
         goto error;
     }
 
@@ -665,14 +661,14 @@ static bool gsr_pipewire_video_setup_stream(gsr_pipewire_video *self) {
                           PW_KEY_MEDIA_ROLE, "Screen", NULL));
     if(!self->stream) {
         pw_thread_loop_unlock(self->thread_loop);
-        fprintf(stderr, "gsr error: gsr_pipewire_video_setup_stream: failed to create stream\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_video_setup_stream: failed to create stream");
         goto error;
     }
     pw_stream_add_listener(self->stream, &self->stream_listener, &stream_events, self);
 
     if(!gsr_pipewire_video_build_format_params(self, &pod_builder, params, &num_video_formats)) {
         pw_thread_loop_unlock(self->thread_loop);
-        fprintf(stderr, "gsr error: gsr_pipewire_video_setup_stream: failed to build format params\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_video_setup_stream: failed to build format params");
         goto error;
     }
 
@@ -682,7 +678,7 @@ static bool gsr_pipewire_video_setup_stream(gsr_pipewire_video *self) {
         num_video_formats) < 0)
     {
         pw_thread_loop_unlock(self->thread_loop);
-        fprintf(stderr, "gsr error: gsr_pipewire_video_setup_stream: failed to connect stream\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_video_setup_stream: failed to connect stream");
         goto error;
     }
 
@@ -729,7 +725,7 @@ bool gsr_pipewire_video_init(gsr_pipewire_video *self, int pipewire_fd, uint32_t
     self->fd = pipewire_fd;
     self->node = pipewire_node;
     if(pthread_mutex_init(&self->mutex, NULL) != 0) {
-        fprintf(stderr, "gsr error: gsr_pipewire_video_init: failed to initialize mutex\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_video_init: failed to initialize mutex");
         gsr_pipewire_video_deinit(self);
         return false;
     }
@@ -839,11 +835,11 @@ static EGLImage gsr_pipewire_video_create_egl_image_with_fallback(gsr_pipewire_v
         image = gsr_pipewire_video_create_egl_image(self, fds, offsets, pitches, modifiers, true);
         if(!image) {
             if(self->format.info.raw.modifier == DRM_FORMAT_MOD_INVALID) {
-                fprintf(stderr, "gsr error: gsr_pipewire_video_create_egl_image_with_fallback: failed to create egl image with modifiers, trying without modifiers\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_video_create_egl_image_with_fallback: failed to create egl image with modifiers, trying without modifiers");
                 self->no_modifiers_fallback = true;
                 image = gsr_pipewire_video_create_egl_image(self, fds, offsets, pitches, modifiers, false);
             } else {
-                fprintf(stderr, "gsr error: gsr_pipewire_video_create_egl_image_with_fallback: failed to create egl image with modifier 0x%" PRIx64 ", renegotiating with a different modifier\n", self->format.info.raw.modifier);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_video_create_egl_image_with_fallback: failed to create egl image with modifier 0x%" PRIx64 ", renegotiating with a different modifier", self->format.info.raw.modifier);
                 self->negotiated = false;
                 pw_thread_loop_lock(self->thread_loop);
                 gsr_pipewire_video_remove_modifier(self, self->format.info.raw.modifier);
@@ -870,7 +866,7 @@ static void gsr_pipewire_video_bind_image_to_texture_with_fallback(gsr_pipewire_
         gsr_pipewire_video_bind_image_to_texture(self, image, texture_map.external_texture_id, true);
     } else {
         if(!gsr_pipewire_video_bind_image_to_texture(self, image, texture_map.texture_id, false)) {
-            fprintf(stderr, "gsr error: gsr_pipewire_video_map_texture: failed to bind image to texture, trying with external texture\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_pipewire_video_map_texture: failed to bind image to texture, trying with external texture");
             self->external_texture_fallback = true;
             gsr_pipewire_video_bind_image_to_texture(self, image, texture_map.external_texture_id, true);
         }

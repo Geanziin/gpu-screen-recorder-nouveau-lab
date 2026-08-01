@@ -1,4 +1,5 @@
 #include "../../include/replay_buffer/replay_buffer_disk.h"
+#include "../../include/log.h"
 #include "../../include/utils.h"
 
 #include <stdlib.h>
@@ -25,12 +26,12 @@ static void gsr_av_packet_disk_init(gsr_av_packet_disk *self, const AVPacket *av
 static gsr_replay_buffer_file* gsr_replay_buffer_file_create(char *replay_directory, size_t replay_storage_counter, double timestamp, int *replay_storage_fd) {
     gsr_replay_buffer_file *self = calloc(1, sizeof(gsr_replay_buffer_file));
     if(!self) {
-        fprintf(stderr, "gsr error: gsr_av_packet_file_init: failed to create buffer file\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_av_packet_file_init: failed to create buffer file");
         return NULL;
     }
 
     if(create_directory_recursive(replay_directory) != 0) {
-        fprintf(stderr, "gsr error: gsr_av_packet_file_init: failed to create replay directory: %s\n", replay_directory);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_av_packet_file_init: failed to create replay directory: %s", replay_directory);
         free(self);
         return NULL;
     }
@@ -39,7 +40,7 @@ static gsr_replay_buffer_file* gsr_replay_buffer_file_create(char *replay_direct
     snprintf(filename, sizeof(filename), "%s/%s_%d.gsr", replay_directory, FILE_PREFIX, (int)replay_storage_counter);
     *replay_storage_fd = creat(filename, 0700);
     if(*replay_storage_fd <= 0) {
-        fprintf(stderr, "gsr error: gsr_av_packet_file_init: failed to create replay file: %s\n", filename);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_av_packet_file_init: failed to create replay file: %s", filename);
         free(self);
         return NULL;
     }
@@ -135,7 +136,7 @@ static bool file_write_all(int fd, const uint8_t *data, size_t size, size_t *byt
 
 static bool gsr_replay_buffer_disk_create_next_file(gsr_replay_buffer_disk *self, double timestamp) {
     if(self->num_files + 1 >= GSR_REPLAY_BUFFER_CAPACITY_NUM_FILES) {
-        fprintf(stderr, "gsr error: gsr_replay_buffer_disk_create_next_file: too many replay buffer files created! (> %d), either reduce the replay buffer time or report this as a bug\n", (int)GSR_REPLAY_BUFFER_CAPACITY_NUM_FILES);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_replay_buffer_disk_create_next_file: too many replay buffer files created! (> %d), either reduce the replay buffer time or report this as a bug", (int)GSR_REPLAY_BUFFER_CAPACITY_NUM_FILES);
         return false;
     }
 
@@ -160,7 +161,7 @@ static bool gsr_replay_buffer_disk_append_to_current_file(gsr_replay_buffer_disk
 
         void *new_packets = realloc(replay_buffer_file->packets, new_capacity_num_packets * sizeof(gsr_av_packet_disk));
         if(!new_packets) {
-            fprintf(stderr, "gsr error: gsr_replay_buffer_disk_append_to_current_file: failed to reallocate replay buffer file packets\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_replay_buffer_disk_append_to_current_file: failed to reallocate replay buffer file packets");
             return false;
         }
 
@@ -233,20 +234,20 @@ static uint8_t* gsr_replay_buffer_disk_iterator_get_packet_data(gsr_replay_buffe
         snprintf(filename, sizeof(filename), "%s/%s_%d.gsr", self->replay_directory, FILE_PREFIX, (int)file->id);
         file->fd = open(filename, O_RDONLY);
         if(file->fd <= 0) {
-            fprintf(stderr, "gsr error: gsr_replay_buffer_disk_iterator_get_packet_data: failed to open file\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_replay_buffer_disk_iterator_get_packet_data: failed to open file");
             return NULL;
         }
     }
 
     const gsr_av_packet_disk *packet = &self->files[iterator.file_index]->packets[iterator.packet_index];
     if(lseek(file->fd, packet->data_index, SEEK_SET) == -1) {
-        fprintf(stderr, "gsr error: gsr_replay_buffer_disk_iterator_get_packet_data: failed to seek\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_replay_buffer_disk_iterator_get_packet_data: failed to seek");
         return NULL;
     }
 
     uint8_t *packet_data = malloc(packet->packet.size);
     if(read(file->fd, packet_data, packet->packet.size) != packet->packet.size) {
-        fprintf(stderr, "gsr error: gsr_replay_buffer_disk_iterator_get_packet_data: failed to read data from file\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_replay_buffer_disk_iterator_get_packet_data: failed to read data from file");
         free(packet_data);
         return NULL;
     }

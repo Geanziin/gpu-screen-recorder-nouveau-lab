@@ -1,4 +1,5 @@
 #include "../include/wayland_host_bridge.h"
+#include "../include/log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -84,14 +85,14 @@ static struct wl_display* connect_via_bridge() {
     waitpid(pid, &status, 0);
 
     if(wayland_fd < 0) {
-        fprintf(stderr, "WaylandHostBridge: gsr-wayland-bridge did not return a wayland fd\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "WaylandHostBridge: gsr-wayland-bridge did not return a wayland fd");
         return NULL;
     }
 
     struct wl_display *dpy = wl_display_connect_to_fd(wayland_fd);
     if(!dpy) {
         close(wayland_fd);
-        fprintf(stderr, "WaylandHostBridge: wl_display_connect_to_fd failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "WaylandHostBridge: wl_display_connect_to_fd failed");
         return NULL;
     }
     return dpy;
@@ -103,7 +104,7 @@ struct wl_display* wayland_connect_to_host() {
         struct wl_display *dpy = connect_via_bridge();
         if(dpy)
             return dpy;
-        fprintf(stderr, "WaylandHostBridge: falling back to sandboxed wl_display_connect\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "WaylandHostBridge: falling back to sandboxed wl_display_connect");
     }
     return wl_display_connect(NULL);
 }

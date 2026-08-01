@@ -1,4 +1,5 @@
 #include "../../include/capture/portal.h"
+#include "../../include/log.h"
 #include "../../include/color_conversion.h"
 #include "../../include/egl.h"
 #include "../../include/utils.h"
@@ -111,7 +112,7 @@ static bool create_directory_to_file(const char *filepath) {
 
     snprintf(dir, sizeof(dir), "%.*s", (int)(split - filepath), filepath);
     if(create_directory_recursive(dir) != 0) {
-        fprintf(stderr, "gsr warning: gsr_capture_portal_save_restore_token: failed to create directory (%s) for restore token\n", dir);
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_capture_portal_save_restore_token: failed to create directory (%s) for restore token", dir);
         return false;
     }
     return true;
@@ -130,18 +131,18 @@ static void gsr_capture_portal_save_restore_token(const char *restore_token, con
 
     FILE *f = fopen(restore_token_path, "wb");
     if(!f) {
-        fprintf(stderr, "gsr warning: gsr_capture_portal_save_restore_token: failed to create restore token file (%s)\n", restore_token_path);
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_capture_portal_save_restore_token: failed to create restore token file (%s)", restore_token_path);
         return;
     }
 
     const int restore_token_len = strlen(restore_token);
     if((long)fwrite(restore_token, 1, restore_token_len, f) != restore_token_len) {
-        fprintf(stderr, "gsr warning: gsr_capture_portal_save_restore_token: failed to write restore token to file (%s)\n", restore_token_path);
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_capture_portal_save_restore_token: failed to write restore token to file (%s)", restore_token_path);
         fclose(f);
         return;
     }
 
-    fprintf(stderr, "gsr info: gsr_capture_portal_save_restore_token: saved restore token to cache (%s)\n", restore_token);
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_portal_save_restore_token: saved restore token to cache (%s)", restore_token);
     fclose(f);
 }
 
@@ -158,7 +159,7 @@ static void gsr_capture_portal_get_restore_token_from_cache(char *buffer, size_t
 
     FILE *f = fopen(restore_token_path, "rb");
     if(!f) {
-        fprintf(stderr, "gsr info: gsr_capture_portal_get_restore_token_from_cache: no restore token found in cache or failed to load (%s)\n", restore_token_path);
+        gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_portal_get_restore_token_from_cache: no restore token found in cache or failed to load (%s)", restore_token_path);
         return;
     }
 
@@ -168,7 +169,7 @@ static void gsr_capture_portal_get_restore_token_from_cache(char *buffer, size_t
 
     if(file_size > 0 && file_size < 1024 && file_size < (long)buffer_size && (long)fread(buffer, 1, file_size, f) != file_size) {
         buffer[0] = '\0';
-        fprintf(stderr, "gsr warning: gsr_capture_portal_get_restore_token_from_cache: failed to read restore token (%s)\n", restore_token_path);
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_capture_portal_get_restore_token_from_cache: failed to read restore token (%s)", restore_token_path);
         fclose(f);
         return;
     }
@@ -176,7 +177,7 @@ static void gsr_capture_portal_get_restore_token_from_cache(char *buffer, size_t
     if(file_size > 0 && file_size < (long)buffer_size)
         buffer[file_size] = '\0';
 
-    fprintf(stderr, "gsr info: gsr_capture_portal_get_restore_token_from_cache: read cached restore token (%s)\n", buffer);
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_portal_get_restore_token_from_cache: read cached restore token (%s)", buffer);
     fclose(f);
 }
 
@@ -193,24 +194,24 @@ static int gsr_capture_portal_setup_dbus(gsr_capture_portal *self, int *pipewire
     if(!gsr_dbus_init(&self->dbus, restore_token))
         return -1;
 
-    fprintf(stderr, "gsr info: gsr_capture_portal_setup_dbus: CreateSession\n");
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_portal_setup_dbus: CreateSession");
     response_status = gsr_dbus_screencast_create_session(&self->dbus, &self->session_handle);
     if(response_status != 0) {
-        fprintf(stderr, "gsr error: gsr_capture_portal_setup_dbus: CreateSession failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_portal_setup_dbus: CreateSession failed");
         return response_status;
     }
 
-    fprintf(stderr, "gsr info: gsr_capture_portal_setup_dbus: SelectSources\n");
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_portal_setup_dbus: SelectSources");
     response_status = gsr_dbus_screencast_select_sources(&self->dbus, self->session_handle, GSR_PORTAL_CAPTURE_TYPE_ALL, self->params.record_cursor ? GSR_PORTAL_CURSOR_MODE_METADATA : GSR_PORTAL_CURSOR_MODE_HIDDEN);
     if(response_status != 0) {
-        fprintf(stderr, "gsr error: gsr_capture_portal_setup_dbus: SelectSources failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_portal_setup_dbus: SelectSources failed");
         return response_status;
     }
 
-    fprintf(stderr, "gsr info: gsr_capture_portal_setup_dbus: Start\n");
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_portal_setup_dbus: Start");
     response_status = gsr_dbus_screencast_start(&self->dbus, self->session_handle, pipewire_node);
     if(response_status != 0) {
-        fprintf(stderr, "gsr error: gsr_capture_portal_setup_dbus: Start failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_portal_setup_dbus: Start failed");
         return response_status;
     }
 
@@ -218,31 +219,31 @@ static int gsr_capture_portal_setup_dbus(gsr_capture_portal *self, int *pipewire
     if(screencast_restore_token)
         gsr_capture_portal_save_restore_token(screencast_restore_token, self->params.portal_session_token_filepath);
 
-    fprintf(stderr, "gsr info: gsr_capture_portal_setup_dbus: OpenPipeWireRemote\n");
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_portal_setup_dbus: OpenPipeWireRemote");
     if(!gsr_dbus_screencast_open_pipewire_remote(&self->dbus, self->session_handle, pipewire_fd)) {
-        fprintf(stderr, "gsr error: gsr_capture_portal_setup_dbus: OpenPipeWireRemote failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_portal_setup_dbus: OpenPipeWireRemote failed");
         return -1;
     }
 
-    fprintf(stderr, "gsr info: gsr_capture_portal_setup_dbus: desktop portal setup finished\n");
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_portal_setup_dbus: desktop portal setup finished");
     return 0;
 }
 
 static bool gsr_capture_portal_get_frame_dimensions(gsr_capture_portal *self) {
-    fprintf(stderr, "gsr info: gsr_capture_portal_start: waiting for pipewire negotiation\n");
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_portal_start: waiting for pipewire negotiation");
 
     const double start_time = clock_get_monotonic_seconds();
     while(clock_get_monotonic_seconds() - start_time < 5.0) {
         if(gsr_pipewire_video_map_texture(&self->pipewire, self->texture_map, &self->pipewire_data)) {
             self->capture_size.x = self->pipewire_data.region.width;
             self->capture_size.y = self->pipewire_data.region.height;
-            fprintf(stderr, "gsr info: gsr_capture_portal_start: pipewire negotiation finished\n");
+            gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_portal_start: pipewire negotiation finished");
             return true;
         }
         usleep(30 * 1000); /* 30 milliseconds */
     }
 
-    fprintf(stderr, "gsr info: gsr_capture_portal_start: timed out waiting for pipewire negotiation (5 seconds)\n");
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_portal_start: timed out waiting for pipewire negotiation (5 seconds)");
     return false;
 }
 
@@ -259,24 +260,24 @@ static int gsr_capture_portal_setup(gsr_capture_portal *self, int fps) {
         // 2: The user interaction was ended in some other way
         // Response status value 2 happens usually if there was some kind of error in the desktop portal on the system
         if(response_status == 2) {
-            fprintf(stderr, "gsr error: gsr_capture_portal_setup: desktop portal capture failed. Either you Wayland compositor doesn't support desktop portal capture or it's incorrectly setup on your system\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_portal_setup: desktop portal capture failed. Either you Wayland compositor doesn't support desktop portal capture or it's incorrectly setup on your system");
             return 50;
         } else if(response_status == 1) {
-            fprintf(stderr, "gsr error: gsr_capture_portal_setup: desktop portal capture failed. It seems like desktop portal capture was canceled by the user.\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_portal_setup: desktop portal capture failed. It seems like desktop portal capture was canceled by the user.");
             return PORTAL_CAPTURE_CANCELED_BY_USER_EXIT_CODE;
         } else {
             return -1;
         }
     }
 
-    fprintf(stderr, "gsr info: gsr_capture_portal_setup: setting up pipewire\n");
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_portal_setup: setting up pipewire");
     /* TODO: support hdr when pipewire supports it */
     /* gsr_pipewire closes the pipewire fd, even on failure */
     if(!gsr_pipewire_video_init(&self->pipewire, pipewire_fd, pipewire_node, fps, self->params.record_cursor, self->params.egl)) {
-        fprintf(stderr, "gsr error: gsr_capture_portal_setup: failed to setup pipewire with fd: %d, node: %" PRIu32 "\n", pipewire_fd, pipewire_node);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_portal_setup: failed to setup pipewire with fd: %d, node: %" PRIu32, pipewire_fd, pipewire_node);
         return -1;
     }
-    fprintf(stderr, "gsr info: gsr_capture_portal_setup: pipewire setup finished\n");
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_portal_setup: pipewire setup finished");
 
     if(!gsr_capture_portal_get_frame_dimensions(self))
         return -1;
@@ -329,7 +330,7 @@ static void gsr_capture_portal_pre_capture(gsr_capture *cap, gsr_capture_metadat
         return;
 
     if(gsr_pipewire_video_should_restart(&self->pipewire)) {
-        fprintf(stderr, "gsr info: gsr_capture_portal_pre_capture: pipewire capture was paused, trying to start capture again\n");
+        gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_portal_pre_capture: pipewire capture was paused, trying to start capture again");
         gsr_capture_portal_stop(self);
         const int result = gsr_capture_portal_setup(self, capture_metadata->fps);
         if(result != 0) {
@@ -452,7 +453,7 @@ static void gsr_capture_portal_destroy(gsr_capture *cap) {
 
 gsr_capture* gsr_capture_portal_create(const gsr_capture_portal_params *params) {
     if(!params) {
-        fprintf(stderr, "gsr error: gsr_capture_portal_create params is NULL\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_portal_create params is NULL");
         return NULL;
     }
 

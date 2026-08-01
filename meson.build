@@ -30,6 +30,7 @@ src = [
     'src/replay_buffer/replay_buffer.c',
     'src/replay_buffer/replay_buffer_ram.c',
     'src/replay_buffer/replay_buffer_disk.c',
+    'src/log.c',
     'src/egl.c',
     'src/cuda.c',
     'src/window_texture.c',

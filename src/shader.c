@@ -1,4 +1,5 @@
 #include "../include/shader.h"
+#include "../include/log.h"
 #include "../include/egl.h"
 #include <stdio.h>
 #include <assert.h>
@@ -12,7 +13,7 @@ static int min_int(int a, int b) {
 static unsigned int load_shader(gsr_egl *egl, unsigned int type, const char *source) {
     unsigned int shader_id = egl->glCreateShader(type);
     if(shader_id == 0) {
-        fprintf(stderr, "gsr error: load_shader: failed to create shader, error: %d\n", egl->glGetError());
+        gsr_log(GSR_LOG_LEVEL_ERROR, "load_shader: failed to create shader, error: %d", egl->glGetError());
         return 0;
     }
 
@@ -28,7 +29,7 @@ static unsigned int load_shader(gsr_egl *egl, unsigned int type, const char *sou
         if(info_length > 1 && print_compile_errors) {
             char info_log[4096];
             egl->glGetShaderInfoLog(shader_id, min_int(4096, info_length), NULL, info_log);
-            fprintf(stderr, "gsr error: load_shader: failed to compile shader, error:\n%s\nshader source:\n%s\n", info_log, source);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "load_shader: failed to compile shader, error:\n%s\nshader source:\n%s", info_log, source);
         }
 
         egl->glDeleteShader(shader_id);
@@ -59,7 +60,7 @@ static unsigned int load_program(gsr_egl *egl, const char *vertex_shader, const 
 
     program_id = egl->glCreateProgram();
     if(program_id == 0) {
-        fprintf(stderr, "gsr error: load_program: failed to create shader program, error: %d\n", egl->glGetError());
+        gsr_log(GSR_LOG_LEVEL_ERROR, "load_program: failed to create shader program, error: %d", egl->glGetError());
         goto done;
     }
 
@@ -79,7 +80,7 @@ static unsigned int load_program(gsr_egl *egl, const char *vertex_shader, const 
         if(info_length > 1) {
             char info_log[4096];
             egl->glGetProgramInfoLog(program_id, min_int(4096, info_length), NULL, info_log);
-            fprintf(stderr, "gsr error: load program: linking shader program failed, error:\n%s\n", info_log);            
+            gsr_log(GSR_LOG_LEVEL_ERROR, "load program: linking shader program failed, error:\n%s", info_log);            
         }
 
         goto done;
@@ -106,7 +107,7 @@ int gsr_shader_init(gsr_shader *self, gsr_egl *egl, const char *vertex_shader, c
     self->program_id = 0;
 
     if(!vertex_shader && !fragment_shader) {
-        fprintf(stderr, "gsr error: gsr_shader_init: vertex and fragment shader can't be NULL at the same time\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_shader_init: vertex and fragment shader can't be NULL at the same time");
         return -1;
     }
 

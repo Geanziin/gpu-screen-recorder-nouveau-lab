@@ -1,4 +1,5 @@
 #include "../include/color_conversion.h"
+#include "../include/log.h"
 #include "../include/egl.h"
 #include <stdio.h>
 #include <string.h>
@@ -620,23 +621,23 @@ static bool gsr_color_conversion_load_hdr_graphics_shaders(gsr_color_conversion 
         case GSR_DESTINATION_COLOR_NV12:
         case GSR_DESTINATION_COLOR_P010: {
             if(load_graphics_shader_y(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_Y_HDR], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_Y_HDR], self->params.destination_color, self->params.color_range, false, true) != 0) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_load_hdr_graphics_shaders: failed to load Y graphics shader (hdr)\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_load_hdr_graphics_shaders: failed to load Y graphics shader (hdr)");
                 return false;
             }
 
             if(load_graphics_shader_uv(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_UV_HDR], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_UV_HDR], self->params.destination_color, self->params.color_range, false, true) != 0) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_load_hdr_graphics_shaders: failed to load UV graphics shader (hdr)\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_load_hdr_graphics_shaders: failed to load UV graphics shader (hdr)");
                 return false;
             }
 
             if(self->params.load_external_image_shader) {
                 if(load_graphics_shader_y(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_Y_HDR_EXTERNAL], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_Y_HDR_EXTERNAL], self->params.destination_color, self->params.color_range, true, true) != 0) {
-                    fprintf(stderr, "gsr error: gsr_color_conversion_load_hdr_graphics_shaders: failed to load Y graphics shader (hdr, external)\n");
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_load_hdr_graphics_shaders: failed to load Y graphics shader (hdr, external)");
                     return false;
                 }
 
                 if(load_graphics_shader_uv(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_UV_HDR_EXTERNAL], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_UV_HDR_EXTERNAL], self->params.destination_color, self->params.color_range, true, true) != 0) {
-                    fprintf(stderr, "gsr error: gsr_color_conversion_load_hdr_graphics_shaders: failed to load UV graphics shader (hdr, external)\n");
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_load_hdr_graphics_shaders: failed to load UV graphics shader (hdr, external)");
                     return false;
                 }
             }
@@ -644,13 +645,13 @@ static bool gsr_color_conversion_load_hdr_graphics_shaders(gsr_color_conversion 
         }
         case GSR_DESTINATION_COLOR_RGB: {
             if(load_graphics_shader_rgb(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_RGB_HDR], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_RGB_HDR], false, true) != 0) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_load_hdr_graphics_shaders: failed to load RGB graphics shader (hdr)\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_load_hdr_graphics_shaders: failed to load RGB graphics shader (hdr)");
                 return false;
             }
 
             if(self->params.load_external_image_shader) {
                 if(load_graphics_shader_rgb(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_RGB_HDR_EXTERNAL], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_RGB_HDR_EXTERNAL], true, true) != 0) {
-                    fprintf(stderr, "gsr error: gsr_color_conversion_load_hdr_graphics_shaders: failed to load RGB graphics shader (hdr, external)\n");
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_load_hdr_graphics_shaders: failed to load RGB graphics shader (hdr, external)");
                     return false;
                 }
             }
@@ -686,7 +687,7 @@ static int load_framebuffers(gsr_color_conversion *self) {
     self->params.egl->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, self->params.destination_textures[0], 0);
     self->params.egl->glDrawBuffers(1, &draw_buffer);
     if(self->params.egl->glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        fprintf(stderr, "gsr error: gsr_color_conversion_init: failed to create framebuffer for Y\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: failed to create framebuffer for Y");
         goto err;
     }
 
@@ -695,7 +696,7 @@ static int load_framebuffers(gsr_color_conversion *self) {
         self->params.egl->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, self->params.destination_textures[1], 0);
         self->params.egl->glDrawBuffers(1, &draw_buffer);
         if(self->params.egl->glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-            fprintf(stderr, "gsr error: gsr_color_conversion_init: failed to create framebuffer for UV\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: failed to create framebuffer for UV");
             goto err;
         }
     }
@@ -731,34 +732,34 @@ static bool gsr_color_conversion_load_graphics_shaders(gsr_color_conversion *sel
         case GSR_DESTINATION_COLOR_NV12:
         case GSR_DESTINATION_COLOR_P010: {
             if(load_graphics_shader_y(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_Y], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_Y], self->params.destination_color, self->params.color_range, false, false) != 0) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_init: failed to load Y graphics shader\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: failed to load Y graphics shader");
                 return false;
             }
 
             if(load_graphics_shader_uv(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_UV], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_UV], self->params.destination_color, self->params.color_range, false, false) != 0) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_init: failed to load UV graphics shader\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: failed to load UV graphics shader");
                 return false;
             }
 
             if(load_graphics_shader_yuyv_to_y(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_YUYV_TO_Y], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_YUYV_TO_Y], false) != 0) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_init: failed to load YUYV to Y graphics shader\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: failed to load YUYV to Y graphics shader");
                 return false;
             }
 
             if(load_graphics_shader_yuyv_to_uv(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_YUYV_TO_UV], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_YUYV_TO_UV], false) != 0) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_init: failed to load YUYV to UV graphics shader\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: failed to load YUYV to UV graphics shader");
                 return false;
             }
             break;
         }
         case GSR_DESTINATION_COLOR_RGB: {
             if(load_graphics_shader_rgb(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_RGB], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_RGB], false, false) != 0) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_init: failed to load RGB graphics shader\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: failed to load RGB graphics shader");
                 return false;
             }
 
             if(load_graphics_shader_yuyv_to_rgb(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_YUYV_TO_RGB], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_YUYV_TO_RGB], false) != 0) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_init: failed to load YUYV to RGB graphics shader\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: failed to load YUYV to RGB graphics shader");
                 return false;
             }
             break;
@@ -772,34 +773,34 @@ static bool gsr_color_conversion_load_external_graphics_shaders(gsr_color_conver
         case GSR_DESTINATION_COLOR_NV12:
         case GSR_DESTINATION_COLOR_P010: {
             if(load_graphics_shader_y(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_Y_EXTERNAL], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_Y_EXTERNAL], self->params.destination_color, self->params.color_range, true, false) != 0) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_init: failed to load Y graphics shader (external)\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: failed to load Y graphics shader (external)");
                 return false;
             }
 
             if(load_graphics_shader_uv(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_UV_EXTERNAL], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_UV_EXTERNAL], self->params.destination_color, self->params.color_range, true, false) != 0) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_init: failed to load UV graphics shader (external)\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: failed to load UV graphics shader (external)");
                 return false;
             }
 
             if(load_graphics_shader_yuyv_to_y(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_YUYV_TO_Y_EXTERNAL], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_YUYV_TO_Y_EXTERNAL], true) != 0) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_init: failed to load YUYV to Y graphics shader (external)\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: failed to load YUYV to Y graphics shader (external)");
                 return false;
             }
 
             if(load_graphics_shader_yuyv_to_uv(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_YUYV_TO_UV_EXTERNAL], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_YUYV_TO_UV_EXTERNAL], true) != 0) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_init: failed to load YUYV to UV graphics shader (external)\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: failed to load YUYV to UV graphics shader (external)");
                 return false;
             }
             break;
         }
         case GSR_DESTINATION_COLOR_RGB: {
             if(load_graphics_shader_rgb(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_RGB_EXTERNAL], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_RGB_EXTERNAL], true, false) != 0) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_init: failed to load RGB graphics shader (external)\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: failed to load RGB graphics shader (external)");
                 return false;
             }
 
             if(load_graphics_shader_yuyv_to_rgb(&self->graphics_shaders[GRAPHICS_SHADER_INDEX_YUYV_TO_RGB_EXTERNAL], self->params.egl, &self->graphics_uniforms[GRAPHICS_SHADER_INDEX_YUYV_TO_RGB_EXTERNAL], true) != 0) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_init: failed to load YUYV to RGB graphics shader (external)\n");
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: failed to load YUYV to RGB graphics shader (external)");
                 return false;
             }
             break;
@@ -819,14 +820,14 @@ int gsr_color_conversion_init(gsr_color_conversion *self, const gsr_color_conver
         case GSR_DESTINATION_COLOR_NV12:
         case GSR_DESTINATION_COLOR_P010: {
             if(self->params.num_destination_textures != 2) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_init: expected 2 destination textures for destination color NV12/P010, got %d destination texture(s)\n", self->params.num_destination_textures);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: expected 2 destination textures for destination color NV12/P010, got %d destination texture(s)", self->params.num_destination_textures);
                 goto err;
             }
             break;
         }
         case GSR_DESTINATION_COLOR_RGB: {
             if(self->params.num_destination_textures != 1) {
-                fprintf(stderr, "gsr error: gsr_color_conversion_init: expected 1 destination textures for destination color RGB8, got %d destination texture(s)\n", self->params.num_destination_textures);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_init: expected 1 destination textures for destination color RGB8, got %d destination texture(s)", self->params.num_destination_textures);
                 goto err;
             }
             break;
@@ -1143,7 +1144,7 @@ static void gsr_color_conversion_draw_graphics(gsr_color_conversion *self, unsig
 void gsr_color_conversion_draw(gsr_color_conversion *self, unsigned int texture_id, vec2i destination_pos, vec2i destination_size, vec2i source_pos, vec2i source_size, vec2i texture_size, gsr_rotation rotation, gsr_flip flip, gsr_source_color source_color, bool external_texture) {
     assert(!external_texture || self->params.load_external_image_shader);
     if(external_texture && !self->params.load_external_image_shader) {
-        fprintf(stderr, "gsr error: gsr_color_conversion_draw: external texture not loaded\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_color_conversion_draw: external texture not loaded");
         return;
     }
 

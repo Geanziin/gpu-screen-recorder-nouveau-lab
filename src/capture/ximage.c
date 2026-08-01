@@ -1,4 +1,5 @@
 #include "../../include/capture/ximage.h"
+#include "../../include/log.h"
 #include "../../include/utils.h"
 #include "../../include/cursor.h"
 #include "../../include/color_conversion.h"
@@ -39,7 +40,7 @@ static int gsr_capture_ximage_start(gsr_capture *cap, gsr_capture_metadata *capt
     self->root_window = DefaultRootWindow(self->display);
 
     if(!get_monitor_by_name(self->params.egl, GSR_CONNECTION_X11, self->params.display_to_capture, &self->monitor)) {
-        fprintf(stderr, "gsr error: gsr_capture_ximage_start: failed to find monitor by name \"%s\"\n", self->params.display_to_capture);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_ximage_start: failed to find monitor by name \"%s\"", self->params.display_to_capture);
         gsr_capture_ximage_stop(self);
         return -1;
     }
@@ -61,7 +62,7 @@ static int gsr_capture_ximage_start(gsr_capture *cap, gsr_capture_metadata *capt
 
     self->texture_id = gl_create_texture(self->params.egl, self->capture_size.x, self->capture_size.y, GL_RGB8, GL_RGB, GL_LINEAR);
     if(self->texture_id == 0) {
-        fprintf(stderr, "gsr error: gsr_capture_ximage_start: failed to create texture\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_ximage_start: failed to create texture");
         gsr_capture_ximage_stop(self);
         return -1;
     }
@@ -95,14 +96,14 @@ static bool gsr_capture_ximage_upload_to_texture(gsr_capture_ximage *self, int x
 
     XImage *image = XGetImage(self->display, self->root_window, x, y, width, height, AllPlanes, ZPixmap);
     if(!image) {
-        fprintf(stderr, "gsr error: gsr_capture_ximage_upload_to_texture: XGetImage failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_ximage_upload_to_texture: XGetImage failed");
         return false;
     }
 
     bool success = false;
     uint8_t *image_data = malloc(image->width * image->height * 3);
     if(!image_data) {
-        fprintf(stderr, "gsr error: gsr_capture_ximage_upload_to_texture: failed to allocate image data\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_ximage_upload_to_texture: failed to allocate image data");
         goto done;
     }
 
@@ -186,7 +187,7 @@ static void gsr_capture_ximage_destroy(gsr_capture *cap) {
 
 gsr_capture* gsr_capture_ximage_create(const gsr_capture_ximage_params *params) {
     if(!params) {
-        fprintf(stderr, "gsr error: gsr_capture_ximage_create params is NULL\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_ximage_create params is NULL");
         return NULL;
     }
 

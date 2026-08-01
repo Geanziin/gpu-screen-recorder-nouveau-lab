@@ -1,4 +1,5 @@
 #include "../../../include/encoder/video/software.h"
+#include "../../../include/log.h"
 #include "../../../include/egl.h"
 #include "../../../include/utils.h"
 
@@ -19,13 +20,13 @@ typedef struct {
 static bool gsr_video_encoder_software_setup_textures(gsr_video_encoder_software *self, AVCodecContext *video_codec_context, AVFrame *frame) {
     int res = av_frame_get_buffer(frame, LINESIZE_ALIGNMENT);
     if(res < 0) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_software_setup_textures: av_frame_get_buffer failed: %d\n", res);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_software_setup_textures: av_frame_get_buffer failed: %d", res);
         return false;
     }
 
     res = av_frame_make_writable(frame);
     if(res < 0) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_software_setup_textures: av_frame_make_writable failed: %d\n", res);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_software_setup_textures: av_frame_make_writable failed: %d", res);
         return false;
     }
 
@@ -38,7 +39,7 @@ static bool gsr_video_encoder_software_setup_textures(gsr_video_encoder_software
         self->texture_sizes[i] = (vec2i){ video_codec_context->width / div[i], video_codec_context->height / div[i] };
         self->target_textures[i] = gl_create_texture(self->params.egl, self->texture_sizes[i].x, self->texture_sizes[i].y, self->params.color_depth == GSR_COLOR_DEPTH_8_BITS ? internal_formats_nv12[i] : internal_formats_p010[i], formats[i], GL_NEAREST);
         if(self->target_textures[i] == 0) {
-            fprintf(stderr, "gsr error: gsr_capture_kms_setup_cuda_textures: failed to create opengl texture\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_kms_setup_cuda_textures: failed to create opengl texture");
             return false;
         }
     }

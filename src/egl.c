@@ -1,4 +1,5 @@
 #include "../include/egl.h"
+#include "../include/log.h"
 #include "../include/window/window.h"
 #include "../include/library_loader.h"
 #include "../include/utils.h"
@@ -53,34 +54,34 @@ static bool gsr_egl_create_window(gsr_egl *self, bool enable_debug) {
 
     self->egl_display = self->eglGetDisplay((EGLNativeDisplayType)gsr_window_get_display(self->window));
     if(!self->egl_display) {
-        fprintf(stderr, "gsr error: gsr_egl_create_window failed: eglGetDisplay failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_window failed: eglGetDisplay failed");
         goto fail;
     }
 
     if(!self->eglInitialize(self->egl_display, NULL, NULL)) {
-        fprintf(stderr, "gsr error: gsr_egl_create_window failed: eglInitialize failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_window failed: eglInitialize failed");
         goto fail;
     }
 
     if(!self->eglChooseConfig(self->egl_display, attr, &ecfg, 1, &num_config) || num_config != 1) {
-        fprintf(stderr, "gsr error: gsr_egl_create_window failed: failed to find a matching config\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_window failed: failed to find a matching config");
         goto fail;
     }
 
     self->egl_context = self->eglCreateContext(self->egl_display, ecfg, NULL, ctxattr);
     if(!self->egl_context) {
-        fprintf(stderr, "gsr error: gsr_egl_create_window failed: failed to create egl context\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_window failed: failed to create egl context");
         goto fail;
     }
 
     self->egl_surface = self->eglCreateWindowSurface(self->egl_display, ecfg, (EGLNativeWindowType)gsr_window_get_window(self->window), NULL);
     if(!self->egl_surface) {
-        fprintf(stderr, "gsr error: gsr_egl_create_window failed: failed to create window surface\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_window failed: failed to create window surface");
         goto fail;
     }
 
     if(!self->eglMakeCurrent(self->egl_display, self->egl_surface, self->egl_surface, self->egl_context)) {
-        fprintf(stderr, "gsr error: gsr_egl_create_window failed: failed to make egl context current\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_window failed: failed to make egl context current");
         goto fail;
     }
 
@@ -141,7 +142,7 @@ static bool gsr_egl_switch_to_glx_context(gsr_egl *self) {
 
     self->glx_fb_config = glx_fb_config_choose(self, display);
     if(!self->glx_fb_config) {
-        fprintf(stderr, "gsr error: gsr_egl_create_window failed: failed to find a suitable fb config\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_window failed: failed to find a suitable fb config");
         goto fail;
     }
 
@@ -149,12 +150,12 @@ static bool gsr_egl_switch_to_glx_context(gsr_egl *self) {
     //self->glx_context = self->glXCreateContextAttribsARB(display, self->glx_fb_config, NULL, True, context_attrib_list);
     self->glx_context = self->glXCreateNewContext(display, self->glx_fb_config, GLX_RGBA_TYPE, NULL, True);
     if(!self->glx_context) {
-        fprintf(stderr, "gsr error: gsr_egl_create_window failed: failed to create glx context\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_window failed: failed to create glx context");
         goto fail;
     }
 
     if(!self->glXMakeContextCurrent(display, window, window, self->glx_context)) {
-        fprintf(stderr, "gsr error: gsr_egl_create_window failed: failed to make glx context current\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_window failed: failed to make glx context current");
         goto fail;
     }
 
@@ -193,7 +194,7 @@ static bool gsr_egl_load_egl(gsr_egl *self, void *library) {
     };
 
     if(!dlsym_load_list(library, required_dlsym)) {
-        fprintf(stderr, "gsr error: gsr_egl_load failed: missing required symbols in libEGL.so.1\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_load failed: missing required symbols in libEGL.so.1");
         return false;
     }
 
@@ -221,17 +222,17 @@ static bool gsr_egl_proc_load_egl(gsr_egl *self) {
     self->glSignalSemaphoreEXT = (FUNC_glSignalSemaphoreEXT)self->eglGetProcAddress("glSignalSemaphoreEXT");
 
     if(!self->eglExportDMABUFImageQueryMESA) {
-        fprintf(stderr, "gsr error: gsr_egl_load failed: could not find eglExportDMABUFImageQueryMESA\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_load failed: could not find eglExportDMABUFImageQueryMESA");
         return false;
     }
 
     if(!self->eglExportDMABUFImageMESA) {
-        fprintf(stderr, "gsr error: gsr_egl_load failed: could not find eglExportDMABUFImageMESA\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_load failed: could not find eglExportDMABUFImageMESA");
         return false;
     }
 
     if(!self->glEGLImageTargetTexture2DOES) {
-        fprintf(stderr, "gsr error: gsr_egl_load failed: could not find glEGLImageTargetTexture2DOES\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_load failed: could not find glEGLImageTargetTexture2DOES");
         return false;
     }
 
@@ -251,13 +252,13 @@ static bool gsr_egl_load_glx(gsr_egl *self, void *library) {
     };
 
     if(!dlsym_load_list(library, required_dlsym)) {
-        fprintf(stderr, "gsr error: gsr_egl_load failed: missing required symbols in libGLX.so.0\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_load failed: missing required symbols in libGLX.so.0");
         return false;
     }
 
     self->glXCreateContextAttribsARB = (FUNC_glXCreateContextAttribsARB)self->glXGetProcAddress((const unsigned char*)"glXCreateContextAttribsARB");
     if(!self->glXCreateContextAttribsARB) {
-        fprintf(stderr, "gsr error: gsr_egl_load_glx failed: could not find glXCreateContextAttribsARB\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_load_glx failed: could not find glXCreateContextAttribsARB");
         return false;
     }
 
@@ -343,7 +344,7 @@ static bool gsr_egl_load_gl(gsr_egl *self, void *library) {
     };
 
     if(!dlsym_load_list(library, required_dlsym)) {
-        fprintf(stderr, "gsr error: gsr_egl_load failed: missing required symbols in libGL.so.1\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_load failed: missing required symbols in libGL.so.1");
         return false;
     }
 
@@ -358,7 +359,7 @@ static void debug_callback(unsigned int source, unsigned int type, unsigned int 
     (void)length;
     (void)userParam;
     if(severity != GL_DEBUG_SEVERITY_NOTIFICATION)
-        fprintf(stderr, "gsr info: gl callback: %s type = 0x%x, severity = 0x%x, message = %s\n", type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : "", type, severity, message);
+        gsr_log(GSR_LOG_LEVEL_INFO, "gl callback: %s type = 0x%x, severity = 0x%x, message = %s", type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : "", type, severity, message);
 }
 
 /* TODO: check for glx swap control extension string (GLX_EXT_swap_control, etc) */
@@ -378,12 +379,12 @@ static void set_vertical_sync_enabled(gsr_egl *egl, int enabled) {
         static int warned = 0;
         if (!warned) {
             warned = 1;
-            fprintf(stderr, "gsr warning: setting vertical sync not supported\n");
+            gsr_log(GSR_LOG_LEVEL_WARNING, "setting vertical sync not supported");
         }
     }
 
     if(result != 0)
-        fprintf(stderr, "gsr warning: setting vertical sync failed\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "setting vertical sync failed");
 }
 
 static void gsr_egl_disable_vsync(gsr_egl *self) {
@@ -407,7 +408,7 @@ bool gsr_egl_load(gsr_egl *self, gsr_window *window, bool is_monitor_capture, bo
     dlerror(); /* clear */
     self->egl_library = dlopen("libEGL.so.1", RTLD_LAZY);
     if(!self->egl_library) {
-        fprintf(stderr, "gsr error: gsr_egl_load: failed to load libEGL.so.1, error: %s\n", dlerror());
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_load: failed to load libEGL.so.1, error: %s", dlerror());
         goto fail;
     }
 
@@ -415,7 +416,7 @@ bool gsr_egl_load(gsr_egl *self, gsr_window *window, bool is_monitor_capture, bo
 
     self->gl_library = dlopen("libGL.so.1", RTLD_LAZY);
     if(!self->gl_library) {
-        fprintf(stderr, "gsr error: gsr_egl_load: failed to load libGL.so.1, error: %s\n", dlerror());
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_load: failed to load libGL.so.1, error: %s", dlerror());
         goto fail;
     }
 

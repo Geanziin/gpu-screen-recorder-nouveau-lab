@@ -1,4 +1,5 @@
 #include "kms_client.h"
+#include "../../include/log.h"
 #include "../../include/utils.h"
 #include <stdio.h>
 #include <string.h>
@@ -225,14 +226,14 @@ int gsr_kms_client_init(gsr_kms_client *self, const char *card_path) {
     struct sockaddr_un remote_addr = {0};
 
     if(!create_socket_path(self->initial_socket_path, sizeof(self->initial_socket_path))) {
-        fprintf(stderr, "gsr error: gsr_kms_client_init: failed to create path to kms socket\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_init: failed to create path to kms socket");
         return -1;
     }
 
     char server_filepath[PATH_MAX];
 #ifdef __linux__
     if(!readlink_realpath("/proc/self/exe", server_filepath)) {
-        fprintf(stderr, "gsr error: gsr_kms_client_init: failed to resolve /proc/self/exe\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_init: failed to resolve /proc/self/exe");
         return -1;
     }
 
@@ -241,7 +242,7 @@ int gsr_kms_client_init(gsr_kms_client *self, const char *card_path) {
     size_t size = PATH_MAX;
 
     if (sysctl(mib, 4, server_filepath, &size, NULL, 0) != 0) {
-        fprintf(stderr, "gsr error: gsr_kms_client_init: failed to resolve pathname using sysctl\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_init: failed to resolve pathname using sysctl");
         return -1;
     }
 
@@ -251,19 +252,19 @@ int gsr_kms_client_init(gsr_kms_client *self, const char *card_path) {
     file_get_directory(server_filepath);
 
     if(!strcat_safe(server_filepath, sizeof(server_filepath), "/gsr-kms-server")) {
-        fprintf(stderr, "gsr error: gsr_kms_client_init: gsr-kms-server path too long\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_init: gsr-kms-server path too long");
         return -1;
     }
 
     if(access(server_filepath, F_OK) != 0) {
-        fprintf(stderr, "gsr info: gsr_kms_client_init: gsr-kms-server is not installed in the same directory as gpu-screen-recorder (%s not found), looking for gsr-kms-server in PATH instead\n", server_filepath);
+        gsr_log(GSR_LOG_LEVEL_INFO, "gsr_kms_client_init: gsr-kms-server is not installed in the same directory as gpu-screen-recorder (%s not found), looking for gsr-kms-server in PATH instead", server_filepath);
         if(!find_program_in_path("gsr-kms-server", server_filepath, sizeof(server_filepath)) || access(server_filepath, F_OK) != 0) {
-            fprintf(stderr, "gsr error: gsr_kms_client_init: gsr-kms-server was not found in PATH. Please install gpu-screen-recorder properly\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_init: gsr-kms-server was not found in PATH. Please install gpu-screen-recorder properly");
             return -1;
         }
     }
 
-    fprintf(stderr, "gsr info: gsr_kms_client_init: setting up connection to %s\n", server_filepath);
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_kms_client_init: setting up connection to %s", server_filepath);
 
     const bool inside_flatpak = getenv("FLATPAK_ID") != NULL;
     const char *home = getenv("HOME");
@@ -288,23 +289,23 @@ int gsr_kms_client_init(gsr_kms_client *self, const char *card_path) {
             cap_free(kms_server_cap);
         } else if(!inside_flatpak) {
             if(errno == ENODATA)
-                fprintf(stderr, "gsr info: gsr_kms_client_init: gsr-kms-server is missing sys_admin cap and will require root authentication. To bypass this automatically, run: sudo setcap cap_sys_admin+ep '%s'\n", server_filepath);
+                gsr_log(GSR_LOG_LEVEL_INFO, "gsr_kms_client_init: gsr-kms-server is missing sys_admin cap and will require root authentication. To bypass this automatically, run: sudo setcap cap_sys_admin+ep '%s'", server_filepath);
             else
-                fprintf(stderr, "gsr info: gsr_kms_client_init: failed to get cap\n");
+                gsr_log(GSR_LOG_LEVEL_INFO, "gsr_kms_client_init: failed to get cap");
         }
 #else
-        fprintf(stderr, "gsr info: gsr_kms_client_init: platform doesn't support cap\n");
+        gsr_log(GSR_LOG_LEVEL_INFO, "gsr_kms_client_init: platform doesn't support cap");
 #endif
     }
 
     if(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, self->socket_pair) == -1) {
-        fprintf(stderr, "gsr error: gsr_kms_client_init: socketpair failed, error: %s\n", strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_init: socketpair failed, error: %s", strerror(errno));
         goto err;
     }
 
     self->initial_socket_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if(self->initial_socket_fd == -1) {
-        fprintf(stderr, "gsr error: gsr_kms_client_init: socket failed, error: %s\n", strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_init: socket failed, error: %s", strerror(errno));
         goto err;
     }
 
@@ -316,18 +317,18 @@ int gsr_kms_client_init(gsr_kms_client *self, const char *card_path) {
     umask(prev_mask);
 
     if(bind_res == -1) {
-        fprintf(stderr, "gsr error: gsr_kms_client_init: failed to bind socket, error: %s\n", strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_init: failed to bind socket, error: %s", strerror(errno));
         goto err;
     }
 
     if(listen(self->initial_socket_fd, 1) == -1) {
-        fprintf(stderr, "gsr error: gsr_kms_client_init: failed to listen on socket, error: %s\n", strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_init: failed to listen on socket, error: %s", strerror(errno));
         goto err;
     }
 
     pid_t pid = fork();
     if(pid == -1) {
-        fprintf(stderr, "gsr error: gsr_kms_client_init: fork failed, error: %s\n", strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_init: fork failed, error: %s", strerror(errno));
         goto err;
     } else if(pid == 0) { /* child */
         if(inside_flatpak) {
@@ -340,7 +341,7 @@ int gsr_kms_client_init(gsr_kms_client *self, const char *card_path) {
             const char *args[] = { "pkexec", server_filepath, self->initial_socket_path, card_path, NULL };
             execvp(args[0], (char *const*)args);
         }
-        fprintf(stderr, "gsr error: gsr_kms_client_init: failed to launch \"gsr-kms-server\", error: %s\n", strerror(errno));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_init: failed to launch \"gsr-kms-server\", error: %s", strerror(errno));
         _exit(127);
     } else { /* parent */
         self->kms_server_pid = pid;
@@ -348,7 +349,7 @@ int gsr_kms_client_init(gsr_kms_client *self, const char *card_path) {
 
     // We need this dumb-shit retardation with unix domain socket and then replace it with socketpair because
     // pkexec doesn't work with socketpair................
-    fprintf(stderr, "gsr info: gsr_kms_client_init: waiting for server to connect\n");
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_kms_client_init: waiting for server to connect");
     struct pollfd poll_fd = {
         .fd = self->initial_socket_fd,
         .events = POLLIN,
@@ -360,7 +361,7 @@ int gsr_kms_client_init(gsr_kms_client *self, const char *card_path) {
             socklen_t sock_len = 0;
             self->initial_client_fd = accept(self->initial_socket_fd, (struct sockaddr*)&remote_addr, &sock_len);
             if(self->initial_client_fd == -1) {
-                fprintf(stderr, "gsr error: gsr_kms_client_init: accept failed on socket, error: %s\n", strerror(errno));
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_init: accept failed on socket, error: %s", strerror(errno));
                 goto err;
             }
             break;
@@ -371,7 +372,7 @@ int gsr_kms_client_init(gsr_kms_client *self, const char *card_path) {
                 int exit_code = -1;
                 if(WIFEXITED(status))
                     exit_code = WEXITSTATUS(status);
-                fprintf(stderr, "gsr error: gsr_kms_client_init: kms server died or never started, exit code: %d\n", exit_code);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_init: kms server died or never started, exit code: %d", exit_code);
                 self->kms_server_pid = -1;
                 if(exit_code != 0)
                     result = exit_code;
@@ -380,14 +381,14 @@ int gsr_kms_client_init(gsr_kms_client *self, const char *card_path) {
         }
         poll_fd.revents = 0;
     }
-    fprintf(stderr, "gsr info: gsr_kms_client_init: server connected\n");
+    gsr_log(GSR_LOG_LEVEL_INFO, "gsr_kms_client_init: server connected");
 
-    fprintf(stderr, "gsr info: replacing file-backed unix domain socket with socketpair\n");
+    gsr_log(GSR_LOG_LEVEL_INFO, "replacing file-backed unix domain socket with socketpair");
     if(gsr_kms_client_replace_connection(self) != 0)
         goto err;
 
     cleanup_socket(self, false);
-    fprintf(stderr, "gsr info: using socketpair\n");
+    gsr_log(GSR_LOG_LEVEL_INFO, "using socketpair");
 
     return 0;
 
@@ -445,21 +446,21 @@ int gsr_kms_client_replace_connection(gsr_kms_client *self) {
     request.type = KMS_REQUEST_TYPE_REPLACE_CONNECTION;
     request.new_connection_fd = self->socket_pair[GSR_SOCKET_PAIR_REMOTE];
     if(send_msg_to_server(self->initial_client_fd, &request) == -1) {
-        fprintf(stderr, "gsr error: gsr_kms_client_replace_connection: failed to send request message to server\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_replace_connection: failed to send request message to server");
         return -1;
     }
 
     const int recv_res = recv_msg_from_server(self->kms_server_pid, self->socket_pair[GSR_SOCKET_PAIR_LOCAL], &response);
     if(recv_res == 0) {
-        fprintf(stderr, "gsr warning: gsr_kms_client_replace_connection: kms server shut down\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_kms_client_replace_connection: kms server shut down");
         return -1;
     } else if(recv_res == -1) {
-        fprintf(stderr, "gsr error: gsr_kms_client_replace_connection: failed to receive response\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_replace_connection: failed to receive response");
         return -1;
     }
 
     if(response.version != GSR_KMS_PROTOCOL_VERSION) {
-        fprintf(stderr, "gsr error: gsr_kms_client_replace_connection: expected gsr-kms-server protocol version to be %u, but it's %u. please reinstall gpu screen recorder\n", GSR_KMS_PROTOCOL_VERSION, response.version);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_replace_connection: expected gsr-kms-server protocol version to be %u, but it's %u. please reinstall gpu screen recorder", GSR_KMS_PROTOCOL_VERSION, response.version);
         /*close_fds(response);*/
         return -1;
     }
@@ -478,24 +479,24 @@ int gsr_kms_client_get_kms(gsr_kms_client *self, gsr_kms_response *response) {
     request.type = KMS_REQUEST_TYPE_GET_KMS;
     request.new_connection_fd = 0;
     if(send_msg_to_server(self->socket_pair[GSR_SOCKET_PAIR_LOCAL], &request) == -1) {
-        fprintf(stderr, "gsr error: gsr_kms_client_get_kms: failed to send request message to server\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_get_kms: failed to send request message to server");
         strcpy(response->err_msg, "failed to send");
         return -1;
     }
 
     const int recv_res = recv_msg_from_server(self->kms_server_pid, self->socket_pair[GSR_SOCKET_PAIR_LOCAL], response);
     if(recv_res == 0) {
-        fprintf(stderr, "gsr warning: gsr_kms_client_get_kms: kms server shut down\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_kms_client_get_kms: kms server shut down");
         strcpy(response->err_msg, "failed to receive");
         return -1;
     } else if(recv_res == -1) {
-        fprintf(stderr, "gsr error: gsr_kms_client_get_kms: failed to receive response\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_get_kms: failed to receive response");
         strcpy(response->err_msg, "failed to receive");
         return -1;
     }
 
     if(response->version != GSR_KMS_PROTOCOL_VERSION) {
-        fprintf(stderr, "gsr error: gsr_kms_client_get_kms: expected gsr-kms-server protocol version to be %u, but it's %u. please reinstall gpu screen recorder\n", GSR_KMS_PROTOCOL_VERSION, response->version);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_kms_client_get_kms: expected gsr-kms-server protocol version to be %u, but it's %u. please reinstall gpu screen recorder", GSR_KMS_PROTOCOL_VERSION, response->version);
         /*close_fds(response);*/
         strcpy(response->err_msg, "mismatching protocol version");
         return -1;

@@ -1,4 +1,5 @@
 #include "../../../include/encoder/video/vaapi.h"
+#include "../../../include/log.h"
 #include "../../../include/utils.h"
 #include "../../../include/egl.h"
 
@@ -28,18 +29,18 @@ typedef struct {
 static bool gsr_video_encoder_vaapi_setup_context(gsr_video_encoder_vaapi *self, AVCodecContext *video_codec_context) {
     char render_path[128];
     if(!gsr_card_path_get_render_path(self->params.egl->card_path, render_path)) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_vaapi_setup_context: failed to get /dev/dri/renderDXXX file from %s\n", self->params.egl->card_path);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vaapi_setup_context: failed to get /dev/dri/renderDXXX file from %s", self->params.egl->card_path);
         return false;
     }
 
     if(av_hwdevice_ctx_create(&self->device_ctx, AV_HWDEVICE_TYPE_VAAPI, render_path, NULL, 0) < 0) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_vaapi_setup_context: failed to create hardware device context\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vaapi_setup_context: failed to create hardware device context");
         return false;
     }
 
     AVBufferRef *frame_context = av_hwframe_ctx_alloc(self->device_ctx);
     if(!frame_context) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_vaapi_setup_context: failed to create hwframe context\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vaapi_setup_context: failed to create hwframe context");
         av_buffer_unref(&self->device_ctx);
         return false;
     }
@@ -57,8 +58,7 @@ static bool gsr_video_encoder_vaapi_setup_context(gsr_video_encoder_vaapi *self,
     self->va_dpy = vactx->display;
 
     if (av_hwframe_ctx_init(frame_context) < 0) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_vaapi_setup_context: failed to initialize hardware frame context "
-                        "(note: ffmpeg version needs to be > 4.0)\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vaapi_setup_context: failed to initialize hardware frame context (note: ffmpeg version needs to be > 4.0)");
         av_buffer_unref(&self->device_ctx);
         //av_buffer_unref(&frame_context);
         return false;
@@ -76,7 +76,7 @@ static uint32_t fourcc(uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
 static bool gsr_video_encoder_vaapi_setup_textures(gsr_video_encoder_vaapi *self, AVCodecContext *video_codec_context, AVFrame *frame) {
     const int res = av_hwframe_get_buffer(video_codec_context->hw_frames_ctx, frame, 0);
     if(res < 0) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_vaapi_setup_textures: av_hwframe_get_buffer failed: %d\n", res);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vaapi_setup_textures: av_hwframe_get_buffer failed: %d", res);
         return false;
     }
 
@@ -84,7 +84,7 @@ static bool gsr_video_encoder_vaapi_setup_textures(gsr_video_encoder_vaapi *self
 
     VAStatus va_status = vaExportSurfaceHandle(self->va_dpy, target_surface_id, VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2, VA_EXPORT_SURFACE_WRITE_ONLY | VA_EXPORT_SURFACE_SEPARATE_LAYERS, &self->prime);
     if(va_status != VA_STATUS_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_video_encoder_vaapi_setup_textures: vaExportSurfaceHandle failed, error: %d\n", va_status);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vaapi_setup_textures: vaExportSurfaceHandle failed, error: %d", va_status);
         return false;
     }
     vaSyncSurface(self->va_dpy, target_surface_id);
@@ -120,7 +120,7 @@ static bool gsr_video_encoder_vaapi_setup_textures(gsr_video_encoder_vaapi *self
             while(self->params.egl->eglGetError() != EGL_SUCCESS){}
             EGLImage image = self->params.egl->eglCreateImage(self->params.egl->egl_display, 0, EGL_LINUX_DMA_BUF_EXT, NULL, img_attr);
             if(!image) {
-                fprintf(stderr, "gsr error: gsr_video_encoder_vaapi_setup_textures: failed to create egl image from drm fd for output drm fd, error: %d\n", self->params.egl->eglGetError());
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vaapi_setup_textures: failed to create egl image from drm fd for output drm fd, error: %d", self->params.egl->eglGetError());
                 return false;
             }
 
@@ -133,7 +133,7 @@ static bool gsr_video_encoder_vaapi_setup_textures(gsr_video_encoder_vaapi *self
             self->params.egl->glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, image);
             if(self->params.egl->glGetError() != 0 || self->params.egl->eglGetError() != EGL_SUCCESS) {
                 // TODO: Get the error properly
-                fprintf(stderr, "gsr error: gsr_video_encoder_vaapi_setup_textures: failed to bind egl image to gl texture, error: %d\n", self->params.egl->eglGetError());
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vaapi_setup_textures: failed to bind egl image to gl texture, error: %d", self->params.egl->eglGetError());
                 self->params.egl->eglDestroyImage(self->params.egl->egl_display, image);
                 self->params.egl->glBindTexture(GL_TEXTURE_2D, 0);
                 return false;
@@ -145,7 +145,7 @@ static bool gsr_video_encoder_vaapi_setup_textures(gsr_video_encoder_vaapi *self
 
         return true;
     } else {
-        fprintf(stderr, "gsr error: gsr_video_encoder_vaapi_setup_textures: unexpected fourcc %u for output drm fd, expected nv12 or p010\n", self->prime.fourcc);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vaapi_setup_textures: unexpected fourcc %u for output drm fd, expected nv12 or p010", self->prime.fourcc);
         return false;
     }
 }
@@ -165,26 +165,26 @@ static bool supports_hevc_without_padding(const char *card_path) {
 
     char render_path[128];
     if(!gsr_card_path_get_render_path(card_path, render_path)) {
-        fprintf(stderr, "gsr error: supports_hevc_without_padding: failed to get /dev/dri/renderDXXX file from %s\n", card_path);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "supports_hevc_without_padding: failed to get /dev/dri/renderDXXX file from %s", card_path);
         return false;
     }
 
     const int drm_fd = open(render_path, O_RDWR);
     if(drm_fd == -1) {
-        fprintf(stderr, "gsr error: supports_hevc_without_padding: failed to open device %s\n", render_path);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "supports_hevc_without_padding: failed to open device %s", render_path);
         return false;
     }
 
     const VADisplay va_dpy = vaGetDisplayDRM(drm_fd);
     if(!va_dpy) {
-        fprintf(stderr, "gsr error: supports_hevc_without_padding: failed to get vaapi display for device %s\n", render_path);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "supports_hevc_without_padding: failed to get vaapi display for device %s", render_path);
         goto done;
     }
 
     vaSetInfoCallback(va_dpy, NULL, NULL);
 
     if(vaInitialize(va_dpy, &va_major, &va_minor) != VA_STATUS_SUCCESS) {
-        fprintf(stderr, "gsr error: supports_hevc_without_padding: vaInitialize failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "supports_hevc_without_padding: vaInitialize failed");
         goto done;
     }
     initialized = true;
@@ -193,26 +193,26 @@ static bool supports_hevc_without_padding(const char *card_path) {
     if(va_status != VA_STATUS_SUCCESS) {
         va_status = vaCreateConfig(va_dpy, VAProfileHEVCMain, VAEntrypointEncSliceLP, NULL, 0, &va_config);
         if(va_status != VA_STATUS_SUCCESS) {
-            fprintf(stderr, "gsr error: supports_hevc_without_padding: failed to create hevc vaapi config, error: %s (%d)\n", vaErrorStr(va_status), va_status);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "supports_hevc_without_padding: failed to create hevc vaapi config, error: %s (%d)", vaErrorStr(va_status), va_status);
             return false;
         }
     }
 
     va_status = vaQuerySurfaceAttributes(va_dpy, va_config, 0, &num_surface_attr);
     if(va_status != VA_STATUS_SUCCESS) {
-        fprintf(stderr, "gsr error: supports_hevc_without_padding: failed to query vaapi surface attributes size, error: %s (%d)\n", vaErrorStr(va_status), va_status);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "supports_hevc_without_padding: failed to query vaapi surface attributes size, error: %s (%d)", vaErrorStr(va_status), va_status);
         goto done;
     }
 
     surface_attr_list = malloc(num_surface_attr * sizeof(VASurfaceAttrib));
     if(!surface_attr_list) {
-        fprintf(stderr, "gsr error: supports_hevc_without_padding: failed to allocate memory for %u vaapi surface attributes, error: %s (%d)\n", num_surface_attr, vaErrorStr(va_status), va_status);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "supports_hevc_without_padding: failed to allocate memory for %u vaapi surface attributes, error: %s (%d)", num_surface_attr, vaErrorStr(va_status), va_status);
         goto done;
     }
 
     va_status = vaQuerySurfaceAttributes(va_dpy, va_config, surface_attr_list, &num_surface_attr);
     if(va_status != VA_STATUS_SUCCESS) {
-        fprintf(stderr, "gsr error: supports_hevc_without_padding: failed to query vaapi surface attributes data, error: %s (%d)\n", vaErrorStr(va_status), va_status);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "supports_hevc_without_padding: failed to query vaapi surface attributes data, error: %s (%d)", vaErrorStr(va_status), va_status);
         goto done;
     }
 
@@ -264,7 +264,7 @@ static bool gsr_video_encoder_vaapi_start(gsr_video_encoder *encoder, AVCodecCon
     }
 
     if(FFALIGN(video_codec_context->width, 2) != FFALIGN(frame->width, 2) || FFALIGN(video_codec_context->height, 2) != FFALIGN(frame->height, 2)) {
-        fprintf(stderr, "gsr warning: gsr_video_encoder_vaapi_start: black bars have been added to the video because of a bug in AMD drivers/hardware. Record with h264/hevc codec instead (-k h264) to get around this issue\n");
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_video_encoder_vaapi_start: black bars have been added to the video because of a bug in AMD drivers/hardware. Record with h264/hevc codec instead (-k h264) to get around this issue");
     }
 
     if(video_codec_context->width < 128)

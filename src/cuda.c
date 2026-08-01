@@ -1,4 +1,5 @@
 #include "../include/cuda.h"
+#include "../include/log.h"
 #include "../include/library_loader.h"
 #include <string.h>
 #include <stdio.h>
@@ -13,7 +14,7 @@ bool gsr_cuda_load(gsr_cuda *self) {
     if(!lib) {
         lib = dlopen("libcuda.so", RTLD_LAZY);
         if(!lib) {
-            fprintf(stderr, "gsr error: gsr_cuda_load failed: failed to load libcuda.so/libcuda.so.1, error: %s\n", dlerror());
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_cuda_load failed: failed to load libcuda.so/libcuda.so.1, error: %s", dlerror());
             return false;
         }
     }
@@ -45,7 +46,7 @@ bool gsr_cuda_load(gsr_cuda *self) {
     CUresult res;
 
     if(!dlsym_load_list(lib, required_dlsym)) {
-        fprintf(stderr, "gsr error: gsr_cuda_load failed: missing required symbols in libcuda.so/libcuda.so.1\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_cuda_load failed: missing required symbols in libcuda.so/libcuda.so.1");
         goto fail;
     }
 
@@ -53,14 +54,14 @@ bool gsr_cuda_load(gsr_cuda *self) {
     if(res != CUDA_SUCCESS) {
         const char *err_str = "unknown";
         self->cuGetErrorString(res, &err_str);
-        fprintf(stderr, "gsr error: gsr_cuda_load failed: cuInit failed, error: %s (result: %d)\n", err_str, res);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_cuda_load failed: cuInit failed, error: %s (result: %d)", err_str, res);
         goto fail;
     }
 
     int nGpu = 0;
     self->cuDeviceGetCount(&nGpu);
     if(nGpu <= 0) {
-        fprintf(stderr, "gsr error: gsr_cuda_load failed: no cuda supported devices found\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_cuda_load failed: no cuda supported devices found");
         goto fail;
     }
 
@@ -70,7 +71,7 @@ bool gsr_cuda_load(gsr_cuda *self) {
     if(res != CUDA_SUCCESS) {
         const char *err_str = "unknown";
         self->cuGetErrorString(res, &err_str);
-        fprintf(stderr, "gsr error: gsr_cuda_load failed: unable to get CUDA device, error: %s (result: %d)\n", err_str, res);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_cuda_load failed: unable to get CUDA device, error: %s (result: %d)", err_str, res);
         goto fail;
     }
 
@@ -78,7 +79,7 @@ bool gsr_cuda_load(gsr_cuda *self) {
     if(res != CUDA_SUCCESS) {
         const char *err_str = "unknown";
         self->cuGetErrorString(res, &err_str);
-        fprintf(stderr, "gsr error: gsr_cuda_load failed: unable to create CUDA context, error: %s (result: %d)\n", err_str, res);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_cuda_load failed: unable to create CUDA context, error: %s (result: %d)", err_str, res);
         goto fail;
     }
 

@@ -1,4 +1,5 @@
 #include "../../include/capture/nvfbc.h"
+#include "../../include/log.h"
 #include "../../external/NvFBC.h"
 #include "../../include/egl.h"
 #include "../../include/utils.h"
@@ -74,13 +75,13 @@ static bool gsr_capture_nvfbc_load_library(gsr_capture *cap) {
     dlerror(); /* clear */
     void *lib = dlopen("libnvidia-fbc.so.1", RTLD_LAZY);
     if(!lib) {
-        fprintf(stderr, "gsr error: failed to load libnvidia-fbc.so.1, error: %s\n", dlerror());
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to load libnvidia-fbc.so.1, error: %s", dlerror());
         return false;
     }
 
     set_func_ptr((void**)&self->nv_fbc_create_instance, dlsym(lib, "NvFBCCreateInstance"));
     if(!self->nv_fbc_create_instance) {
-        fprintf(stderr, "gsr error: unable to resolve symbol 'NvFBCCreateInstance'\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "unable to resolve symbol 'NvFBCCreateInstance'");
         dlclose(lib);
         return false;
     }
@@ -89,7 +90,7 @@ static bool gsr_capture_nvfbc_load_library(gsr_capture *cap) {
     self->nv_fbc_function_list.dwVersion = NVFBC_VERSION;
     NVFBCSTATUS status = self->nv_fbc_create_instance(&self->nv_fbc_function_list);
     if(status != NVFBC_SUCCESS) {
-        fprintf(stderr, "gsr error: failed to create NvFBC instance (status: %d)\n", status);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create NvFBC instance (status: %d)", status);
         dlclose(lib);
         return false;
     }
@@ -143,7 +144,7 @@ static int gsr_capture_nvfbc_setup_handle(gsr_capture_nvfbc *self) {
 
         status = self->nv_fbc_function_list.nvFBCCreateHandle(&self->nv_fbc_handle, &create_params);
         if(status != NVFBC_SUCCESS) {
-            fprintf(stderr, "gsr error: gsr_capture_nvfbc_start failed: %s\n", self->nv_fbc_function_list.nvFBCGetLastErrorStr(self->nv_fbc_handle));
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_nvfbc_start failed: %s", self->nv_fbc_function_list.nvFBCGetLastErrorStr(self->nv_fbc_handle));
             goto error_cleanup;
         }
     }
@@ -155,12 +156,12 @@ static int gsr_capture_nvfbc_setup_handle(gsr_capture_nvfbc *self) {
 
     status = self->nv_fbc_function_list.nvFBCGetStatus(self->nv_fbc_handle, &status_params);
     if(status != NVFBC_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_capture_nvfbc_start failed: %s\n", self->nv_fbc_function_list.nvFBCGetLastErrorStr(self->nv_fbc_handle));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_nvfbc_start failed: %s", self->nv_fbc_function_list.nvFBCGetLastErrorStr(self->nv_fbc_handle));
         goto error_cleanup;
     }
 
     if(status_params.bCanCreateNow == NVFBC_FALSE) {
-        fprintf(stderr, "gsr error: gsr_capture_nvfbc_start failed: it's not possible to create a capture session on this system\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_nvfbc_start failed: it's not possible to create a capture session on this system");
         goto error_cleanup;
     }
 
@@ -172,18 +173,18 @@ static int gsr_capture_nvfbc_setup_handle(gsr_capture_nvfbc *self) {
     self->tracking_type = strcmp(self->params.display_to_capture, "screen") == 0 ? NVFBC_TRACKING_SCREEN : NVFBC_TRACKING_OUTPUT;
     if(self->tracking_type == NVFBC_TRACKING_OUTPUT) {
         if(!status_params.bXRandRAvailable) {
-            fprintf(stderr, "gsr error: gsr_capture_nvfbc_start failed: the xrandr extension is not available\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_nvfbc_start failed: the xrandr extension is not available");
             goto error_cleanup;
         }
 
         if(status_params.bInModeset) {
-            fprintf(stderr, "gsr error: gsr_capture_nvfbc_start failed: the x server is in modeset, unable to record\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_nvfbc_start failed: the x server is in modeset, unable to record");
             goto error_cleanup;
         }
 
         self->output_id = get_output_id_from_display_name(status_params.outputs, status_params.dwOutputNum, self->params.display_to_capture, &self->tracking_width, &self->tracking_height);
         if(self->output_id == 0) {
-            fprintf(stderr, "gsr error: gsr_capture_nvfbc_start failed: display '%s' not found\n", self->params.display_to_capture);
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_nvfbc_start failed: display '%s' not found", self->params.display_to_capture);
             goto error_cleanup;
         }
     }
@@ -215,7 +216,7 @@ static int gsr_capture_nvfbc_setup_session(gsr_capture_nvfbc *self) {
 
     NVFBCSTATUS status = self->nv_fbc_function_list.nvFBCCreateCaptureSession(self->nv_fbc_handle, &create_capture_params);
     if(status != NVFBC_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_capture_nvfbc_start failed: %s\n", self->nv_fbc_function_list.nvFBCGetLastErrorStr(self->nv_fbc_handle));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_nvfbc_start failed: %s", self->nv_fbc_function_list.nvFBCGetLastErrorStr(self->nv_fbc_handle));
         return -1;
     }
     self->capture_session_created = true;
@@ -226,7 +227,7 @@ static int gsr_capture_nvfbc_setup_session(gsr_capture_nvfbc *self) {
 
     status = self->nv_fbc_function_list.nvFBCToGLSetUp(self->nv_fbc_handle, &self->setup_params);
     if(status != NVFBC_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_capture_nvfbc_start failed: %s\n", self->nv_fbc_function_list.nvFBCGetLastErrorStr(self->nv_fbc_handle));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_nvfbc_start failed: %s", self->nv_fbc_function_list.nvFBCGetLastErrorStr(self->nv_fbc_handle));
         gsr_capture_nvfbc_destroy_session(self);
         return -1;
     }
@@ -256,12 +257,12 @@ static int gsr_capture_nvfbc_start(gsr_capture *cap, gsr_capture_metadata *captu
     int driver_major_version = 0;
     int driver_minor_version = 0;
     if(self->params.direct_capture && get_nvidia_driver_version(&driver_major_version, &driver_minor_version)) {
-        fprintf(stderr, "gsr info: detected nvidia version: %d.%d\n", driver_major_version, driver_minor_version);
+        gsr_log(GSR_LOG_LEVEL_INFO, "detected nvidia version: %d.%d", driver_major_version, driver_minor_version);
 
         // TODO:
         if(version_at_least(driver_major_version, driver_minor_version, 515, 57) && version_less_than(driver_major_version, driver_minor_version, 520, 56)) {
             self->params.direct_capture = false;
-            fprintf(stderr, "gsr warning: \"screen-direct\" has temporary been disabled as it causes stuttering with driver versions >= 515.57 and < 520.56. Please update your driver if possible. Capturing \"screen\" instead.\n");
+            gsr_log(GSR_LOG_LEVEL_WARNING, "\"screen-direct\" has temporary been disabled as it causes stuttering with driver versions >= 515.57 and < 520.56. Please update your driver if possible. Capturing \"screen\" instead.");
         }
 
         // TODO:
@@ -271,7 +272,7 @@ static int gsr_capture_nvfbc_start(gsr_capture *cap, gsr_capture_metadata *captu
             if(version_at_least(driver_major_version, driver_minor_version, 515, 57))
                 self->supports_direct_cursor = true;
             else
-                fprintf(stderr, "gsr info: capturing \"screen-direct\" but driver version appears to be less than 515.57. Disabling capture of cursor. Please update your driver if you want to capture your cursor or record \"screen\" instead.\n");
+                gsr_log(GSR_LOG_LEVEL_INFO, "capturing \"screen-direct\" but driver version appears to be less than 515.57. Disabling capture of cursor. Please update your driver if you want to capture your cursor or record \"screen\" instead.");
         }
         */
     }
@@ -349,16 +350,16 @@ static int gsr_capture_nvfbc_capture(gsr_capture *cap, gsr_capture_metadata *cap
             gsr_capture_nvfbc_destroy_session_and_handle(self);
 
             if(gsr_capture_nvfbc_setup_handle(self) != 0) {
-                fprintf(stderr, "gsr error: gsr_capture_nvfbc_capture failed to recreate nvfbc handle, trying again in %f second(s)\n", nvfbc_recreate_retry_time_seconds);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_nvfbc_capture failed to recreate nvfbc handle, trying again in %f second(s)", nvfbc_recreate_retry_time_seconds);
                 return -1;
             }
 
             if(gsr_capture_nvfbc_setup_session(self) != 0) {
-                fprintf(stderr, "gsr error: gsr_capture_nvfbc_capture failed to recreate nvfbc session, trying again in %f second(s)\n", nvfbc_recreate_retry_time_seconds);
+                gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_nvfbc_capture failed to recreate nvfbc session, trying again in %f second(s)", nvfbc_recreate_retry_time_seconds);
                 return -1;
             }
 
-            fprintf(stderr, "gsr info: gsr_capture_nvfbc_capture: recreated nvfbc session after modeset recovery\n");
+            gsr_log(GSR_LOG_LEVEL_INFO, "gsr_capture_nvfbc_capture: recreated nvfbc session after modeset recovery");
             self->nvfbc_needs_recreate = false;
         } else {
             return 0;
@@ -385,7 +386,7 @@ static int gsr_capture_nvfbc_capture(gsr_capture *cap, gsr_capture_metadata *cap
 
     NVFBCSTATUS status = self->nv_fbc_function_list.nvFBCToGLGrabFrame(self->nv_fbc_handle, &grab_params);
     if(status != NVFBC_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_capture_nvfbc_capture failed: %s (%d), recreating session after %f second(s)\n", self->nv_fbc_function_list.nvFBCGetLastErrorStr(self->nv_fbc_handle), status, nvfbc_recreate_retry_time_seconds);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_nvfbc_capture failed: %s (%d), recreating session after %f second(s)", self->nv_fbc_function_list.nvFBCGetLastErrorStr(self->nv_fbc_handle), status, nvfbc_recreate_retry_time_seconds);
         self->nvfbc_needs_recreate = true;
         self->nvfbc_dead_start = clock_get_monotonic_seconds();
         return 0;
@@ -414,12 +415,12 @@ static void gsr_capture_nvfbc_destroy(gsr_capture *cap) {
 
 gsr_capture* gsr_capture_nvfbc_create(const gsr_capture_nvfbc_params *params) {
     if(!params) {
-        fprintf(stderr, "gsr error: gsr_capture_nvfbc_create params is NULL\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_nvfbc_create params is NULL");
         return NULL;
     }
 
     if(!params->display_to_capture) {
-        fprintf(stderr, "gsr error: gsr_capture_nvfbc_create params.display_to_capture is NULL\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_nvfbc_create params.display_to_capture is NULL");
         return NULL;
     }
 

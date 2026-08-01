@@ -1,4 +1,5 @@
 #include "../../include/codec_query/nvenc.h"
+#include "../../include/log.h"
 #include "../../include/cuda.h"
 #include "../../external/nvEncodeAPI.h"
 
@@ -17,7 +18,7 @@ static void* open_nvenc_library(void) {
     if(!lib) {
         lib = dlopen("libnvidia-encode.so", RTLD_LAZY);
         if(!lib) {
-            fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_nvenc failed: failed to load libnvidia-encode.so/libnvidia-encode.so.1, error: %s\n", dlerror());
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_nvenc failed: failed to load libnvidia-encode.so/libnvidia-encode.so.1, error: %s", dlerror());
             return NULL;
         }
     }
@@ -107,7 +108,7 @@ static bool encoder_get_supported_profiles(const NV_ENCODE_API_FUNCTION_LIST *fu
 
     uint32_t profile_guid_count = 0;
     if(function_list->nvEncGetEncodeProfileGUIDCount(nvenc_encoder, *encoder_guid, &profile_guid_count) != NV_ENC_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_nvenc: nvEncGetEncodeProfileGUIDCount failed, error: %s\n", function_list->nvEncGetLastErrorString(nvenc_encoder));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_nvenc: nvEncGetEncodeProfileGUIDCount failed, error: %s", function_list->nvEncGetLastErrorString(nvenc_encoder));
         goto fail;
     }
 
@@ -116,12 +117,12 @@ static bool encoder_get_supported_profiles(const NV_ENCODE_API_FUNCTION_LIST *fu
 
     profile_guids = calloc(profile_guid_count, sizeof(GUID));
     if(!profile_guids) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_nvenc: failed to allocate %d guids\n", (int)profile_guid_count);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_nvenc: failed to allocate %d guids", (int)profile_guid_count);
         goto fail;
     }
 
     if(function_list->nvEncGetEncodeProfileGUIDs(nvenc_encoder, *encoder_guid, profile_guids, profile_guid_count, &profile_guid_count) != NV_ENC_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_nvenc: nvEncGetEncodeProfileGUIDs failed, error: %s\n", function_list->nvEncGetLastErrorString(nvenc_encoder));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_nvenc: nvEncGetEncodeProfileGUIDs failed, error: %s", function_list->nvEncGetLastErrorString(nvenc_encoder));
         goto fail;
     }
 
@@ -157,7 +158,7 @@ static bool get_supported_video_codecs(const NV_ENCODE_API_FUNCTION_LIST *functi
 
     uint32_t encode_guid_count = 0;
     if(function_list->nvEncGetEncodeGUIDCount(nvenc_encoder, &encode_guid_count) != NV_ENC_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_nvenc: nvEncGetEncodeGUIDCount failed, error: %s\n", function_list->nvEncGetLastErrorString(nvenc_encoder));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_nvenc: nvEncGetEncodeGUIDCount failed, error: %s", function_list->nvEncGetLastErrorString(nvenc_encoder));
         goto fail;
     }
 
@@ -166,12 +167,12 @@ static bool get_supported_video_codecs(const NV_ENCODE_API_FUNCTION_LIST *functi
 
     encoder_guids = calloc(encode_guid_count, sizeof(GUID));
     if(!encoder_guids) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_nvenc: failed to allocate %d guids\n", (int)encode_guid_count);
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_nvenc: failed to allocate %d guids", (int)encode_guid_count);
         goto fail;
     }
 
     if(function_list->nvEncGetEncodeGUIDs(nvenc_encoder, encoder_guids, encode_guid_count, &encode_guid_count) != NV_ENC_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_nvenc: nvEncGetEncodeGUIDs failed, error: %s\n", function_list->nvEncGetLastErrorString(nvenc_encoder));
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_nvenc: nvEncGetEncodeGUIDs failed, error: %s", function_list->nvEncGetLastErrorString(nvenc_encoder));
         goto fail;
     }
 
@@ -198,7 +199,7 @@ bool gsr_get_supported_video_codecs_nvenc(gsr_supported_video_codecs *video_code
     memset(&cuda, 0, sizeof(cuda));
 
     if(!gsr_cuda_load(&cuda)) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_nvenc: failed to load cuda\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_nvenc: failed to load cuda");
         goto done;
     }
 
@@ -209,7 +210,7 @@ bool gsr_get_supported_video_codecs_nvenc(gsr_supported_video_codecs *video_code
     typedef NVENCSTATUS NVENCAPI (*FUNC_NvEncodeAPICreateInstance)(NV_ENCODE_API_FUNCTION_LIST *functionList);
     FUNC_NvEncodeAPICreateInstance nvEncodeAPICreateInstance = (FUNC_NvEncodeAPICreateInstance)dlsym(nvenc_lib, "NvEncodeAPICreateInstance");
     if(!nvEncodeAPICreateInstance) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_nvenc: failed to find NvEncodeAPICreateInstance in libnvidia-encode.so\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_nvenc: failed to find NvEncodeAPICreateInstance in libnvidia-encode.so");
         goto done;
     }
 
@@ -217,7 +218,7 @@ bool gsr_get_supported_video_codecs_nvenc(gsr_supported_video_codecs *video_code
     memset(&function_list, 0, sizeof(function_list));
     function_list.version = NVENCAPI_STRUCT_VERSION(2);
     if(nvEncodeAPICreateInstance(&function_list) != NV_ENC_SUCCESS) {
-        fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_nvenc: nvEncodeAPICreateInstance failed\n");
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_nvenc: nvEncodeAPICreateInstance failed");
         goto done;
     }
 
@@ -232,14 +233,14 @@ bool gsr_get_supported_video_codecs_nvenc(gsr_supported_video_codecs *video_code
         // In such cases fallback to old api version if possible and try again.
         function_list.version = NVENCAPI_STRUCT_VERSION_CUSTOM(NVENCAPI_VERSION_470, 2);
         if(nvEncodeAPICreateInstance(&function_list) != NV_ENC_SUCCESS) {
-            fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_nvenc: nvEncodeAPICreateInstance (retry) failed\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_nvenc: nvEncodeAPICreateInstance (retry) failed");
             goto done;
         }
 
         params.version = NVENCAPI_STRUCT_VERSION_CUSTOM(NVENCAPI_VERSION_470, 1);
         params.apiVersion = NVENCAPI_VERSION_470;
         if(function_list.nvEncOpenEncodeSessionEx(&params, &nvenc_encoder) != NV_ENC_SUCCESS) {
-            fprintf(stderr, "gsr error: gsr_get_supported_video_codecs_nvenc: nvEncOpenEncodeSessionEx (retry) failed\n");
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_nvenc: nvEncOpenEncodeSessionEx (retry) failed");
             goto done;
         }
     }
