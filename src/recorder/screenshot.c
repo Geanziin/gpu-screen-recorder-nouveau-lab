@@ -88,12 +88,15 @@ int gsr_screenshot_take(const gsr_screenshot_params *params) {
         return load_plugins_result;
     }
 
+    int result = GSR_ERROR_GENERIC;
     gsr_image_writer image_writer;
+    memset(&image_writer, 0, sizeof(image_writer));
+    gsr_color_conversion color_conversion;
+    memset(&color_conversion, 0, sizeof(color_conversion));
+
     if(!gsr_image_writer_init_opengl(&image_writer, egl, video_size.x, video_size.y)) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_screenshot_take: gsr_image_write_gl_init failed");
-        gsr_plugins_deinit(&plugins);
-        gsr_video_sources_deinit(video_sources);
-        return GSR_ERROR_GENERIC;
+        goto done;
     }
 
     gsr_color_conversion_params color_conversion_params;
@@ -107,13 +110,9 @@ int gsr_screenshot_take(const gsr_screenshot_params *params) {
     color_conversion_params.num_destination_textures = 1;
     color_conversion_params.destination_color = GSR_DESTINATION_COLOR_RGB;
 
-    gsr_color_conversion color_conversion;
     if(gsr_color_conversion_init(&color_conversion, &color_conversion_params) != 0) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_screenshot_take: failed to create color conversion");
-        gsr_image_writer_deinit(&image_writer);
-        gsr_plugins_deinit(&plugins);
-        gsr_video_sources_deinit(video_sources);
-        return GSR_ERROR_GENERIC;
+        goto done;
     }
 
     gsr_color_conversion_clear(&color_conversion);
@@ -190,7 +189,7 @@ int gsr_screenshot_take(const gsr_screenshot_params *params) {
 
     gsr_egl_swap_buffers(egl);
 
-    int result = should_stop_error ? GSR_ERROR_CAPTURE_FAILED : GSR_ERROR_OK;
+    result = should_stop_error ? GSR_ERROR_CAPTURE_FAILED : GSR_ERROR_OK;
     if(!should_stop_error) {
         if(!gsr_image_writer_write_to_file(&image_writer, settings->filename, params->image_format, image_quality)) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_screenshot_take: failed to write opengl texture to image output file %s", settings->filename);
@@ -201,6 +200,7 @@ int gsr_screenshot_take(const gsr_screenshot_params *params) {
             params->screenshot_saved(settings->filename, params->userdata);
     }
 
+    done:
     gsr_color_conversion_deinit(&color_conversion);
     gsr_plugins_deinit(&plugins);
     gsr_image_writer_deinit(&image_writer);

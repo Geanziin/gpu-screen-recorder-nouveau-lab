@@ -405,6 +405,136 @@ static int record(args_parser *arg_parser, gsr_windowing *windowing, gsr_capture
     return run_result;
 }
 
+static int run(args_parser *arg_parser) {
+    int exit_code = 0;
+
+    gsr_capture_sources capture_sources;
+    gsr_audio_input_tracks audio_input_tracks;
+    gsr_app_audio_names app_audio_names;
+    gsr_windowing windowing;
+    gsr_capture_deps capture_deps;
+    memset(&audio_input_tracks, 0, sizeof(audio_input_tracks));
+    memset(&app_audio_names, 0, sizeof(app_audio_names));
+    memset(&windowing, 0, sizeof(windowing));
+    gsr_capture_deps_init(&capture_deps);
+
+    const int parse_capture_sources_result = gsr_capture_sources_parse(&capture_sources, arg_parser->settings.capture_source, arg_parser->settings.region_position, arg_parser->settings.region_size);
+    if(parse_capture_sources_result != GSR_ERROR_OK) {
+        exit_code = gsr_error_to_exit_code(parse_capture_sources_result);
+        goto done;
+    }
+
+    if(capture_sources.num_items == 0) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "option -w can't be empty. You need to capture video from at least one source");
+        args_parser_print_usage();
+        exit_code = 1;
+        goto done;
+    }
+
+    const int validate_args_result = validate_args_with_capture_sources(arg_parser, &capture_sources);
+    if(validate_args_result != GSR_ERROR_OK) {
+        exit_code = gsr_error_to_exit_code(validate_args_result);
+        goto done;
+    }
+
+    const int parse_audio_inputs_result = parse_audio_inputs(arg_parser, &audio_input_tracks);
+    if(parse_audio_inputs_result != GSR_ERROR_OK) {
+        exit_code = gsr_error_to_exit_code(parse_audio_inputs_result);
+        goto done;
+    }
+
+    const bool uses_app_audio = gsr_audio_input_tracks_has_app_audio(&audio_input_tracks);
+#ifdef GSR_APP_AUDIO
+    if(uses_app_audio) {
+        const int app_audio_result = setup_app_audio(&app_audio_names);
+        if(app_audio_result != GSR_ERROR_OK) {
+            exit_code = gsr_error_to_exit_code(app_audio_result);
+            goto done;
+        }
+    }
+#else
+    if(uses_app_audio) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "application audio can't be recorded because GPU Screen Recorder is built without application audio support (-Dapp_audio option)");
+        exit_code = 2;
+        goto done;
+    }
+#endif
+
+    const int validate_app_audio_result = gsr_audio_input_tracks_validate_app_audio(&audio_input_tracks, &app_audio_names);
+    if(validate_app_audio_result != GSR_ERROR_OK) {
+        exit_code = gsr_error_to_exit_code(validate_app_audio_result);
+        goto done;
+    }
+
+    gsr_windowing_params windowing_params;
+    windowing_params.monitor_capture = gsr_capture_sources_has_monitor_or_region(&capture_sources);
+    windowing_params.gl_debug = arg_parser->settings.gl_debug;
+    windowing_params.listen_to_x11_events = true;
+    if(gsr_windowing_init(&windowing, &windowing_params) != GSR_ERROR_OK) {
+        exit_code = 1;
+        goto done;
+    }
+
+    if(gsr_capture_sources_has_type(&capture_sources, GSR_CAPTURE_SOURCE_TYPE_PORTAL)) {
+        if(gsr_windowing_is_using_prime_run()) {
+            gsr_log(GSR_LOG_LEVEL_WARNING, "use of prime-run with -w portal option is currently not supported. Disabling prime-run");
+            gsr_windowing_disable_prime_run();
+        }
+
+        if(video_codec_is_hdr(arg_parser->settings.video_codec)) {
+            gsr_log(GSR_LOG_LEVEL_WARNING, "portal capture option doesn't support hdr yet (PipeWire doesn't support hdr), the video will be tonemapped from hdr to sdr");
+            arg_parser->settings.video_codec = hdr_video_codec_to_sdr_video_codec(arg_parser->settings.video_codec);
+        }
+    }
+
+    if(gsr_windowing_load_egl(&windowing, &windowing_params) != GSR_ERROR_OK) {
+        exit_code = 1;
+        goto done;
+    }
+
+    gsr_shader_enable_debug_output(arg_parser->settings.gl_debug);
+#ifndef NDEBUG
+    gsr_shader_enable_debug_output(true);
+#endif
+
+    if(!args_parser_validate_with_gl_info(arg_parser, &windowing.egl)) {
+        exit_code = 1;
+        goto done;
+    }
+
+    if(!windowing.card_path_found) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "no /dev/dri/cardX device found. Make sure that you have at least one monitor connected or record a single window instead on X11 or record with the -w portal option");
+        exit_code = 2;
+        goto done;
+    }
+
+    gsr_capture_deps_init_cursor(&capture_deps, &windowing.egl, arg_parser->settings.record_cursor);
+
+    gsr_image_format image_format;
+    if(get_image_format_from_filename(arg_parser->settings.filename, &image_format)) {
+        if(audio_input_tracks.num_items > 0) {
+            gsr_log(GSR_LOG_LEVEL_ERROR, "can't record audio (-a) when taking a screenshot");
+            exit_code = 1;
+            goto done;
+        }
+
+        exit_code = gsr_error_to_exit_code(take_screenshot(arg_parser, &windowing, &capture_deps, &capture_sources, image_format));
+    } else {
+        exit_code = gsr_error_to_exit_code(record(arg_parser, &windowing, &capture_deps, &capture_sources, &audio_input_tracks));
+    }
+
+    done:
+    gsr_capture_deps_deinit(&capture_deps);
+    gsr_windowing_deinit(&windowing);
+#ifdef GSR_APP_AUDIO
+    gsr_pipewire_audio_deinit(&pipewire_audio);
+#endif
+    gsr_app_audio_names_deinit(&app_audio_names);
+    gsr_audio_input_tracks_deinit(&audio_input_tracks);
+    gsr_capture_sources_deinit(&capture_sources);
+    return exit_code;
+}
+
 int main(int argc, char **argv) {
     setlocale(LC_ALL, "C"); /* Sigh... stupid C */
 #ifdef __GLIBC__
@@ -430,131 +560,35 @@ int main(int argc, char **argv) {
     arg_handlers.list_monitors = list_monitors_command;
 
     args_parser arg_parser;
+    int exit_code = 0;
     int command_exit_code = 0;
     switch(args_parser_parse(&arg_parser, argc, argv, &arg_handlers, NULL, &command_exit_code)) {
         case ARGS_PARSE_RESULT_ERROR:
-            _exit(1);
-        case ARGS_PARSE_RESULT_COMMAND_HANDLED:
-            _exit(command_exit_code);
-        case ARGS_PARSE_RESULT_OK:
+            exit_code = 1;
             break;
-    }
+        case ARGS_PARSE_RESULT_COMMAND_HANDLED:
+            exit_code = command_exit_code;
+            break;
+        case ARGS_PARSE_RESULT_OK: {
+            if(!arg_parser.settings.low_power) {
+                /* Forces low latency encoding mode. Use this environment variable until vaapi supports setting this as a parameter.
+                   The downside of this is that it always uses maximum power, which is not ideal for replay mode that runs on system startup.
+                   This option was added in mesa 24.1.4, released in july 17, 2024.
+                   Seems like the performance issue is not in encoding, but rendering the frame.
+                   Some frames end up taking 10 times longer. Seems to be an issue with amd gpu power management when letting the application sleep on the cpu side? */
+                setenv("AMD_DEBUG", "lowlatencyenc", true);
+            }
 
-    if(!arg_parser.settings.low_power) {
-        /* Forces low latency encoding mode. Use this environment variable until vaapi supports setting this as a parameter.
-           The downside of this is that it always uses maximum power, which is not ideal for replay mode that runs on system startup.
-           This option was added in mesa 24.1.4, released in july 17, 2024.
-           Seems like the performance issue is not in encoding, but rendering the frame.
-           Some frames end up taking 10 times longer. Seems to be an issue with amd gpu power management when letting the application sleep on the cpu side? */
-        setenv("AMD_DEBUG", "lowlatencyenc", true);
-    }
-
-    gsr_capture_sources capture_sources;
-    const int parse_capture_sources_result = gsr_capture_sources_parse(&capture_sources, arg_parser.settings.capture_source, arg_parser.settings.region_position, arg_parser.settings.region_size);
-    if(parse_capture_sources_result != GSR_ERROR_OK)
-        _exit(gsr_error_to_exit_code(parse_capture_sources_result));
-
-    if(capture_sources.num_items == 0) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "option -w can't be empty. You need to capture video from at least one source");
-        args_parser_print_usage();
-        _exit(1);
-    }
-
-    const int validate_args_result = validate_args_with_capture_sources(&arg_parser, &capture_sources);
-    if(validate_args_result != GSR_ERROR_OK)
-        _exit(gsr_error_to_exit_code(validate_args_result));
-
-    gsr_audio_input_tracks audio_input_tracks;
-    const int parse_audio_inputs_result = parse_audio_inputs(&arg_parser, &audio_input_tracks);
-    if(parse_audio_inputs_result != GSR_ERROR_OK)
-        _exit(gsr_error_to_exit_code(parse_audio_inputs_result));
-
-    const bool uses_app_audio = gsr_audio_input_tracks_has_app_audio(&audio_input_tracks);
-    gsr_app_audio_names app_audio_names;
-    memset(&app_audio_names, 0, sizeof(app_audio_names));
-
-#ifdef GSR_APP_AUDIO
-    if(uses_app_audio) {
-        const int app_audio_result = setup_app_audio(&app_audio_names);
-        if(app_audio_result != GSR_ERROR_OK)
-            _exit(gsr_error_to_exit_code(app_audio_result));
-    }
-#else
-    if(uses_app_audio) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "application audio can't be recorded because GPU Screen Recorder is built without application audio support (-Dapp_audio option)");
-        _exit(2);
-    }
-#endif
-
-    const int validate_app_audio_result = gsr_audio_input_tracks_validate_app_audio(&audio_input_tracks, &app_audio_names);
-    gsr_app_audio_names_deinit(&app_audio_names);
-    if(validate_app_audio_result != GSR_ERROR_OK)
-        _exit(gsr_error_to_exit_code(validate_app_audio_result));
-
-    gsr_windowing windowing;
-    gsr_windowing_params windowing_params;
-    windowing_params.monitor_capture = gsr_capture_sources_has_monitor_or_region(&capture_sources);
-    windowing_params.gl_debug = arg_parser.settings.gl_debug;
-    windowing_params.listen_to_x11_events = true;
-    if(gsr_windowing_init(&windowing, &windowing_params) != GSR_ERROR_OK)
-        _exit(1);
-
-    if(gsr_capture_sources_has_type(&capture_sources, GSR_CAPTURE_SOURCE_TYPE_PORTAL)) {
-        if(gsr_windowing_is_using_prime_run()) {
-            gsr_log(GSR_LOG_LEVEL_WARNING, "use of prime-run with -w portal option is currently not supported. Disabling prime-run");
-            gsr_windowing_disable_prime_run();
-        }
-
-        if(video_codec_is_hdr(arg_parser.settings.video_codec)) {
-            gsr_log(GSR_LOG_LEVEL_WARNING, "portal capture option doesn't support hdr yet (PipeWire doesn't support hdr), the video will be tonemapped from hdr to sdr");
-            arg_parser.settings.video_codec = hdr_video_codec_to_sdr_video_codec(arg_parser.settings.video_codec);
+            exit_code = run(&arg_parser);
+            break;
         }
     }
 
-    if(gsr_windowing_load_egl(&windowing, &windowing_params) != GSR_ERROR_OK)
-        _exit(1);
-
-    gsr_shader_enable_debug_output(arg_parser.settings.gl_debug);
-#ifndef NDEBUG
-    gsr_shader_enable_debug_output(true);
-#endif
-
-    if(!args_parser_validate_with_gl_info(&arg_parser, &windowing.egl))
-        _exit(1);
-
-    if(!windowing.card_path_found) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "no /dev/dri/cardX device found. Make sure that you have at least one monitor connected or record a single window instead on X11 or record with the -w portal option");
-        _exit(2);
-    }
-
-    gsr_capture_deps capture_deps;
-    gsr_capture_deps_init(&capture_deps);
-    gsr_capture_deps_init_cursor(&capture_deps, &windowing.egl, arg_parser.settings.record_cursor);
-
-    int result = GSR_ERROR_OK;
-    gsr_image_format image_format;
-    if(get_image_format_from_filename(arg_parser.settings.filename, &image_format)) {
-        if(audio_input_tracks.num_items > 0) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "can't record audio (-a) when taking a screenshot");
-            _exit(1);
-        }
-
-        result = take_screenshot(&arg_parser, &windowing, &capture_deps, &capture_sources, image_format);
-    } else {
-        result = record(&arg_parser, &windowing, &capture_deps, &capture_sources, &audio_input_tracks);
-    }
-
-    gsr_capture_deps_deinit(&capture_deps);
-#ifdef GSR_APP_AUDIO
-    gsr_pipewire_audio_deinit(&pipewire_audio);
-#endif
-    gsr_audio_input_tracks_deinit(&audio_input_tracks);
-    gsr_capture_sources_deinit(&capture_sources);
     args_parser_deinit(&arg_parser);
 
     /* We do an _exit here because cuda uses at_exit to do _something_ that causes the program to freeze,
        but only on some nvidia driver versions on some gpus (RTX?), and _exit exits the program without calling
        the at_exit registered functions.
        Cuda (nvenc) is loaded in a separate process, but this still happens. */
-    _exit(gsr_error_to_exit_code(result));
+    _exit(exit_code);
 }

@@ -25,6 +25,7 @@ typedef struct {
 int gsr_windowing_init(gsr_windowing *self, const gsr_windowing_params *params);
 /* Returns a |gsr_error| value. Loads opengl and finds the drm card to use */
 int gsr_windowing_load_egl(gsr_windowing *self, const gsr_windowing_params *params);
+void gsr_windowing_deinit(gsr_windowing *self);
 bool gsr_windowing_is_wayland(const gsr_windowing *self);
 
 bool gsr_windowing_is_using_prime_run(void);

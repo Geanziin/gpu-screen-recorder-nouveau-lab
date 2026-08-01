@@ -273,105 +273,96 @@ static int recorder_setup_video_encoder(gsr_recorder *self) {
     return GSR_ERROR_OK;
 }
 
-static int recorder_setup_audio(gsr_recorder *self) {
-    if(gsr_audio_capture_init(&self->audio_capture, &self->encoder, self->recording_clock, &self->running) != GSR_ERROR_OK) {
+static int recorder_setup_audio_track(gsr_recorder *self, const gsr_merged_audio_inputs *merged_audio_inputs, int audio_stream_index, gsr_audio_track *audio_track) {
+    const bool use_amix = gsr_audio_inputs_should_use_amix(merged_audio_inputs);
+
+    memset(audio_track, 0, sizeof(*audio_track));
+    audio_track->stream_index = audio_stream_index;
+    audio_track->codec_context = create_audio_codec_context(self->settings.fps, self->settings.audio_codec, use_amix, self->settings.audio_bitrate);
+    if(!audio_track->codec_context)
         return GSR_ERROR_GENERIC;
 
+    AVStream *audio_stream = NULL;
+    if(!self->settings.is_replaying) {
+        audio_stream = create_stream(self->av_format_context, audio_track->codec_context);
+        if(!audio_stream)
+            return GSR_ERROR_GENERIC;
+
+        if(gsr_encoder_add_recording_destination(&self->encoder, audio_track->codec_context, self->av_format_context, audio_stream, 0) == (size_t)-1)
+            gsr_log(GSR_LOG_LEVEL_ERROR, "added too many audio sources");
     }
 
-    
-    int audio_stream_index = GSR_VIDEO_STREAM_INDEX + 1;
-    for(size_t audio_track_index = 0; audio_track_index < self->audio_input_tracks->num_items; ++audio_track_index) {
-        const gsr_merged_audio_inputs *merged_audio_inputs = &self->audio_input_tracks->items[audio_track_index];
-        const bool use_amix = gsr_audio_inputs_should_use_amix(merged_audio_inputs);
-        AVCodecContext *audio_codec_context = create_audio_codec_context(self->settings.fps, self->settings.audio_codec, use_amix, self->settings.audio_bitrate);
-        if(!audio_codec_context) {
+    snprintf(audio_track->name, sizeof(audio_track->name), "%s", merged_audio_inputs->track_name);
+    if(audio_stream && audio_track->name[0] != '\0' && !self->settings.exclude_metadata)
+        av_dict_set(&audio_stream->metadata, "title", audio_track->name, 0);
+
+    if(!open_audio(audio_track->codec_context, self->settings.ffmpeg_audio_opts))
+        return GSR_ERROR_GENERIC;
+
+    if(audio_stream)
+        avcodec_parameters_from_context(audio_stream->codecpar, audio_track->codec_context);
+
+    #if LIBAVCODEC_VERSION_MAJOR < 60
+    const int num_channels = audio_track->codec_context->channels;
+    #else
+    const int num_channels = audio_track->codec_context->ch_layout.nb_channels;
+    #endif
+
+    AVFilterContext *src_filter_ctx[GSR_MAX_AUDIO_SOURCES_PER_TRACK];
+    if(use_amix) {
+        if(merged_audio_inputs->num_items > GSR_MAX_AUDIO_SOURCES_PER_TRACK) {
+            gsr_log(GSR_LOG_LEVEL_ERROR, "too many audio sources for one audio track, the maximum is %d", GSR_MAX_AUDIO_SOURCES_PER_TRACK);
             return GSR_ERROR_GENERIC;
         }
 
-        AVStream *audio_stream = NULL;
-        if(!self->settings.is_replaying) {
-            audio_stream = create_stream(self->av_format_context, audio_codec_context);
-            if(gsr_encoder_add_recording_destination(&self->encoder, audio_codec_context, self->av_format_context, audio_stream, 0) == (size_t)-1)
-                gsr_log(GSR_LOG_LEVEL_ERROR, "added too many audio sources");
-        }
-
-        if(audio_stream && merged_audio_inputs->track_name[0] != '\0' && !self->settings.exclude_metadata)
-            av_dict_set(&audio_stream->metadata, "title", merged_audio_inputs->track_name, 0);
-
-        if(!open_audio(audio_codec_context, self->settings.ffmpeg_audio_opts)) {
+        if(gsr_audio_init_filter_graph(audio_track->codec_context, &audio_track->graph, &audio_track->sink, src_filter_ctx, merged_audio_inputs->num_items) < 0) {
+            gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create audio filter");
             return GSR_ERROR_GENERIC;
-
         }
-        if(audio_stream)
-            avcodec_parameters_from_context(audio_stream->codecpar, audio_codec_context);
+    }
 
-        #if LIBAVCODEC_VERSION_MAJOR < 60
-        const int num_channels = audio_codec_context->channels;
-        #else
-        const int num_channels = audio_codec_context->ch_layout.nb_channels;
-        #endif
+    const double audio_fps = (double)audio_track->codec_context->sample_rate / (double)audio_track->codec_context->frame_size;
+    const double timeout_sec = 1000.0 / audio_fps / 1000.0;
 
-        //audio_frame->sample_rate = audio_codec_context->sample_rate;
+    const double audio_startup_time_seconds = self->force_no_audio_offset ? 0 : audio_codec_get_desired_delay(self->settings.audio_codec, self->settings.fps);
+    const double num_audio_frames_shift = audio_startup_time_seconds / timeout_sec;
+    audio_track->pts = -audio_track->codec_context->frame_size * num_audio_frames_shift;
 
-        AVFilterContext *src_filter_ctx[GSR_MAX_AUDIO_SOURCES_PER_TRACK];
-        AVFilterGraph *graph = NULL;
-        AVFilterContext *sink = NULL;
-        if(use_amix) {
-            if(merged_audio_inputs->num_items > GSR_MAX_AUDIO_SOURCES_PER_TRACK) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "too many audio sources for one audio track, the maximum is %d", GSR_MAX_AUDIO_SOURCES_PER_TRACK);
-                return GSR_ERROR_GENERIC;
-            }
-
-            if(gsr_audio_init_filter_graph(audio_codec_context, &graph, &sink, src_filter_ctx, merged_audio_inputs->num_items) < 0) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create audio filter");
-                return GSR_ERROR_GENERIC;
-            }
-        }
-
-        // TODO: Cleanup above
-
-        const double audio_fps = (double)audio_codec_context->sample_rate / (double)audio_codec_context->frame_size;
-        const double timeout_sec = 1000.0 / audio_fps / 1000.0;
-
-        const double audio_startup_time_seconds = self->force_no_audio_offset ? 0 : audio_codec_get_desired_delay(self->settings.audio_codec, self->settings.fps);// * ((double)audio_codec_context->frame_size / 1024.0);
-        const double num_audio_frames_shift = audio_startup_time_seconds / timeout_sec;
-
-        gsr_audio_track audio_track;
-        memset(&audio_track, 0, sizeof(audio_track));
-        snprintf(audio_track.name, sizeof(audio_track.name), "%s", merged_audio_inputs->track_name);
-        audio_track.codec_context = audio_codec_context;
-        audio_track.graph = graph;
-        audio_track.sink = sink;
-        audio_track.stream_index = audio_stream_index;
-        audio_track.pts = -audio_codec_context->frame_size * num_audio_frames_shift;
-
-        int audio_track_result = GSR_ERROR_OK;
-        if(gsr_audio_inputs_has_app_audio(merged_audio_inputs)) {
-            assert(!use_amix);
+    if(gsr_audio_inputs_has_app_audio(merged_audio_inputs)) {
+        assert(!use_amix);
 #ifdef GSR_APP_AUDIO
-            audio_track_result = gsr_audio_track_init_application_input(&audio_track, merged_audio_inputs, audio_codec_context, num_channels, num_audio_frames_shift, self->pipewire_audio);
+        return gsr_audio_track_init_application_input(audio_track, merged_audio_inputs, audio_track->codec_context, num_channels, num_audio_frames_shift, self->pipewire_audio);
+#else
+        return GSR_ERROR_UNSUPPORTED;
 #endif
-        } else {
-            audio_track_result = gsr_audio_track_init_device_inputs(&audio_track, merged_audio_inputs, audio_codec_context, num_channels, num_audio_frames_shift, src_filter_ctx, use_amix);
-        }
+    }
 
+    return gsr_audio_track_init_device_inputs(audio_track, merged_audio_inputs, audio_track->codec_context, num_channels, num_audio_frames_shift, src_filter_ctx, use_amix);
+}
+
+static int recorder_setup_audio(gsr_recorder *self) {
+    if(gsr_audio_capture_init(&self->audio_capture, &self->encoder, self->recording_clock, &self->running) != GSR_ERROR_OK)
+        return GSR_ERROR_GENERIC;
+
+    int audio_stream_index = GSR_VIDEO_STREAM_INDEX + 1;
+    for(size_t i = 0; i < self->audio_input_tracks->num_items; ++i) {
+        gsr_audio_track audio_track;
+        const int audio_track_result = recorder_setup_audio_track(self, &self->audio_input_tracks->items[i], audio_stream_index, &audio_track);
         if(audio_track_result != GSR_ERROR_OK) {
+            gsr_audio_track_deinit(&audio_track);
             return audio_track_result;
-
         }
 
         if(!gsr_audio_capture_add_track(&self->audio_capture, &audio_track)) {
+            gsr_audio_track_deinit(&audio_track);
             return GSR_ERROR_GENERIC;
-
         }
+
         ++audio_stream_index;
 
-        if(audio_codec_context->frame_size > self->audio_max_frame_size)
-            self->audio_max_frame_size = audio_codec_context->frame_size;
+        if(audio_track.codec_context->frame_size > self->audio_max_frame_size)
+            self->audio_max_frame_size = audio_track.codec_context->frame_size;
     }
-
-    //av_dump_format(self->av_format_context, 0, filename, 1);
 
     return GSR_ERROR_OK;
 }
@@ -768,8 +759,11 @@ int gsr_recorder_run(gsr_recorder *self) {
     gsr_recording_clock_start(self->recording_clock);
     self->record_start_time = gsr_recording_clock_get_start_time(self->recording_clock);
 
-    if(gsr_audio_capture_start(&self->audio_capture, self->audio_max_frame_size, self->uses_amix) != GSR_ERROR_OK)
+    if(gsr_audio_capture_start(&self->audio_capture, self->audio_max_frame_size, self->uses_amix) != GSR_ERROR_OK) {
+        /* The audio threads that did start have to stop before they can be joined */
+        self->running = 0;
         return GSR_ERROR_GENERIC;
+    }
 
     // Set update_fps to 24 to test if duplicate/delayed frames cause video/audio desync or too fast/slow video.
     //const double update_fps = fps + 190;

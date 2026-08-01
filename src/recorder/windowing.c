@@ -117,6 +117,24 @@ int gsr_windowing_load_egl(gsr_windowing *self, const gsr_windowing_params *para
     return GSR_ERROR_OK;
 }
 
+void gsr_windowing_deinit(gsr_windowing *self) {
+    if(self->egl_loaded) {
+        gsr_egl_unload(&self->egl);
+        self->egl_loaded = false;
+    }
+
+    if(self->window) {
+        gsr_window_destroy(self->window);
+        self->window = NULL;
+    }
+
+    if(self->display) {
+        /* TODO: XCloseDisplay causes a crash, why? maybe some other library dlclose xlib and that also happened to unload this??? */
+        //XCloseDisplay(self->display);
+        self->display = NULL;
+    }
+}
+
 bool gsr_windowing_is_wayland(const gsr_windowing *self) {
     return gsr_window_get_display_server(self->window) == GSR_DISPLAY_SERVER_WAYLAND;
 }

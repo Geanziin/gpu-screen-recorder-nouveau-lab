@@ -238,8 +238,12 @@ int info_command(void *userdata) {
     const gsr_windowing_params windowing_params = {false, false, false};
     if(gsr_windowing_init(&windowing, &windowing_params) != GSR_ERROR_OK)
         return 1;
-    if(gsr_windowing_load_egl(&windowing, &windowing_params) != GSR_ERROR_OK)
+
+    if(gsr_windowing_load_egl(&windowing, &windowing_params) != GSR_ERROR_OK) {
+        gsr_windowing_deinit(&windowing);
         return 22;
+    }
+
     const bool wayland = gsr_windowing_is_wayland(&windowing);
 
     av_log_set_level(AV_LOG_FATAL);
@@ -262,13 +266,7 @@ int info_command(void *userdata) {
     list_supported_capture_options(windowing.window, windowing.egl.card_path, windowing.card_path_found);
 
     fflush(stdout);
-
-    // Not needed as this will just slow down shutdown
-    //gsr_egl_unload(&egl);
-    //gsr_window_destroy(&window);
-    //if(dpy)
-    //    XCloseDisplay(dpy);
-
+    gsr_windowing_deinit(&windowing);
     return 0;
 }
 
@@ -328,8 +326,11 @@ int list_capture_options_command(const char *card_path, void *userdata) {
     const gsr_windowing_params windowing_params = {false, false, false};
     if(gsr_windowing_init(&windowing, &windowing_params) != GSR_ERROR_OK)
         return 1;
-    if(!card_path && gsr_windowing_load_egl(&windowing, &windowing_params) != GSR_ERROR_OK)
+
+    if(!card_path && gsr_windowing_load_egl(&windowing, &windowing_params) != GSR_ERROR_OK) {
+        gsr_windowing_deinit(&windowing);
         return 22;
+    }
 
     if(card_path)
         list_supported_capture_options(windowing.window, card_path, true);
@@ -337,13 +338,7 @@ int list_capture_options_command(const char *card_path, void *userdata) {
         list_supported_capture_options(windowing.window, windowing.egl.card_path, windowing.card_path_found);
 
     fflush(stdout);
-
-    // Not needed as this will just slow down shutdown
-    //gsr_egl_unload(&egl);
-    //gsr_window_destroy(&window);
-    //if(dpy)
-    //    XCloseDisplay(dpy);
-
+    gsr_windowing_deinit(&windowing);
     return 0;
 }
 
@@ -353,19 +348,16 @@ int list_monitors_command(void *userdata) {
     const gsr_windowing_params windowing_params = {false, false, false};
     if(gsr_windowing_init(&windowing, &windowing_params) != GSR_ERROR_OK)
         return 1;
-    if(gsr_windowing_load_egl(&windowing, &windowing_params) != GSR_ERROR_OK)
+
+    if(gsr_windowing_load_egl(&windowing, &windowing_params) != GSR_ERROR_OK) {
+        gsr_windowing_deinit(&windowing);
         return 22;
+    }
 
     if(windowing.card_path_found)
         list_monitors(windowing.window, windowing.egl.card_path);
 
     fflush(stdout);
-
-    // Not needed as this will just slow down shutdown
-    //gsr_egl_unload(&egl);
-    //gsr_window_destroy(&window);
-    //if(dpy)
-    //    XCloseDisplay(dpy);
-
+    gsr_windowing_deinit(&windowing);
     return 0;
 }

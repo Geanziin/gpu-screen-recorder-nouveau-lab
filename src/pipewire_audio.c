@@ -797,6 +797,11 @@ void gsr_pipewire_audio_deinit(gsr_pipewire_audio *self) {
     spa_hook_remove(&self->registry_listener);
     spa_hook_remove(&self->core_listener);
 
+    if(self->registry) {
+        pw_proxy_destroy((struct pw_proxy*)self->registry);
+        self->registry = NULL;
+    }
+
     if(self->core) {
         pw_core_disconnect(self->core);
         self->core = NULL;

@@ -1,7 +1,10 @@
 #include "../../include/window/window.h"
 #include <stddef.h>
 
-void gsr_window_destroy(gsr_window *self);
+void gsr_window_destroy(gsr_window *self) {
+    if(self)
+        self->destroy(self);
+}
 
 bool gsr_window_process_event(gsr_window *self) {
     return self->process_event(self);
