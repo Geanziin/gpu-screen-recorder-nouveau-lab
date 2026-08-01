@@ -1,10 +1,10 @@
-project('gpu-screen-recorder', ['c', 'cpp'], version : '5.15.3', default_options : ['warning_level=2', 'cpp_std=c++17'])
+project('gpu-screen-recorder', 'c', version : '5.15.3', default_options : ['warning_level=2'])
 
-add_project_arguments('-Wshadow', language : ['c', 'cpp'])
+add_project_arguments('-Wshadow', language : 'c')
 if get_option('buildtype') == 'debug'
-    add_project_arguments('-g3', language : ['c', 'cpp'])
+    add_project_arguments('-g3', language : 'c')
 elif get_option('buildtype') == 'release'
-    add_project_arguments('-DNDEBUG', language : ['c', 'cpp'])
+    add_project_arguments('-DNDEBUG', language : 'c')
 endif
 
 src = [
@@ -44,6 +44,7 @@ src = [
     'src/recorder/muxer.c',
     'src/recorder/replay_save.c',
     'src/recorder/screenshot.c',
+    'src/recorder/recorder.c',
     'src/cli/commands.c',
     'src/egl.c',
     'src/cuda.c',
@@ -61,7 +62,7 @@ src = [
     'src/plugins.c',
     'src/wayland_host_bridge.c',
     'src/sound.c',
-    'src/main.cpp',
+    'src/cli/main.c',
 ]
 
 subdir('protocol')
@@ -105,7 +106,7 @@ if get_option('portal') == true
         'src/dbus.c',
         'src/pipewire_video.c',
     ]
-    add_project_arguments('-DGSR_PORTAL', language : ['c', 'cpp'])
+    add_project_arguments('-DGSR_PORTAL', language : 'c')
     uses_pipewire = true
 endif
 
@@ -113,7 +114,7 @@ if get_option('app_audio') == true
     src += [
         'src/pipewire_audio.c',
     ]
-    add_project_arguments('-DGSR_APP_AUDIO', language : ['c', 'cpp'])
+    add_project_arguments('-DGSR_APP_AUDIO', language : 'c')
     uses_pipewire = true
 endif
 
@@ -123,10 +124,10 @@ if uses_pipewire == true
         dependency('libspa-0.2'),
         dependency('dbus-1'),
     ]
-    add_project_arguments('-DGSR_DBUS', language : ['c', 'cpp'])
+    add_project_arguments('-DGSR_DBUS', language : 'c')
 endif
 
-add_project_arguments('-DGSR_VERSION="' + meson.project_version() + '"', language: ['c', 'cpp'])
+add_project_arguments('-DGSR_VERSION="' + meson.project_version() + '"', language: 'c')
 
 executable('gsr-kms-server', 'kms/server/kms_server.c', dependencies : dependency('libdrm'), c_args : '-fstack-protector-all', install : true)
 executable('gpu-screen-recorder', src, dependencies : dep, install : true)
