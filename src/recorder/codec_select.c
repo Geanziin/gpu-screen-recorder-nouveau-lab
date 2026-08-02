@@ -36,7 +36,8 @@ gsr_video_encoder* create_video_encoder(gsr_egl *egl, const gsr_recorder_setting
     switch(egl->gpu_info.vendor) {
         case GSR_GPU_VENDOR_AMD:
         case GSR_GPU_VENDOR_INTEL:
-        case GSR_GPU_VENDOR_BROADCOM: {
+        case GSR_GPU_VENDOR_BROADCOM:
+        case GSR_GPU_VENDOR_APPLE: {
             gsr_video_encoder_vaapi_params params;
             params.egl = egl;
             params.color_depth = color_depth;

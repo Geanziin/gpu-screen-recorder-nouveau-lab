@@ -238,7 +238,7 @@ int version_command(void *userdata) {
 int info_command(void *userdata) {
     (void)userdata;
     gsr_windowing windowing;
-    const gsr_windowing_params windowing_params = {false, false, false};
+    const gsr_windowing_params windowing_params = { .monitor_capture = true };
     if(gsr_windowing_init(&windowing, &windowing_params) != GSR_ERROR_OK)
         return 1;
 
@@ -326,7 +326,7 @@ int list_v4l2_devices(void *userdata) {
 int list_capture_options_command(const char *card_path, void *userdata) {
     (void)userdata;
     gsr_windowing windowing;
-    const gsr_windowing_params windowing_params = {false, false, false};
+    const gsr_windowing_params windowing_params = { .monitor_capture = true };
     if(gsr_windowing_init(&windowing, &windowing_params) != GSR_ERROR_OK)
         return 1;
 
@@ -348,7 +348,7 @@ int list_capture_options_command(const char *card_path, void *userdata) {
 int list_monitors_command(void *userdata) {
     (void)userdata;
     gsr_windowing windowing;
-    const gsr_windowing_params windowing_params = {false, false, false};
+    const gsr_windowing_params windowing_params = { .monitor_capture = true };
     if(gsr_windowing_init(&windowing, &windowing_params) != GSR_ERROR_OK)
         return 1;
 
