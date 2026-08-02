@@ -132,7 +132,7 @@ endif
 add_project_arguments('-DGSR_VERSION="' + meson.project_version() + '"', language: 'c')
 
 executable('gsr-kms-server', 'kms/server/kms_server.c', dependencies : dependency('libdrm'), c_args : '-fstack-protector-all', install : true)
-executable('gsr-cli', ['src/gsr_cli/main.c', 'src/json.c', 'src/log.c'], install : true)
+executable('gsr-cli', ['tools/gsr-cli/main.c', 'src/json.c', 'src/log.c'], install : true)
 executable('gpu-screen-recorder', src, dependencies : dep, install : true)
 
 install_headers('plugin/plugin.h', install_dir : 'include/gsr')
