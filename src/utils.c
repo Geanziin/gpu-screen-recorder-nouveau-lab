@@ -389,6 +389,8 @@ bool gl_get_gpu_info(gsr_egl *egl, gsr_gpu_info *info) {
         info->vendor = GSR_GPU_VENDOR_NVIDIA;
     else if(strstr(gl_vendor, "Broadcom"))
         info->vendor = GSR_GPU_VENDOR_BROADCOM;
+    else if(strstr(gl_vendor, "Mesa") && gl_renderer && strstr(gl_renderer, "Apple"))
+        info->vendor = GSR_GPU_VENDOR_APPLE;
     else {
         gsr_log(GSR_LOG_LEVEL_ERROR, "unknown gpu vendor: %s", gl_vendor);
         return false;
@@ -450,7 +452,8 @@ bool try_card_has_valid_plane(const char *card_path) {
 bool gsr_get_valid_card_path(gsr_egl *egl, char *output, bool is_monitor_capture) {
     if(egl->dri_card_path) {
         snprintf(output, 128, "%s", egl->dri_card_path);
-        return is_monitor_capture ? try_card_has_valid_plane(output) : true;
+        if(!is_monitor_capture || try_card_has_valid_plane(output))
+            return true;
     }
 
     for(int i = 0; i < 10; ++i) {
