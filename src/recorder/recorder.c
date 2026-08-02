@@ -511,7 +511,7 @@ static void recorder_update_fps_counters(gsr_recorder *self) {
     const double elapsed = time_now - self->fps_start_time;
     if (elapsed >= 1.0) {
         if(self->settings.verbose) {
-            fprintf(stderr, "update fps: %d, damage fps: %d\n", self->fps_counter, self->damage_fps_counter);
+            gsr_log(GSR_LOG_LEVEL_INFO, "update fps: %d, damage fps: %d", self->fps_counter, self->damage_fps_counter);
         }
         self->fps_start_time = time_now;
         self->fps_counter = 0;
