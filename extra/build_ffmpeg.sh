@@ -69,58 +69,24 @@ case $library in
             make install
         }
         ;;
-    openssl)
-        require_program perl
-        # The certificate directory of the system openssl is used so that certificate
-        # verification keeps working the same way as it does with the system openssl.
-        openssl_dir=$(openssl version -d 2>/dev/null | sed -n 's/^OPENSSLDIR: "\(.*\)"$/\1/p')
-        if [ -z "$openssl_dir" ]; then
-            openssl_dir=/etc/ssl
-        fi
-        set -- --prefix="$prefix" \
-            --libdir=lib \
-            --openssldir="$openssl_dir" \
-            no-shared \
-            no-apps \
-            no-docs \
-            no-tests \
-            no-legacy \
-            no-engine \
-            no-comp \
-            no-quic \
-            no-ssl3 \
-            no-weak-ssl-ciphers \
-            no-cms \
-            no-ct \
-            no-ts \
-            no-ocsp \
-            no-srp \
-            no-psk \
-            no-dsa \
-            no-ec2m \
-            no-gost \
-            no-idea \
-            no-md2 \
-            no-md4 \
-            no-mdc2 \
-            no-rc2 \
-            no-rc4 \
-            no-rc5 \
-            no-bf \
-            no-cast \
-            no-seed \
-            no-camellia \
-            no-whirlpool \
-            no-rmd160 \
-            no-sm2 \
-            no-sm3 \
-            no-sm4 \
-            no-siphash \
-            -O3 -flto -fPIC
+    mbedtls)
+        require_program cmake
+        require_program python3
+        set -- -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$prefix" \
+            -DCMAKE_INSTALL_LIBDIR=lib \
+            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DENABLE_TESTING=OFF \
+            -DENABLE_PROGRAMS=OFF \
+            -DUSE_SHARED_MBEDTLS_LIBRARY=OFF \
+            -DUSE_STATIC_MBEDTLS_LIBRARY=ON
         build() {
-            "$source_dir/Configure" "$@"
-            make -j"$jobs"
-            make install_sw
+            # The whip muxer needs dtls-srtp, which mbedtls doesn't enable by default.
+            python3 "$source_dir/scripts/config.py" -f "$source_dir/include/mbedtls/mbedtls_config.h" set MBEDTLS_SSL_DTLS_SRTP
+            cmake -S "$source_dir" -B "$build_dir" "$@"
+            cmake --build "$build_dir" -j"$jobs"
+            cmake --install "$build_dir"
         }
         ;;
     srt)
@@ -136,9 +102,9 @@ case $library in
             -DENABLE_EXAMPLES=OFF \
             -DENABLE_TESTING=OFF \
             -DENABLE_UNITTESTS=OFF \
-            -DUSE_ENCLIB=openssl \
-            -DOPENSSL_ROOT_DIR="$prefix" \
-            -DOPENSSL_USE_STATIC_LIBS=ON
+            -DUSE_ENCLIB=mbedtls \
+            -DMBEDTLS_PREFIX="$prefix" \
+            -DSSL_REQUIRED_MODULES=mbedtls
         build() {
             cmake -S "$source_dir" -B "$build_dir" "$@"
             cmake --build "$build_dir" -j"$jobs"
@@ -192,7 +158,7 @@ case $library in
             --enable-libx264 \
             --enable-libopus \
             --enable-libsrt \
-            --enable-openssl \
+            --enable-mbedtls \
             --enable-ffnvcodec \
             --enable-nvenc \
             --enable-cuda \

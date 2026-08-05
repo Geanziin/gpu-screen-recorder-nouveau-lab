@@ -76,8 +76,10 @@ When building GPU Screen Recorder with portal support (`-Dportal=true` meson opt
 * libpipewire (and libspa which is usually part of libpipewire)
 
 ## Building with a statically linked ffmpeg
-The `-Dffmpeg_static=true` meson option (disabled by default) downloads ffmpeg and the libraries that ffmpeg depends on (x264, opus, openssl, srt and nv-codec-headers), builds them from source with lto and only the components that GPU Screen Recorder uses and then links them statically into GPU Screen Recorder.
-This removes the runtime dependency on the system ffmpeg and on all of those libraries. `make`, `nasm`, `cmake` and `perl` are needed to build them and the first `meson setup` takes a few minutes longer because of it.
+The `-Dffmpeg_static=true` meson option (disabled by default) downloads ffmpeg and the libraries that ffmpeg depends on (x264, opus, mbedtls, srt and nv-codec-headers), builds them from source with lto and only the components that GPU Screen Recorder uses and then links them statically into GPU Screen Recorder.
+This removes the runtime dependency on the system ffmpeg and on all of those libraries. `make`, `nasm`, `cmake` and `python3` are needed to build them and the first `meson setup` takes a few minutes longer because of it.
+
+mbedtls is used as the tls backend instead of openssl because it's much smaller. mbedtls has no built-in default certificate location, so ffmpeg is patched to look for the certificate store of the system (and to honor the `SSL_CERT_FILE` and `SSL_CERT_DIR` environment variables) the same way that openssl does.
 
 The only libraries that ffmpeg is still dynamically linked to are libva, libdrm (which GPU Screen Recorder also uses directly) and the c/c++ runtime.
 

@@ -8,8 +8,8 @@ install_prefix = meson.current_build_dir() / 'install'
 c_compiler = ' '.join(meson.get_compiler('c').cmd_array())
 build_library = find_program(meson.global_source_root() / 'extra' / 'build_ffmpeg.sh')
 
-# srt links against openssl and ffmpeg links against all of them, so the order matters.
-libraries = ['nv-codec-headers', 'x264', 'opus', 'openssl', 'srt', 'ffmpeg']
+# srt links against mbedtls and ffmpeg links against all of them, so the order matters.
+libraries = ['nv-codec-headers', 'x264', 'opus', 'mbedtls', 'srt', 'ffmpeg']
 
 foreach library : libraries
     source_dir = library == 'ffmpeg' ? meson.current_source_dir() : subproject(library).get_variable('source_dir')
