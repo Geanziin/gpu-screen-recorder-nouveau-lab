@@ -1,6 +1,6 @@
 --- a/libavformat/tls_mbedtls.c
 +++ b/libavformat/tls_mbedtls.c
-@@ -42,6 +42,64 @@
+@@ -42,6 +42,65 @@
  #include "libavutil/avstring.h"
  #include "libavutil/random_seed.h"
  #include "libavutil/intreadwrite.h"
@@ -14,6 +14,7 @@
 + * environment variables as openssl does.
 + */
 +static const char * const default_ca_files[] = {
++    "/etc/ssl/certs/ca-certificates.crt", // debian, ubuntu, arch, alpine, gentoo
 +    "/etc/ssl/ca-bundle.pem",             // opensuse
 +    "/etc/ssl/cert.pem",                  // openbsd, freebsd, macos
 +    "/usr/local/etc/ssl/cert.pem",        // freebsd ports
