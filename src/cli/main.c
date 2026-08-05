@@ -137,6 +137,17 @@ static bool ipc_toggle_pause_handler(char *error_message, size_t error_message_s
     return true;
 }
 
+static bool ipc_set_paused_handler(bool paused, char *error_message, size_t error_message_size, void *userdata) {
+    const gsr_recorder_settings *settings = userdata;
+    if(settings->is_replaying) {
+        snprintf(error_message, error_message_size, "pausing is not supported when recording a replay");
+        return false;
+    }
+
+    gsr_recorder_set_paused(recorder, paused);
+    return true;
+}
+
 static bool ipc_toggle_replay_recording_handler(char *error_message, size_t error_message_size, void *userdata) {
     const gsr_recorder_settings *settings = userdata;
     if(!settings->replay_recording_directory) {
@@ -145,6 +156,33 @@ static bool ipc_toggle_replay_recording_handler(char *error_message, size_t erro
     }
 
     gsr_recorder_toggle_replay_recording(recorder);
+    return true;
+}
+
+static bool ipc_start_replay_recording_handler(char *error_message, size_t error_message_size, void *userdata) {
+    const gsr_recorder_settings *settings = userdata;
+    if(!settings->replay_recording_directory) {
+        snprintf(error_message, error_message_size, "option -ro is required to start a recording");
+        return false;
+    }
+
+    gsr_recorder_start_replay_recording(recorder);
+    return true;
+}
+
+static bool ipc_stop_replay_recording_handler(char *error_message, size_t error_message_size, void *userdata) {
+    const gsr_recorder_settings *settings = userdata;
+    if(!settings->replay_recording_directory) {
+        snprintf(error_message, error_message_size, "option -ro is required to start a recording");
+        return false;
+    }
+
+    if(!gsr_recorder_is_replay_recording(recorder)) {
+        snprintf(error_message, error_message_size, "no recording is running");
+        return false;
+    }
+
+    gsr_recorder_stop_replay_recording(recorder);
     return true;
 }
 
@@ -295,18 +333,26 @@ static void screenshot_saved_callback(const char *filepath, void *userdata) {
         run_recording_saved_script_async(recording_saved_script, filepath, "screenshot");
 }
 
+typedef struct {
+    const char *recording_saved_script;
+    gsr_ipc *ipc;
+} recorder_callbacks_context;
+
 static void replay_saved_callback(const char *filepath, void *userdata) {
-    const char *recording_saved_script = userdata;
+    recorder_callbacks_context *context = userdata;
     if(!filepath) {
         printf("gsr error: Failed to save replay\n");
         fflush(stdout);
+        gsr_ipc_complete_request(context->ipc, GSR_IPC_DEFERRED_REQUEST_SAVE_REPLAY, false, NULL);
         return;
     }
 
     puts(filepath);
     fflush(stdout);
-    if(recording_saved_script)
-        run_recording_saved_script_async(recording_saved_script, filepath, "replay");
+    if(context->recording_saved_script)
+        run_recording_saved_script_async(context->recording_saved_script, filepath, "replay");
+
+    gsr_ipc_complete_request(context->ipc, GSR_IPC_DEFERRED_REQUEST_SAVE_REPLAY, true, filepath);
 }
 
 static void recording_started_callback(const char *filepath, void *userdata) {
@@ -318,17 +364,20 @@ static void recording_started_callback(const char *filepath, void *userdata) {
 }
 
 static void recording_stopped_callback(const char *filepath, void *userdata) {
-    const char *recording_saved_script = userdata;
+    recorder_callbacks_context *context = userdata;
     if(!filepath) {
         printf("gsr error: Failed to save recording\n");
         fflush(stdout);
+        gsr_ipc_complete_request(context->ipc, GSR_IPC_DEFERRED_REQUEST_STOP_REPLAY_RECORDING, false, NULL);
         return;
     }
 
     puts(filepath);
     fflush(stdout);
-    if(recording_saved_script)
-        run_recording_saved_script_async(recording_saved_script, filepath, "regular");
+    if(context->recording_saved_script)
+        run_recording_saved_script_async(context->recording_saved_script, filepath, "regular");
+
+    gsr_ipc_complete_request(context->ipc, GSR_IPC_DEFERRED_REQUEST_STOP_REPLAY_RECORDING, true, filepath);
 }
 
 #ifdef GSR_APP_AUDIO
@@ -410,12 +459,16 @@ static int record(args_parser *arg_parser, gsr_windowing *windowing, gsr_capture
     recorder_params.pipewire_audio = &pipewire_audio;
 #endif
 
+    recorder_callbacks_context callbacks_context;
+    callbacks_context.recording_saved_script = arg_parser->settings.recording_saved_script;
+    callbacks_context.ipc = ipc;
+
     gsr_recorder_callbacks callbacks;
     memset(&callbacks, 0, sizeof(callbacks));
     callbacks.replay_saved = replay_saved_callback;
     callbacks.recording_started = recording_started_callback;
     callbacks.recording_stopped = recording_stopped_callback;
-    callbacks.userdata = (void*)arg_parser->settings.recording_saved_script;
+    callbacks.userdata = &callbacks_context;
 
     int error = GSR_ERROR_OK;
     recorder = gsr_recorder_create(&recorder_params, &callbacks, &error);
@@ -427,9 +480,13 @@ static int record(args_parser *arg_parser, gsr_windowing *windowing, gsr_capture
         gsr_recorder_stop(recorder);
 
     gsr_ipc_handlers ipc_handlers;
+    memset(&ipc_handlers, 0, sizeof(ipc_handlers));
     ipc_handlers.stop = ipc_stop_handler;
     ipc_handlers.toggle_pause = ipc_toggle_pause_handler;
+    ipc_handlers.set_paused = ipc_set_paused_handler;
     ipc_handlers.toggle_replay_recording = ipc_toggle_replay_recording_handler;
+    ipc_handlers.start_replay_recording = ipc_start_replay_recording_handler;
+    ipc_handlers.stop_replay_recording = ipc_stop_replay_recording_handler;
     ipc_handlers.save_replay = ipc_save_replay_handler;
     ipc_handlers.userdata = &arg_parser->settings;
 
@@ -437,6 +494,7 @@ static int record(args_parser *arg_parser, gsr_windowing *windowing, gsr_capture
     if(run_result == GSR_ERROR_OK)
         run_result = gsr_recorder_run(recorder);
 
+    gsr_ipc_complete_request(ipc, GSR_IPC_DEFERRED_REQUEST_STOP, true, arg_parser->settings.is_replaying ? NULL : arg_parser->settings.filename);
     gsr_ipc_stop(ipc);
     gsr_recorder_destroy(recorder);
     recorder = NULL;

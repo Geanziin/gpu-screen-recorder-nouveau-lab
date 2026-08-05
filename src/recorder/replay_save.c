@@ -140,7 +140,7 @@ bool gsr_replay_save_start(gsr_replay_save *self, AVCodecContext *video_codec_co
     if(self->video_start_iterator.packet_index == (size_t)-1) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "failed to save replay: failed to find a video keyframe. perhaps replay was saved too fast, before anything has been recorded");
         gsr_replay_save_cleanup(self);
-        return true;
+        return false;
     }
 
     self->video_pts_offset = gsr_replay_buffer_iterator_get_packet(self->cloned_replay_buffer, self->video_start_iterator)->pts;

@@ -47,7 +47,14 @@ int gsr_recorder_run(gsr_recorder *self);
 /* These are safe to call from a signal handler or from another thread */
 void gsr_recorder_stop(gsr_recorder *self);
 void gsr_recorder_toggle_pause(gsr_recorder *self);
+/* Does nothing when the recording is already paused/unpaused */
+void gsr_recorder_set_paused(gsr_recorder *self, bool paused);
 void gsr_recorder_toggle_replay_recording(gsr_recorder *self);
+/* Does nothing when a recording is already running */
+void gsr_recorder_start_replay_recording(gsr_recorder *self);
+/* Does nothing when no recording is running */
+void gsr_recorder_stop_replay_recording(gsr_recorder *self);
+bool gsr_recorder_is_replay_recording(const gsr_recorder *self);
 /* |seconds| can be GSR_SAVE_REPLAY_SECONDS_FULL to save the whole replay buffer */
 void gsr_recorder_save_replay(gsr_recorder *self, int seconds);
 

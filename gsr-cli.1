@@ -41,10 +41,18 @@ and exits with 0 when it's running. A socket file that was left behind by a GPU 
 instance that was killed counts as not running.
 .TP
 .B stop
-Stop and save recording (stop without save in replay mode).
+Stop and save recording (stop without save in replay mode). Waits until the recording has been
+saved and prints the path of the saved file. Nothing is printed in replay mode since nothing is
+saved.
 .TP
 .B toggle-pause
 Pause/unpause recording (not for streaming/replay).
+.TP
+.BR set-paused " true|false"
+Pause/unpause recording (not for streaming/replay). Unlike
+.B toggle-pause
+this doesn't fail when the recording is already paused/unpaused, so the result doesn't depend on
+the current state.
 .TP
 .B toggle-replay-recording
 Start/stop regular recording during replay/streaming, which requires GPU Screen Recorder to run
@@ -52,9 +60,20 @@ with the
 .B \-ro
 option.
 .TP
+.B start-replay-recording
+Start regular recording during replay/streaming, which requires GPU Screen Recorder to run
+with the
+.B \-ro
+option. Does nothing when a recording is already running.
+.TP
+.B stop-replay-recording
+Stop the regular recording that runs during replay/streaming. Waits until the recording has been
+saved and prints the path of the saved file. Fails when no recording is running.
+.TP
 .BR save-replay " [" \fIseconds\fR ]
 Save replay (replay mode only). The number of seconds has to be larger than 0. The whole replay
-buffer is saved when no number of seconds is given.
+buffer is saved when no number of seconds is given. Waits until the replay has been saved and
+prints the path of the saved file.
 .SH EXAMPLES
 Start GPU Screen Recorder in replay mode with an ipc socket:
 .RS
@@ -80,8 +99,12 @@ gsr-cli -ipc "$XDG_RUNTIME_DIR/gsr.sock" status >/dev/null || start-replay.sh
 .IP \(bu 3
 The socket can only be used by the user that started GPU Screen Recorder.
 .IP \(bu 3
-A command is replied to as soon as GPU Screen Recorder accepts it. Saving a video finishes
-after the reply, and the path to the saved video is printed by GPU Screen Recorder itself.
+The
+.BR stop ", " save-replay " and " stop-replay-recording
+commands are replied to when the file has been saved and the script given with the
+.B \-sc
+option has been started, and the reply contains the path of the saved file. The other commands are
+replied to as soon as GPU Screen Recorder accepts them.
 .IP \(bu 3
 GPU Screen Recorder creates the socket before it has finished starting up, so a command that is
 sent while it's starting up is replied to when the recording starts.

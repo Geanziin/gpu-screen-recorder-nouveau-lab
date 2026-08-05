@@ -14,8 +14,9 @@
 
 #define GSR_CLI_REQUEST_ID 1
 #define GSR_CLI_MAX_REQUEST_SIZE 256
-#define GSR_CLI_MAX_REPLY_SIZE 4096
+#define GSR_CLI_MAX_REPLY_SIZE 8192
 #define GSR_CLI_REPLY_TIMEOUT_SECONDS 10
+#define GSR_CLI_NO_REPLY_TIMEOUT 0
 
 static void usage(void) {
     printf("usage: gsr-cli -ipc <socket_path> <command> [command_argument]\n");
@@ -31,14 +32,24 @@ static void usage(void) {
     printf("    Check if a GPU Screen Recorder instance is listening on the socket. Prints \"running\" or\n");
     printf("    \"not running\" and exits with 0 when it's running.\n");
     printf("  stop\n");
-    printf("    Stop and save the recording (stop without save in replay mode).\n");
+    printf("    Stop and save the recording (stop without save in replay mode). Waits until the recording\n");
+    printf("    has been saved and prints the path of the saved file.\n");
     printf("  toggle-pause\n");
     printf("    Pause/unpause the recording (not for streaming/replay).\n");
+    printf("  set-paused true|false\n");
+    printf("    Pause/unpause the recording (not for streaming/replay). Unlike toggle-pause this doesn't\n");
+    printf("    fail when the recording is already paused/unpaused.\n");
     printf("  toggle-replay-recording\n");
     printf("    Start/stop a regular recording during replay/streaming.\n");
+    printf("  start-replay-recording\n");
+    printf("    Start a regular recording during replay/streaming. Does nothing when a recording is already running.\n");
+    printf("  stop-replay-recording\n");
+    printf("    Stop the regular recording that runs during replay/streaming. Waits until the recording\n");
+    printf("    has been saved and prints the path of the saved file.\n");
     printf("  save-replay [seconds]\n");
     printf("    Save the replay. The number of seconds has to be larger than 0. The whole replay buffer is\n");
-    printf("    saved when no number of seconds is given.\n");
+    printf("    saved when no number of seconds is given. Waits until the replay has been saved and prints\n");
+    printf("    the path of the saved file.\n");
     printf("\n");
     printf("EXAMPLES:\n");
     printf("  gsr-cli -ipc \"$XDG_RUNTIME_DIR/gsr.sock\" status\n");
@@ -58,7 +69,7 @@ static bool string_to_int64(const char *str, int64_t *result) {
 }
 
 /* Returns the socket, or -1 on failure. Only logs an error when the failure isn't a missing GPU Screen Recorder instance */
-static int ipc_connect(const char *socket_filepath) {
+static int ipc_connect(const char *socket_filepath, int reply_timeout_seconds) {
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
@@ -74,9 +85,12 @@ static int ipc_connect(const char *socket_filepath) {
     }
 
     struct timeval timeout;
-    timeout.tv_sec = GSR_CLI_REPLY_TIMEOUT_SECONDS;
+    timeout.tv_sec = reply_timeout_seconds;
     timeout.tv_usec = 0;
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    if(reply_timeout_seconds != GSR_CLI_NO_REPLY_TIMEOUT)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+    timeout.tv_sec = GSR_CLI_REPLY_TIMEOUT_SECONDS;
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 
     if(connect(fd, (const struct sockaddr*)&addr, sizeof(addr)) == -1) {
@@ -140,6 +154,23 @@ static bool ipc_receive_reply(int fd, char *reply, size_t reply_capacity, size_t
     }
 }
 
+static void print_json_string(const char *str, size_t size) {
+    for(size_t i = 0; i < size; ++i) {
+        char c = str[i];
+        if(c == '\\' && i + 1 < size) {
+            ++i;
+            switch(str[i]) {
+                case 'n': c = '\n'; break;
+                case 'r': c = '\r'; break;
+                case 't': c = '\t'; break;
+                default:  c = str[i]; break;
+            }
+        }
+        putchar(c);
+    }
+    putchar('\n');
+}
+
 /* Returns the exit code that gsr-cli should exit with */
 static int ipc_handle_reply(char *reply, size_t reply_size, int64_t request_id) {
     sj_Reader reader = sj_reader(reply, reply_size);
@@ -185,8 +216,11 @@ static int ipc_handle_reply(char *reply, size_t reply_size, int64_t request_id) 
         return 1;
     }
 
-    if(gsr_json_string_equals(&result_value, "ok"))
+    if(gsr_json_string_equals(&result_value, "ok")) {
+        if(has_data && data_value.type == SJ_STRING)
+            print_json_string(data_value.start, data_value.end - data_value.start);
         return 0;
+    }
 
     if(has_data && data_value.type == SJ_STRING)
         gsr_log(GSR_LOG_LEVEL_ERROR, "%.*s", (int)(data_value.end - data_value.start), data_value.start);
@@ -197,7 +231,7 @@ static int ipc_handle_reply(char *reply, size_t reply_size, int64_t request_id) 
 }
 
 static int status_command(const char *socket_filepath) {
-    const int fd = ipc_connect(socket_filepath);
+    const int fd = ipc_connect(socket_filepath, GSR_CLI_REPLY_TIMEOUT_SECONDS);
     if(fd == -1) {
         printf("not running\n");
         fflush(stdout);
@@ -210,20 +244,8 @@ static int status_command(const char *socket_filepath) {
     return 0;
 }
 
-static int send_command(const char *socket_filepath, const char *name, const char *seconds_str) {
-    char request[GSR_CLI_MAX_REQUEST_SIZE];
-    if(seconds_str) {
-        int64_t seconds = 0;
-        if(!string_to_int64(seconds_str, &seconds) || seconds <= 0 || seconds > INT_MAX) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "expected the number of seconds to save to be an integer larger than 0, got: '%s'", seconds_str);
-            return 1;
-        }
-        snprintf(request, sizeof(request), "{\"id\":%d,\"name\":\"%s\",\"data\":%" PRIi64 "}\n", GSR_CLI_REQUEST_ID, name, seconds);
-    } else {
-        snprintf(request, sizeof(request), "{\"id\":%d,\"name\":\"%s\"}\n", GSR_CLI_REQUEST_ID, name);
-    }
-
-    const int fd = ipc_connect(socket_filepath);
+static int send_request(const char *socket_filepath, const char *request, int reply_timeout_seconds) {
+    const int fd = ipc_connect(socket_filepath, reply_timeout_seconds);
     if(fd == -1) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "failed to connect to \"%s\". Is GPU Screen Recorder running with the -ipc option?", socket_filepath);
         return 1;
@@ -259,9 +281,31 @@ int main(int argc, char **argv) {
     const char *socket_filepath = argv[2];
     const char *command = argv[3];
     const char *command_argument = argc == 5 ? argv[4] : NULL;
+    char request[GSR_CLI_MAX_REQUEST_SIZE];
 
-    if(strcmp(command, "save-replay") == 0)
-        return send_command(socket_filepath, command, command_argument);
+    if(strcmp(command, "save-replay") == 0) {
+        if(command_argument) {
+            int64_t seconds = 0;
+            if(!string_to_int64(command_argument, &seconds) || seconds <= 0 || seconds > INT_MAX) {
+                gsr_log(GSR_LOG_LEVEL_ERROR, "expected the number of seconds to save to be an integer larger than 0, got: '%s'", command_argument);
+                return 1;
+            }
+            snprintf(request, sizeof(request), "{\"id\":%d,\"name\":\"save-replay\",\"data\":%" PRIi64 "}\n", GSR_CLI_REQUEST_ID, seconds);
+        } else {
+            snprintf(request, sizeof(request), "{\"id\":%d,\"name\":\"save-replay\"}\n", GSR_CLI_REQUEST_ID);
+        }
+        return send_request(socket_filepath, request, GSR_CLI_NO_REPLY_TIMEOUT);
+    }
+
+    if(strcmp(command, "set-paused") == 0) {
+        if(!command_argument || (strcmp(command_argument, "true") != 0 && strcmp(command_argument, "false") != 0)) {
+            gsr_log(GSR_LOG_LEVEL_ERROR, "the 'set-paused' command expects either true or false as the argument");
+            usage();
+            return 1;
+        }
+        snprintf(request, sizeof(request), "{\"id\":%d,\"name\":\"set-paused\",\"data\":%s}\n", GSR_CLI_REQUEST_ID, command_argument);
+        return send_request(socket_filepath, request, GSR_CLI_REPLY_TIMEOUT_SECONDS);
+    }
 
     if(command_argument) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "the '%s' command doesn't take an argument", command);
@@ -272,8 +316,15 @@ int main(int argc, char **argv) {
     if(strcmp(command, "status") == 0)
         return status_command(socket_filepath);
 
-    if(strcmp(command, "stop") == 0 || strcmp(command, "toggle-pause") == 0 || strcmp(command, "toggle-replay-recording") == 0)
-        return send_command(socket_filepath, command, NULL);
+    if(strcmp(command, "toggle-pause") == 0 || strcmp(command, "toggle-replay-recording") == 0 || strcmp(command, "start-replay-recording") == 0) {
+        snprintf(request, sizeof(request), "{\"id\":%d,\"name\":\"%s\"}\n", GSR_CLI_REQUEST_ID, command);
+        return send_request(socket_filepath, request, GSR_CLI_REPLY_TIMEOUT_SECONDS);
+    }
+
+    if(strcmp(command, "stop") == 0 || strcmp(command, "stop-replay-recording") == 0) {
+        snprintf(request, sizeof(request), "{\"id\":%d,\"name\":\"%s\"}\n", GSR_CLI_REQUEST_ID, command);
+        return send_request(socket_filepath, request, GSR_CLI_NO_REPLY_TIMEOUT);
+    }
 
     gsr_log(GSR_LOG_LEVEL_ERROR, "invalid command '%s'", command);
     usage();

@@ -35,6 +35,15 @@
 
 #define GSR_VIDEO_STREAM_INDEX 0
 
+#define GSR_SET_PAUSED_REQUEST_NONE -1
+#define GSR_SET_PAUSED_REQUEST_UNPAUSE 0
+#define GSR_SET_PAUSED_REQUEST_PAUSE 1
+
+#define GSR_REPLAY_RECORDING_REQUEST_NONE 0
+#define GSR_REPLAY_RECORDING_REQUEST_TOGGLE 1
+#define GSR_REPLAY_RECORDING_REQUEST_START 2
+#define GSR_REPLAY_RECORDING_REQUEST_STOP 3
+
 struct gsr_recorder {
     gsr_recorder_settings settings;
     gsr_recorder_callbacks callbacks;
@@ -88,7 +97,9 @@ struct gsr_recorder {
 
     atomic_int running;
     atomic_int toggle_pause;
-    atomic_int toggle_replay_recording;
+    atomic_int set_paused_request;
+    atomic_int replay_recording_request;
+    atomic_int replay_recording_state;
     atomic_int save_replay_seconds;
     bool should_stop_error;
     bool force_iframe_frame;
@@ -403,7 +414,9 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
     self->audio_input_tracks = params->audio_input_tracks;
     atomic_init(&self->running, 1);
     atomic_init(&self->toggle_pause, 0);
-    atomic_init(&self->toggle_replay_recording, 0);
+    atomic_init(&self->set_paused_request, GSR_SET_PAUSED_REQUEST_NONE);
+    atomic_init(&self->replay_recording_request, GSR_REPLAY_RECORDING_REQUEST_NONE);
+    atomic_init(&self->replay_recording_state, 0);
     atomic_init(&self->save_replay_seconds, 0);
     self->audio_max_frame_size = 1024;
     int error_code = GSR_ERROR_GENERIC;
@@ -625,78 +638,99 @@ static void recorder_capture_and_encode_frame(gsr_recorder *self, bool damaged) 
 }
 
 static void recorder_apply_pause_toggle(gsr_recorder *self) {
-    if(atomic_load(&self->toggle_pause) == 1 && !self->settings.is_replaying) {
-        self->paused = !self->paused;
+    const bool toggle_pause = atomic_exchange(&self->toggle_pause, 0) == 1;
+    const int set_paused_request = atomic_exchange(&self->set_paused_request, GSR_SET_PAUSED_REQUEST_NONE);
+    if(self->settings.is_replaying)
+        return;
+
+    bool new_paused = self->paused;
+    if(toggle_pause)
+        new_paused = !new_paused;
+    if(set_paused_request != GSR_SET_PAUSED_REQUEST_NONE)
+        new_paused = set_paused_request == GSR_SET_PAUSED_REQUEST_PAUSE;
+
+    if(new_paused != self->paused) {
+        self->paused = new_paused;
         gsr_recording_clock_set_paused(self->recording_clock, self->paused);
         gsr_log(GSR_LOG_LEVEL_INFO, self->paused ? "Paused" : "Unpaused");
-        atomic_store(&self->toggle_pause, 0);
     }
 }
 
 static void recorder_apply_replay_recording_toggle(gsr_recorder *self) {
-    if(atomic_load(&self->toggle_replay_recording) && !self->settings.replay_recording_directory) {
-        atomic_store(&self->toggle_replay_recording, 0);
-        if(self->callbacks.recording_started)
+    const int request = atomic_exchange(&self->replay_recording_request, GSR_REPLAY_RECORDING_REQUEST_NONE);
+    if(request == GSR_REPLAY_RECORDING_REQUEST_NONE)
+        return;
+
+    if(!self->settings.replay_recording_directory) {
+        if(request != GSR_REPLAY_RECORDING_REQUEST_STOP && self->callbacks.recording_started)
             self->callbacks.recording_started(NULL, self->callbacks.userdata);
+        return;
     }
 
-    if(atomic_load(&self->toggle_replay_recording) && self->settings.replay_recording_directory) {
-        atomic_store(&self->toggle_replay_recording, 0);
-        const bool new_replay_recording_state = !self->replay_recording;
-        if(new_replay_recording_state) {
-            gsr_audio_capture_lock_filter(&self->audio_capture);
-            self->num_replay_recording_items = 0;
-            const bool filepath_created = gsr_create_new_recording_filepath_from_timestamp(self->replay_recording_filepath, sizeof(self->replay_recording_filepath), self->settings.replay_recording_directory, "Video", self->file_extension, self->settings.date_folders);
-            if(filepath_created && gsr_recording_output_start(&self->replay_recording_output, self->replay_recording_filepath, &self->settings, self->video_codec_context, &self->audio_capture, self->hdr, self->video_sources)) {
-                const size_t video_recording_destination_id = gsr_encoder_add_recording_destination(&self->encoder, self->video_codec_context, self->replay_recording_output.av_format_context, self->replay_recording_output.video_stream, self->video_frame->pts);
-                if(self->settings.write_first_frame_ts && video_recording_destination_id != (size_t)-1) {
-                    char ts_filepath[PATH_MAX + 4];
-                    snprintf(ts_filepath, sizeof(ts_filepath), "%s.ts", self->replay_recording_filepath);
-                    gsr_encoder_set_recording_destination_first_frame_ts_filepath(&self->encoder, video_recording_destination_id, ts_filepath);
-                }
+    bool new_replay_recording_state = !self->replay_recording;
+    if(request == GSR_REPLAY_RECORDING_REQUEST_START)
+        new_replay_recording_state = true;
+    else if(request == GSR_REPLAY_RECORDING_REQUEST_STOP)
+        new_replay_recording_state = false;
 
-                if(video_recording_destination_id != (size_t)-1 && self->num_replay_recording_items < GSR_MAX_RECORDING_DESTINATIONS) {
-                    self->replay_recording_items[self->num_replay_recording_items] = video_recording_destination_id;
+    if(new_replay_recording_state == self->replay_recording)
+        return;
+
+    if(new_replay_recording_state) {
+        gsr_audio_capture_lock_filter(&self->audio_capture);
+        self->num_replay_recording_items = 0;
+        const bool filepath_created = gsr_create_new_recording_filepath_from_timestamp(self->replay_recording_filepath, sizeof(self->replay_recording_filepath), self->settings.replay_recording_directory, "Video", self->file_extension, self->settings.date_folders);
+        if(filepath_created && gsr_recording_output_start(&self->replay_recording_output, self->replay_recording_filepath, &self->settings, self->video_codec_context, &self->audio_capture, self->hdr, self->video_sources)) {
+            const size_t video_recording_destination_id = gsr_encoder_add_recording_destination(&self->encoder, self->video_codec_context, self->replay_recording_output.av_format_context, self->replay_recording_output.video_stream, self->video_frame->pts);
+            if(self->settings.write_first_frame_ts && video_recording_destination_id != (size_t)-1) {
+                char ts_filepath[PATH_MAX + 4];
+                snprintf(ts_filepath, sizeof(ts_filepath), "%s.ts", self->replay_recording_filepath);
+                gsr_encoder_set_recording_destination_first_frame_ts_filepath(&self->encoder, video_recording_destination_id, ts_filepath);
+            }
+
+            if(video_recording_destination_id != (size_t)-1 && self->num_replay_recording_items < GSR_MAX_RECORDING_DESTINATIONS) {
+                self->replay_recording_items[self->num_replay_recording_items] = video_recording_destination_id;
+                ++self->num_replay_recording_items;
+            }
+
+            for(size_t i = 0; i < self->replay_recording_output.num_audio_streams; ++i) {
+                const gsr_recording_audio_stream *audio_stream = &self->replay_recording_output.audio_streams[i];
+                const size_t audio_recording_destination_id = gsr_encoder_add_recording_destination(&self->encoder, audio_stream->audio_track->codec_context, self->replay_recording_output.av_format_context, audio_stream->stream, audio_stream->audio_track->pts);
+                if(audio_recording_destination_id != (size_t)-1 && self->num_replay_recording_items < GSR_MAX_RECORDING_DESTINATIONS) {
+                    self->replay_recording_items[self->num_replay_recording_items] = audio_recording_destination_id;
                     ++self->num_replay_recording_items;
                 }
-
-                for(size_t i = 0; i < self->replay_recording_output.num_audio_streams; ++i) {
-                    const gsr_recording_audio_stream *audio_stream = &self->replay_recording_output.audio_streams[i];
-                    const size_t audio_recording_destination_id = gsr_encoder_add_recording_destination(&self->encoder, audio_stream->audio_track->codec_context, self->replay_recording_output.av_format_context, audio_stream->stream, audio_stream->audio_track->pts);
-                    if(audio_recording_destination_id != (size_t)-1 && self->num_replay_recording_items < GSR_MAX_RECORDING_DESTINATIONS) {
-                        self->replay_recording_items[self->num_replay_recording_items] = audio_recording_destination_id;
-                        ++self->num_replay_recording_items;
-                    }
-                }
-
-                self->replay_recording = true;
-                self->force_iframe_frame = true;
-                gsr_log(GSR_LOG_LEVEL_INFO, "Started recording");
-                if(self->callbacks.recording_started)
-                    self->callbacks.recording_started(self->replay_recording_filepath, self->callbacks.userdata);
-            } else {
-                if(self->callbacks.recording_started)
-                    self->callbacks.recording_started(NULL, self->callbacks.userdata);
-            }
-            gsr_audio_capture_unlock_filter(&self->audio_capture);
-        } else if(self->replay_recording_output.av_format_context) {
-            for(size_t i = 0; i < self->num_replay_recording_items; ++i) {
-                gsr_encoder_remove_recording_destination(&self->encoder, self->replay_recording_items[i]);
-            }
-            self->num_replay_recording_items = 0;
-
-            if(gsr_recording_output_stop(&self->replay_recording_output)) {
-                gsr_log(GSR_LOG_LEVEL_INFO, "Stopped recording");
-                if(self->callbacks.recording_stopped)
-                    self->callbacks.recording_stopped(self->replay_recording_filepath, self->callbacks.userdata);
-            } else {
-                if(self->callbacks.recording_stopped)
-                    self->callbacks.recording_stopped(NULL, self->callbacks.userdata);
             }
 
-            self->replay_recording = false;
-            self->replay_recording_filepath[0] = '\0';
+            self->replay_recording = true;
+            atomic_store(&self->replay_recording_state, 1);
+            self->force_iframe_frame = true;
+            gsr_log(GSR_LOG_LEVEL_INFO, "Started recording");
+            if(self->callbacks.recording_started)
+                self->callbacks.recording_started(self->replay_recording_filepath, self->callbacks.userdata);
+        } else {
+            if(self->callbacks.recording_started)
+                self->callbacks.recording_started(NULL, self->callbacks.userdata);
         }
+        gsr_audio_capture_unlock_filter(&self->audio_capture);
+    } else if(self->replay_recording_output.av_format_context) {
+        for(size_t i = 0; i < self->num_replay_recording_items; ++i) {
+            gsr_encoder_remove_recording_destination(&self->encoder, self->replay_recording_items[i]);
+        }
+        self->num_replay_recording_items = 0;
+
+        if(gsr_recording_output_stop(&self->replay_recording_output)) {
+            gsr_log(GSR_LOG_LEVEL_INFO, "Stopped recording");
+            if(self->callbacks.recording_stopped)
+                self->callbacks.recording_stopped(self->replay_recording_filepath, self->callbacks.userdata);
+        } else {
+            if(self->callbacks.recording_stopped)
+                self->callbacks.recording_stopped(NULL, self->callbacks.userdata);
+        }
+
+        self->replay_recording = false;
+        atomic_store(&self->replay_recording_state, 0);
+        self->replay_recording_filepath[0] = '\0';
     }
 }
 
@@ -905,8 +939,24 @@ void gsr_recorder_toggle_pause(gsr_recorder *self) {
     atomic_store(&self->toggle_pause, 1);
 }
 
+void gsr_recorder_set_paused(gsr_recorder *self, bool paused) {
+    atomic_store(&self->set_paused_request, paused ? GSR_SET_PAUSED_REQUEST_PAUSE : GSR_SET_PAUSED_REQUEST_UNPAUSE);
+}
+
 void gsr_recorder_toggle_replay_recording(gsr_recorder *self) {
-    atomic_store(&self->toggle_replay_recording, 1);
+    atomic_store(&self->replay_recording_request, GSR_REPLAY_RECORDING_REQUEST_TOGGLE);
+}
+
+void gsr_recorder_start_replay_recording(gsr_recorder *self) {
+    atomic_store(&self->replay_recording_request, GSR_REPLAY_RECORDING_REQUEST_START);
+}
+
+void gsr_recorder_stop_replay_recording(gsr_recorder *self) {
+    atomic_store(&self->replay_recording_request, GSR_REPLAY_RECORDING_REQUEST_STOP);
+}
+
+bool gsr_recorder_is_replay_recording(const gsr_recorder *self) {
+    return atomic_load(&self->replay_recording_state) == 1;
 }
 
 void gsr_recorder_save_replay(gsr_recorder *self, int seconds) {

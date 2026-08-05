@@ -161,13 +161,18 @@ and then use the `gsr-cli` program to send commands to it:\
 gsr-cli -ipc "$XDG_RUNTIME_DIR/gsr.sock" save-replay 30
 gsr-cli -ipc "$XDG_RUNTIME_DIR/gsr.sock" save-replay
 gsr-cli -ipc "$XDG_RUNTIME_DIR/gsr.sock" toggle-replay-recording
+gsr-cli -ipc "$XDG_RUNTIME_DIR/gsr.sock" start-replay-recording
+gsr-cli -ipc "$XDG_RUNTIME_DIR/gsr.sock" stop-replay-recording
 gsr-cli -ipc "$XDG_RUNTIME_DIR/gsr.sock" toggle-pause
+gsr-cli -ipc "$XDG_RUNTIME_DIR/gsr.sock" set-paused true
 gsr-cli -ipc "$XDG_RUNTIME_DIR/gsr.sock" stop
 gsr-cli -ipc "$XDG_RUNTIME_DIR/gsr.sock" status
 ```
 This gives the same control as the signals, with these differences:
 * `save-replay` takes the number of seconds to save, instead of the fixed times that the signals provide. The whole replay buffer is saved when no number of seconds is given.
 * `gsr-cli` exits with 0 only when the command succeeded and prints the reason to stderr when it didn't, so commands don't have to be sent blindly.
+* `stop`, `save-replay` and `stop-replay-recording` are replied to when the file they save has been saved (and after the `-sc` script has been started), and `gsr-cli` prints the path of the saved file.
+* `set-paused`, `start-replay-recording` and `stop-replay-recording` set an absolute state instead of toggling, so the result doesn't depend on the current state.
 * `status` prints `running` or `not running` and exits with 0 when GPU Screen Recorder is running, which a script can use to only start replay when it isn't already running: `gsr-cli -ipc "$XDG_RUNTIME_DIR/gsr.sock" status >/dev/null || start-replay.sh`.
 * The commands are sent to one specific GPU Screen Recorder instance instead of every instance that `pkill` matches.
 

@@ -506,27 +506,54 @@ or
 .B data
 Optional. For an
 .B error
-result this is a string that describes what went wrong.
+result this is a string that describes what went wrong. For an
+.B ok
+result to
+.BR stop ", " save-replay " or " stop-replay-recording
+this is a string with the path of the saved file.
+.PP
+The
+.BR stop ", " save-replay " and " stop-replay-recording
+requests save a file, and they are replied to when the file has been saved and the script given with the
+.B \-sc
+option has been started. The other requests are replied to as soon as they are accepted.
 .PP
 These requests are available:
 .TP
 .B stop
-Stop and save recording (stop without save in replay mode).
+Stop and save recording (stop without save in replay mode). The reply contains the path of the
+saved file, except in replay mode where nothing is saved.
 .TP
 .B save-replay
 Save replay (replay mode only).
 .B data
 is the number of seconds to save, which has to be larger than 0. The whole replay buffer is saved when
 .B data
-is omitted or null.
+is omitted or null. The reply contains the path of the saved file.
 .TP
 .B toggle-pause
 Pause/unpause recording (not for streaming/replay).
+.TP
+.B set-paused
+Pause/unpause recording (not for streaming/replay).
+.B data
+has to be true to pause or false to unpause. Unlike
+.B toggle-pause
+this doesn't fail when the recording is already paused/unpaused.
 .TP
 .B toggle-replay-recording
 Start/stop regular recording during replay/streaming, which requires the
 .B \-ro
 option.
+.TP
+.B start-replay-recording
+Start regular recording during replay/streaming, which requires the
+.B \-ro
+option. Does nothing when a recording is already running.
+.TP
+.B stop-replay-recording
+Stop the regular recording that runs during replay/streaming. Fails when no recording is running.
+The reply contains the path of the saved file.
 .PP
 Example:
 .nf
@@ -535,10 +562,10 @@ gpu-screen-recorder -w screen -f 60 -c mp4 -r 60 -o ~/Videos -ipc "$XDG_RUNTIME_
 echo '{"id":1,"name":"save-replay","data":30}' | socat - "UNIX-CONNECT:$XDG_RUNTIME_DIR/gsr.sock"
 .RE
 .fi
-which replies with:
+which replies with the following when the replay has been saved:
 .nf
 .RS
-{"id":1,"result":"ok"}
+{"id":1,"result":"ok","data":"/home/user/Videos/Replay_2026-08-05_14-04-22.mp4"}
 .RE
 .fi
 .SH EXAMPLES
