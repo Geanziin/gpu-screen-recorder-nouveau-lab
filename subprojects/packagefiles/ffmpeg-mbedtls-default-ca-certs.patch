@@ -14,8 +14,6 @@
 + * environment variables as openssl does.
 + */
 +static const char * const default_ca_files[] = {
-+    "/etc/ssl/certs/ca-certificates.crt", // debian, ubuntu, arch, alpine, gentoo
-+    "/etc/pki/tls/certs/ca-bundle.crt",   // fedora, rhel
 +    "/etc/ssl/ca-bundle.pem",             // opensuse
 +    "/etc/ssl/cert.pem",                  // openbsd, freebsd, macos
 +    "/usr/local/etc/ssl/cert.pem",        // freebsd ports
