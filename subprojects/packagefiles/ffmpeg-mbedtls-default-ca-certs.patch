@@ -1,6 +1,6 @@
 --- a/libavformat/tls_mbedtls.c
 +++ b/libavformat/tls_mbedtls.c
-@@ -42,6 +42,66 @@
+@@ -42,6 +42,64 @@
  #include "libavutil/avstring.h"
  #include "libavutil/random_seed.h"
  #include "libavutil/intreadwrite.h"

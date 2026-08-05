@@ -96,7 +96,9 @@ static void* replay_save_thread(void *userdata) {
         av_packet_rescale_ts(&av_packet, codec_context->time_base, stream->time_base);
 
         const int ret = av_write_frame(self->recording_output.av_format_context, &av_packet);
-        if(ret < 0)
+        if(ret >= 0)
+            gsr_av_format_context_mark_packet_written(self->recording_output.av_format_context);
+        else
             gsr_log(GSR_LOG_LEVEL_ERROR, "Failed to write frame index %d to muxer, reason: %s (%d)", av_packet.stream_index, gsr_av_error_to_string(ret), ret);
 
         free(replay_packet_data);

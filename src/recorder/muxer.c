@@ -197,7 +197,7 @@ bool gsr_recording_output_start(gsr_recording_output *self, const char *filename
 
 bool gsr_recording_output_stop(gsr_recording_output *self) {
     bool trailer_written = true;
-    if(av_write_trailer(self->av_format_context) != 0) {
+    if(gsr_av_format_context_write_trailer(self->av_format_context) != 0) {
         //trailer_written = false;
     }
 

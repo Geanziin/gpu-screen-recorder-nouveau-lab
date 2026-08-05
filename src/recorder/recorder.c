@@ -886,7 +886,7 @@ static void gsr_recorder_stop_recording(gsr_recorder *self) {
     gsr_audio_capture_join_threads(&self->audio_capture);
 
     // TODO: Replace this with start_recording_create_steams
-    if(!self->settings.is_replaying && av_write_trailer(self->av_format_context) != 0) {
+    if(!self->settings.is_replaying && gsr_av_format_context_write_trailer(self->av_format_context) != 0) {
         //fprintf(stderr, "Failed to write trailer\n");
     }
 

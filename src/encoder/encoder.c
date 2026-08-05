@@ -1,6 +1,7 @@
 #include "../../include/encoder/encoder.h"
 #include "../../include/log.h"
 #include "../../include/utils.h"
+#include "../../include/ffmpeg_utils.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -152,6 +153,8 @@ void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_contex
                 // TODO: Is av_interleaved_write_frame needed?. Answer: might be needed for mkv but dont use it! it causes frames to be inconsistent, skipping frames and duplicating frames.
                 // TODO: av_interleaved_write_frame might be needed for cfr, or always for flv
                 const int ret = av_write_frame(recording_destination->format_context, av_packet);
+                if(ret >= 0)
+                    gsr_av_format_context_mark_packet_written(recording_destination->format_context);
                 if(ret < 0) {
                     char error_buffer[AV_ERROR_MAX_STRING_SIZE];
                     if(av_strerror(ret, error_buffer, sizeof(error_buffer)) < 0)
