@@ -73,6 +73,11 @@ src += protocol_src
 cc = meson.get_compiler('c')
 m_dep = cc.find_library('m', required : true)
 
+# Overrides the libav* dependencies below with a statically linked ffmpeg built from source.
+if get_option('ffmpeg_static') == true
+    subproject('ffmpeg')
+endif
+
 dep = [
     dependency('threads'),
     m_dep,

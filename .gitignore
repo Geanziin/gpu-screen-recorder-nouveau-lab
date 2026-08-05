@@ -30,3 +30,7 @@ gsr-kms-server
 *.jpg
 *.jpeg
 *.png
+
+subprojects/*
+!subprojects/*.wrap
+!subprojects/packagefiles/

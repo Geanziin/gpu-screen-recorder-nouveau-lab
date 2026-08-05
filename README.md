@@ -75,6 +75,14 @@ When building GPU Screen Recorder with portal support (`-Dportal=true` meson opt
 * libdbus
 * libpipewire (and libspa which is usually part of libpipewire)
 
+## Building with a statically linked ffmpeg
+The `-Dffmpeg_static=true` meson option (disabled by default) downloads ffmpeg and the libraries that ffmpeg depends on (x264, opus, openssl, srt and nv-codec-headers), builds them from source with lto and only the components that GPU Screen Recorder uses and then links them statically into GPU Screen Recorder.
+This removes the runtime dependency on the system ffmpeg and on all of those libraries. `make`, `nasm`, `cmake` and `perl` are needed to build them and the first `meson setup` takes a few minutes longer because of it.
+
+The only libraries that ffmpeg is still dynamically linked to are libva, libdrm (which GPU Screen Recorder also uses directly) and the c/c++ runtime.
+
+This uses the same ffmpeg version as the GPU Screen Recorder flatpak, including the patch that makes nvenc negotiate the NVENC API version at runtime instead of at build time, which makes nvidia video encoding work on drivers down to 470.57.02 (Kepler) while still supporting AV1 and the RTX 5000 series.
+
 ## Runtime dependencies
 * libglvnd (which provides libgl, libglx and libegl) is needed. Your system needs to support at least OpenGL ES 3.0 (released in 2012)
 * vulkan-icd-loader (which provides the runtime vulkan library. This is only needed if vulkan video encoding option is used)
