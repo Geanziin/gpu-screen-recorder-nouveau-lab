@@ -28,8 +28,11 @@ typedef struct {
     bool (*toggle_replay_recording)(char *error_message, size_t error_message_size, void *userdata);
     bool (*start_replay_recording)(char *error_message, size_t error_message_size, void *userdata);
     bool (*stop_replay_recording)(char *error_message, size_t error_message_size, void *userdata);
-    /* |seconds| is GSR_SAVE_REPLAY_SECONDS_FULL when the whole replay buffer should be saved */
-    bool (*save_replay)(int seconds, char *error_message, size_t error_message_size, void *userdata);
+    /*
+        |seconds| is GSR_SAVE_REPLAY_SECONDS_FULL when the whole replay buffer should be saved.
+        |restart_replay| overrides the -restart-replay-on-save option for this save when |has_restart_replay| is set.
+    */
+    bool (*save_replay)(int seconds, bool has_restart_replay, bool restart_replay, char *error_message, size_t error_message_size, void *userdata);
     void *userdata;
 } gsr_ipc_handlers;
 

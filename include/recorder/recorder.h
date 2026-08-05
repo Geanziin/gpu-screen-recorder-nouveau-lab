@@ -55,7 +55,14 @@ void gsr_recorder_start_replay_recording(gsr_recorder *self);
 /* Does nothing when no recording is running */
 void gsr_recorder_stop_replay_recording(gsr_recorder *self);
 bool gsr_recorder_is_replay_recording(const gsr_recorder *self);
-/* |seconds| can be GSR_SAVE_REPLAY_SECONDS_FULL to save the whole replay buffer */
-void gsr_recorder_save_replay(gsr_recorder *self, int seconds);
+#define GSR_RESTART_REPLAY_USE_OPTION -1
+#define GSR_RESTART_REPLAY_DISABLE 0
+#define GSR_RESTART_REPLAY_ENABLE 1
+
+/*
+    |seconds| can be GSR_SAVE_REPLAY_SECONDS_FULL to save the whole replay buffer.
+    |restart_replay| overrides the -restart-replay-on-save option for this save when it's not GSR_RESTART_REPLAY_USE_OPTION.
+*/
+void gsr_recorder_save_replay(gsr_recorder *self, int seconds, int restart_replay);
 
 #endif /* GSR_RECORDER_RECORDER_H */

@@ -37,6 +37,7 @@ typedef struct {
     char name[GSR_IPC_MAX_REQUEST_NAME_SIZE];
     sj_Value data;
     bool has_data;
+    const char *request_end;
 } gsr_ipc_request;
 
 typedef struct {
@@ -269,6 +270,7 @@ static bool ipc_client_send_reply(gsr_ipc *self, gsr_ipc_client *client, int64_t
 
 static bool ipc_request_parse(char *data, size_t size, gsr_ipc_request *request, char *error_message, size_t error_message_size) {
     memset(request, 0, sizeof(*request));
+    request->request_end = data + size;
 
     sj_Reader reader = sj_reader(data, size);
     const sj_Value root = sj_read(&reader);
@@ -326,18 +328,57 @@ static bool ipc_request_parse(char *data, size_t size, gsr_ipc_request *request,
     return true;
 }
 
-static bool ipc_request_get_save_replay_seconds(const gsr_ipc_request *request, int *seconds, char *error_message, size_t error_message_size) {
-    *seconds = GSR_SAVE_REPLAY_SECONDS_FULL;
-    if(!request->has_data || request->data.type == SJ_NULL)
-        return true;
-
+static bool json_value_to_save_replay_seconds(const sj_Value *value, int *seconds, char *error_message, size_t error_message_size) {
     int64_t data_seconds = 0;
-    if(!gsr_json_number_to_int64(&request->data, &data_seconds) || data_seconds <= 0 || data_seconds > INT_MAX) {
-        snprintf(error_message, error_message_size, "expected 'data' to be the number of seconds to save, which has to be larger than 0");
+    if(!gsr_json_number_to_int64(value, &data_seconds) || data_seconds <= 0 || data_seconds > INT_MAX) {
+        snprintf(error_message, error_message_size, "expected the number of seconds to save to be larger than 0");
         return false;
     }
 
     *seconds = data_seconds;
+    return true;
+}
+
+static bool ipc_request_get_save_replay_options(const gsr_ipc_request *request, int *seconds, bool *has_restart_replay, bool *restart_replay, char *error_message, size_t error_message_size) {
+    *seconds = GSR_SAVE_REPLAY_SECONDS_FULL;
+    *has_restart_replay = false;
+    *restart_replay = false;
+    if(!request->has_data || request->data.type == SJ_NULL)
+        return true;
+
+    if(request->data.type != SJ_OBJECT) {
+        snprintf(error_message, error_message_size, "expected 'data' to be an object with the optional fields 'seconds' and 'restart-replay'");
+        return false;
+    }
+
+    sj_Reader reader = sj_reader(request->data.start, request->request_end - request->data.start);
+    const sj_Value data = sj_read(&reader);
+
+    sj_Value key;
+    sj_Value value;
+    while(sj_iter_object(&reader, data, &key, &value)) {
+        if(gsr_json_string_equals(&key, "seconds")) {
+            if(value.type == SJ_NULL)
+                continue;
+
+            if(!json_value_to_save_replay_seconds(&value, seconds, error_message, error_message_size))
+                return false;
+        } else if(gsr_json_string_equals(&key, "restart-replay")) {
+            if(value.type != SJ_BOOL) {
+                snprintf(error_message, error_message_size, "expected 'restart-replay' to be true or false");
+                return false;
+            }
+
+            *has_restart_replay = true;
+            *restart_replay = gsr_json_string_equals(&value, "true");
+        }
+    }
+
+    if(reader.error) {
+        snprintf(error_message, error_message_size, "failed to parse 'data': %s", reader.error);
+        return false;
+    }
+
     return true;
 }
 
@@ -437,10 +478,12 @@ static bool ipc_handle_request(gsr_ipc *self, const gsr_ipc_request *request, ch
 
     if(strcmp(request->name, "save-replay") == 0) {
         int seconds = GSR_SAVE_REPLAY_SECONDS_FULL;
-        if(!ipc_request_get_save_replay_seconds(request, &seconds, error_message, error_message_size))
+        bool has_restart_replay = false;
+        bool restart_replay = false;
+        if(!ipc_request_get_save_replay_options(request, &seconds, &has_restart_replay, &restart_replay, error_message, error_message_size))
             return false;
 
-        return self->handlers.save_replay(seconds, error_message, error_message_size, self->handlers.userdata);
+        return self->handlers.save_replay(seconds, has_restart_replay, restart_replay, error_message, error_message_size, self->handlers.userdata);
     }
 
     snprintf(error_message, error_message_size, "unknown request name '%s'", request->name);

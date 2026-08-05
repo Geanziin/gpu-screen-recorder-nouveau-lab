@@ -6,7 +6,7 @@ gsr\-cli \- Control a running GPU Screen Recorder instance
 .B \-ipc
 .I socket_path
 .I command
-.RI [ command_argument ]
+.RI [ command_arguments... ]
 .PP
 .B gsr\-cli
 .B \-h
@@ -70,10 +70,15 @@ option. Does nothing when a recording is already running.
 Stop the regular recording that runs during replay/streaming. Waits until the recording has been
 saved and prints the path of the saved file. Fails when no recording is running.
 .TP
-.BR save-replay " [" \fIseconds\fR ]
+.BR save-replay " [" \fIseconds\fR "] [" restart-replay=true|false ]
 Save replay (replay mode only). The number of seconds has to be larger than 0. The whole replay
 buffer is saved when no number of seconds is given. Waits until the replay has been saved and
 prints the path of the saved file.
+.B restart-replay
+overrides the
+.B \-restart\-replay\-on\-save
+option of GPU Screen Recorder for this save, which clears the replay buffer after the whole replay
+buffer has been saved.
 .SH EXAMPLES
 Start GPU Screen Recorder in replay mode with an ipc socket:
 .RS
@@ -86,6 +91,13 @@ Save the last 30 seconds:
 .RS
 .nf
 gsr-cli -ipc "$XDG_RUNTIME_DIR/gsr.sock" save-replay 30
+.fi
+.RE
+.PP
+Save the whole replay buffer and clear it:
+.RS
+.nf
+gsr-cli -ipc "$XDG_RUNTIME_DIR/gsr.sock" save-replay restart-replay=true
 .fi
 .RE
 .PP

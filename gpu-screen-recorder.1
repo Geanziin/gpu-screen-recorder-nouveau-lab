@@ -527,8 +527,22 @@ saved file, except in replay mode where nothing is saved.
 .B save-replay
 Save replay (replay mode only).
 .B data
-is the number of seconds to save, which has to be larger than 0. The whole replay buffer is saved when
+is an object with these optional fields:
+.RS
+.TP
+.B seconds
+The number of seconds to save, which has to be larger than 0.
+.TP
+.B restart-replay
+true/false, which overrides the
+.B \-restart\-replay\-on\-save
+option for this save. Just like that option, the replay buffer is only cleared when the whole replay buffer is saved.
+.RE
+.IP
+The whole replay buffer is saved when
 .B data
+is omitted or null, or when
+.B seconds
 is omitted or null. The reply contains the path of the saved file.
 .TP
 .B toggle-pause
@@ -559,7 +573,7 @@ Example:
 .nf
 .RS
 gpu-screen-recorder -w screen -f 60 -c mp4 -r 60 -o ~/Videos -ipc "$XDG_RUNTIME_DIR/gsr.sock" &
-echo '{"id":1,"name":"save-replay","data":30}' | socat - "UNIX-CONNECT:$XDG_RUNTIME_DIR/gsr.sock"
+echo '{"id":1,"name":"save-replay","data":{"seconds":30}}' | socat - "UNIX-CONNECT:$XDG_RUNTIME_DIR/gsr.sock"
 .RE
 .fi
 which replies with the following when the replay has been saved:

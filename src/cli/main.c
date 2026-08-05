@@ -59,7 +59,7 @@ static void toggle_replay_recording_handler(int signal_value) {
 
 static void save_replay_seconds_handler(gsr_recorder *rec, int seconds) {
     if(rec)
-        gsr_recorder_save_replay(rec, seconds);
+        gsr_recorder_save_replay(rec, seconds, GSR_RESTART_REPLAY_USE_OPTION);
     else
         pending_save_replay_seconds = seconds;
 }
@@ -78,7 +78,7 @@ static void apply_pending_signals(gsr_recorder *rec) {
     if(pending_save_replay_seconds != 0) {
         const int seconds = pending_save_replay_seconds;
         pending_save_replay_seconds = 0;
-        gsr_recorder_save_replay(rec, seconds);
+        gsr_recorder_save_replay(rec, seconds, GSR_RESTART_REPLAY_USE_OPTION);
     }
 }
 
@@ -186,14 +186,18 @@ static bool ipc_stop_replay_recording_handler(char *error_message, size_t error_
     return true;
 }
 
-static bool ipc_save_replay_handler(int seconds, char *error_message, size_t error_message_size, void *userdata) {
+static bool ipc_save_replay_handler(int seconds, bool has_restart_replay, bool restart_replay, char *error_message, size_t error_message_size, void *userdata) {
     const gsr_recorder_settings *settings = userdata;
     if(!settings->is_replaying) {
         snprintf(error_message, error_message_size, "option -r is required to save a replay");
         return false;
     }
 
-    gsr_recorder_save_replay(recorder, seconds);
+    int restart_replay_request = GSR_RESTART_REPLAY_USE_OPTION;
+    if(has_restart_replay)
+        restart_replay_request = restart_replay ? GSR_RESTART_REPLAY_ENABLE : GSR_RESTART_REPLAY_DISABLE;
+
+    gsr_recorder_save_replay(recorder, seconds, restart_replay_request);
     return true;
 }
 

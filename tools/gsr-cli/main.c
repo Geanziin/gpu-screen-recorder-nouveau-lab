@@ -19,7 +19,7 @@
 #define GSR_CLI_NO_REPLY_TIMEOUT 0
 
 static void usage(void) {
-    printf("usage: gsr-cli -ipc <socket_path> <command> [command_argument]\n");
+    printf("usage: gsr-cli -ipc <socket_path> <command> [command_arguments...]\n");
     printf("\n");
     printf("Sends a command to a GPU Screen Recorder instance that was started with the -ipc option.\n");
     printf("\n");
@@ -46,14 +46,16 @@ static void usage(void) {
     printf("  stop-replay-recording\n");
     printf("    Stop the regular recording that runs during replay/streaming. Waits until the recording\n");
     printf("    has been saved and prints the path of the saved file.\n");
-    printf("  save-replay [seconds]\n");
+    printf("  save-replay [seconds] [restart-replay=true|false]\n");
     printf("    Save the replay. The number of seconds has to be larger than 0. The whole replay buffer is\n");
     printf("    saved when no number of seconds is given. Waits until the replay has been saved and prints\n");
-    printf("    the path of the saved file.\n");
+    printf("    the path of the saved file. restart-replay overrides the -restart-replay-on-save option\n");
+    printf("    of GPU Screen Recorder for this save.\n");
     printf("\n");
     printf("EXAMPLES:\n");
     printf("  gsr-cli -ipc \"$XDG_RUNTIME_DIR/gsr.sock\" status\n");
     printf("  gsr-cli -ipc \"$XDG_RUNTIME_DIR/gsr.sock\" save-replay 30\n");
+    printf("  gsr-cli -ipc \"$XDG_RUNTIME_DIR/gsr.sock\" save-replay restart-replay=true\n");
     fflush(stdout);
 }
 
@@ -272,7 +274,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if(argc > 5) {
+    if(argc > 6) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "too many arguments");
         usage();
         return 1;
@@ -280,21 +282,51 @@ int main(int argc, char **argv) {
 
     const char *socket_filepath = argv[2];
     const char *command = argv[3];
-    const char *command_argument = argc == 5 ? argv[4] : NULL;
+    const char *command_argument = argc >= 5 ? argv[4] : NULL;
+    const char *command_argument2 = argc >= 6 ? argv[5] : NULL;
     char request[GSR_CLI_MAX_REQUEST_SIZE];
 
     if(strcmp(command, "save-replay") == 0) {
-        if(command_argument) {
-            int64_t seconds = 0;
-            if(!string_to_int64(command_argument, &seconds) || seconds <= 0 || seconds > INT_MAX) {
-                gsr_log(GSR_LOG_LEVEL_ERROR, "expected the number of seconds to save to be an integer larger than 0, got: '%s'", command_argument);
+        bool has_seconds = false;
+        int64_t seconds = 0;
+        const char *restart_replay = NULL;
+
+        const char *command_arguments[2] = { command_argument, command_argument2 };
+        for(int i = 0; i < 2; ++i) {
+            const char *argument = command_arguments[i];
+            if(!argument)
+                continue;
+
+            if(strncmp(argument, "restart-replay=", 15) == 0) {
+                restart_replay = argument + 15;
+                if(strcmp(restart_replay, "true") != 0 && strcmp(restart_replay, "false") != 0) {
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "expected restart-replay to be either true or false, got: '%s'", restart_replay);
+                    return 1;
+                }
+            } else if(!has_seconds && string_to_int64(argument, &seconds) && seconds > 0 && seconds <= INT_MAX) {
+                has_seconds = true;
+            } else {
+                gsr_log(GSR_LOG_LEVEL_ERROR, "expected the argument to be the number of seconds to save (an integer larger than 0) or restart-replay=true|false, got: '%s'", argument);
                 return 1;
             }
-            snprintf(request, sizeof(request), "{\"id\":%d,\"name\":\"save-replay\",\"data\":%" PRIi64 "}\n", GSR_CLI_REQUEST_ID, seconds);
-        } else {
-            snprintf(request, sizeof(request), "{\"id\":%d,\"name\":\"save-replay\"}\n", GSR_CLI_REQUEST_ID);
         }
+
+        if(restart_replay && has_seconds)
+            snprintf(request, sizeof(request), "{\"id\":%d,\"name\":\"save-replay\",\"data\":{\"seconds\":%" PRIi64 ",\"restart-replay\":%s}}\n", GSR_CLI_REQUEST_ID, seconds, restart_replay);
+        else if(restart_replay)
+            snprintf(request, sizeof(request), "{\"id\":%d,\"name\":\"save-replay\",\"data\":{\"restart-replay\":%s}}\n", GSR_CLI_REQUEST_ID, restart_replay);
+        else if(has_seconds)
+            snprintf(request, sizeof(request), "{\"id\":%d,\"name\":\"save-replay\",\"data\":{\"seconds\":%" PRIi64 "}}\n", GSR_CLI_REQUEST_ID, seconds);
+        else
+            snprintf(request, sizeof(request), "{\"id\":%d,\"name\":\"save-replay\"}\n", GSR_CLI_REQUEST_ID);
+
         return send_request(socket_filepath, request, GSR_CLI_NO_REPLY_TIMEOUT);
+    }
+
+    if(command_argument2) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "the '%s' command doesn't take more than one argument", command);
+        usage();
+        return 1;
     }
 
     if(strcmp(command, "set-paused") == 0) {
