@@ -37,14 +37,20 @@ typedef struct {
     gsr_audio_pts_offset *audio_pts_offsets;
     size_t num_audio_pts_offsets;
     gsr_replay_buffer *cloned_replay_buffer;
+    /* The data that the replay buffer had before it was restarted, free'd on the replay save thread */
+    gsr_replay_buffer *restarted_replay_buffer_data;
     gsr_encoder *encoder;
 } gsr_replay_save;
 
 void gsr_replay_save_init(gsr_replay_save *self);
 bool gsr_replay_save_is_running(const gsr_replay_save *self);
 
-/* Returns false if the replay failed to start. |current_save_replay_seconds| can be GSR_SAVE_REPLAY_SECONDS_FULL to save the whole replay buffer */
-bool gsr_replay_save_start(gsr_replay_save *self, AVCodecContext *video_codec_context, int video_stream_index, const gsr_audio_capture *audio_capture, gsr_encoder *encoder, const gsr_recorder_settings *settings, const char *file_extension, bool hdr, gsr_video_sources *video_sources, int current_save_replay_seconds);
+/*
+    Returns false if the replay failed to start. |current_save_replay_seconds| can be GSR_SAVE_REPLAY_SECONDS_FULL to save the whole replay buffer.
+    The replay buffer of |encoder| is restarted (emptied) when |restart_replay| is set, which is done without blocking the
+    thread that appends to the replay buffer by free'ing the old data on the replay save thread.
+*/
+bool gsr_replay_save_start(gsr_replay_save *self, AVCodecContext *video_codec_context, int video_stream_index, const gsr_audio_capture *audio_capture, gsr_encoder *encoder, const gsr_recorder_settings *settings, const char *file_extension, bool hdr, gsr_video_sources *video_sources, int current_save_replay_seconds, bool restart_replay);
 /* Returns true when the replay finished saving, in which case |success| and |output_filepath| are set. |output_filepath| is empty when nothing was saved */
 bool gsr_replay_save_poll(gsr_replay_save *self, bool *success, const char **output_filepath);
 /* Waits for an ongoing replay save to finish. Returns the same values as gsr_replay_save_poll */

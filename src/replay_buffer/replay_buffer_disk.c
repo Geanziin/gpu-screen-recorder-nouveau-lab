@@ -254,6 +254,36 @@ static uint8_t* gsr_replay_buffer_disk_iterator_get_packet_data(gsr_replay_buffe
     return packet_data;
 }
 
+static gsr_replay_buffer* gsr_replay_buffer_disk_take_data(gsr_replay_buffer *replay_buffer) {
+    gsr_replay_buffer_disk *self = (gsr_replay_buffer_disk*)replay_buffer;
+    gsr_replay_buffer_disk *destination = calloc(1, sizeof(gsr_replay_buffer_disk));
+    if(!destination)
+        return NULL;
+
+    gsr_replay_buffer_disk_set_impl_funcs(destination);
+
+    destination->replay_buffer_time = self->replay_buffer_time;
+    destination->storage_counter = self->storage_counter;
+    destination->storage_num_bytes_written = self->storage_num_bytes_written;
+    destination->storage_fd = self->storage_fd;
+
+    for(size_t i = 0; i < self->num_files; ++i) {
+        destination->files[i] = self->files[i];
+    }
+    destination->num_files = self->num_files;
+
+    snprintf(destination->replay_directory, sizeof(destination->replay_directory), "%s", self->replay_directory);
+    /* |self| keeps writing to the same directory, so it's the one that removes it */
+    destination->owns_directory = false;
+
+    self->num_files = 0;
+    self->storage_fd = 0;
+    self->storage_num_bytes_written = 0;
+    /* |storage_counter| is not reset, to not overwrite the files that were moved to |destination| */
+
+    return (gsr_replay_buffer*)destination;
+}
+
 static gsr_replay_buffer* gsr_replay_buffer_disk_clone(gsr_replay_buffer *replay_buffer) {
     gsr_replay_buffer_disk *self = (gsr_replay_buffer_disk*)replay_buffer;
     gsr_replay_buffer_disk *destination = calloc(1, sizeof(gsr_replay_buffer_disk));
@@ -398,6 +428,7 @@ static void gsr_replay_buffer_disk_set_impl_funcs(gsr_replay_buffer_disk *self) 
     self->replay_buffer.iterator_get_packet = gsr_replay_buffer_disk_iterator_get_packet;
     self->replay_buffer.iterator_get_packet_data = gsr_replay_buffer_disk_iterator_get_packet_data;
     self->replay_buffer.clone = gsr_replay_buffer_disk_clone;
+    self->replay_buffer.take_data = gsr_replay_buffer_disk_take_data;
     self->replay_buffer.find_packet_index_by_time_passed = gsr_replay_buffer_disk_find_file_index_by_time_passed;
     self->replay_buffer.find_keyframe = gsr_replay_buffer_disk_find_keyframe;
     self->replay_buffer.iterator_next = gsr_replay_buffer_disk_iterator_next;

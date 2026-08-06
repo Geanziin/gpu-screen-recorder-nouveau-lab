@@ -752,15 +752,9 @@ static void recorder_poll_replay_save(gsr_recorder *self) {
         atomic_store(&self->save_replay_seconds, 0);
         const int restart_replay_request = atomic_exchange(&self->save_replay_restart_replay, GSR_RESTART_REPLAY_USE_OPTION);
         const bool restart_replay = restart_replay_request == GSR_RESTART_REPLAY_USE_OPTION ? self->settings.restart_replay_on_save : restart_replay_request == GSR_RESTART_REPLAY_ENABLE;
-        const bool replay_start_result = gsr_replay_save_start(&self->replay_save, self->video_codec_context, GSR_VIDEO_STREAM_INDEX, &self->audio_capture, &self->encoder, &self->settings, self->file_extension, self->hdr, self->video_sources, current_save_replay_seconds);
+        const bool replay_start_result = gsr_replay_save_start(&self->replay_save, self->video_codec_context, GSR_VIDEO_STREAM_INDEX, &self->audio_capture, &self->encoder, &self->settings, self->file_extension, self->hdr, self->video_sources, current_save_replay_seconds, restart_replay && current_save_replay_seconds == GSR_SAVE_REPLAY_SECONDS_FULL);
         if(!replay_start_result && self->callbacks.replay_saved)
             self->callbacks.replay_saved(NULL, self->callbacks.userdata);
-
-        if(restart_replay && current_save_replay_seconds == GSR_SAVE_REPLAY_SECONDS_FULL) {
-            pthread_mutex_lock(&self->encoder.replay_mutex);
-            gsr_replay_buffer_clear(self->encoder.replay_buffer);
-            pthread_mutex_unlock(&self->encoder.replay_mutex);
-        }
     }
 }
 
