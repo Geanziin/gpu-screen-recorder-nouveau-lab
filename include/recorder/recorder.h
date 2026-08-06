@@ -39,7 +39,8 @@ typedef struct {
 
 /* Returns NULL on failure and sets |error| to a |gsr_error| value */
 gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_recorder_callbacks *callbacks, int *error);
-void gsr_recorder_destroy(gsr_recorder *self);
+/* This is only called when the program is exiting, so memory that the operating system frees on exit isn't free'd. Only set exiting to true if the program is exiting */
+void gsr_recorder_destroy(gsr_recorder *self, bool exiting);
 
 /* Returns a |gsr_error| value. Records until gsr_recorder_stop is called or until the capture target is gone */
 int gsr_recorder_run(gsr_recorder *self);

@@ -450,7 +450,7 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
 
     fail:
     *error = error_code;
-    gsr_recorder_destroy(self);
+    gsr_recorder_destroy(self, false);
     return NULL;
 }
 
@@ -892,7 +892,7 @@ static void gsr_recorder_stop_recording(gsr_recorder *self) {
         self->callbacks.recording_stopped(self->settings.filename, self->callbacks.userdata);
 }
 
-void gsr_recorder_destroy(gsr_recorder *self) {
+void gsr_recorder_destroy(gsr_recorder *self, bool exiting) {
     if(!self)
         return;
 
@@ -909,7 +909,7 @@ void gsr_recorder_destroy(gsr_recorder *self) {
         gsr_video_encoder_destroy(self->video_encoder, self->video_codec_context);
 
     if(self->encoder_initialized)
-        gsr_encoder_deinit(&self->encoder);
+        gsr_encoder_deinit(&self->encoder, exiting);
 
     gsr_video_sources_deinit(&self->video_sources_data);
 

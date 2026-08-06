@@ -423,6 +423,8 @@ static void get_current_time(char *time_str, size_t time_str_size) {
 
 static void gsr_replay_buffer_disk_set_impl_funcs(gsr_replay_buffer_disk *self) {
     self->replay_buffer.destroy = gsr_replay_buffer_disk_destroy;
+    /* The files and the directory have to be removed even when the process exits */
+    self->replay_buffer.destroy_at_exit = gsr_replay_buffer_disk_destroy;
     self->replay_buffer.append = gsr_replay_buffer_disk_append;
     self->replay_buffer.clear = gsr_replay_buffer_disk_clear;
     self->replay_buffer.iterator_get_packet = gsr_replay_buffer_disk_iterator_get_packet;

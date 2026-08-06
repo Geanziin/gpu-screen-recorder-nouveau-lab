@@ -22,6 +22,11 @@ void gsr_replay_buffer_destroy(gsr_replay_buffer *self) {
     free(self);
 }
 
+void gsr_replay_buffer_destroy_at_exit(gsr_replay_buffer *self) {
+    self->destroy_at_exit(self);
+    /* |self| is intentionally not free'd, the operating system does that when the process exits */
+}
+
 bool gsr_replay_buffer_append(gsr_replay_buffer *self, const AVPacket *av_packet, double timestamp) {
     return self->append(self, av_packet, timestamp);
 }

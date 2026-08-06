@@ -41,7 +41,11 @@ typedef struct {
 } gsr_encoder;
 
 bool gsr_encoder_init(gsr_encoder *self, gsr_replay_storage replay_storage, size_t replay_buffer_num_packets, double replay_buffer_time, const char *replay_directory);
-void gsr_encoder_deinit(gsr_encoder *self);
+/*
+    When |exiting| is set the memory of the replay buffer is left to the operating system to free, which makes
+    this much faster when the replay buffer holds several gigabytes of data. See gsr_replay_buffer_destroy_at_exit.
+*/
+void gsr_encoder_deinit(gsr_encoder *self, bool exiting);
 
 void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_context, int64_t pts, int stream_index);
 /* Returns the id to the recording destination, or -1 on error */

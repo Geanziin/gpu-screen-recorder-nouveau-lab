@@ -44,14 +44,14 @@ bool gsr_encoder_init(gsr_encoder *self, gsr_replay_storage replay_storage, size
 
     if(pthread_mutex_init(&self->file_write_mutex, NULL) != 0) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_encoder_init: failed to create mutex");
-        gsr_encoder_deinit(self);
+        gsr_encoder_deinit(self, false);
         return false;
     }
     self->file_write_mutex_created = true;
 
     if(pthread_mutex_init(&self->replay_mutex, NULL) != 0) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_encoder_init: failed to create mutex");
-        gsr_encoder_deinit(self);
+        gsr_encoder_deinit(self, false);
         return false;
     }
     self->replay_mutex_created = true;
@@ -60,7 +60,7 @@ bool gsr_encoder_init(gsr_encoder *self, gsr_replay_storage replay_storage, size
         self->replay_buffer = gsr_replay_buffer_create(replay_storage, replay_directory, replay_buffer_time, replay_buffer_num_packets);
         if(!self->replay_buffer) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_encoder_init: failed to create replay buffer");
-            gsr_encoder_deinit(self);
+            gsr_encoder_deinit(self, false);
             return false;
         }
     }
@@ -68,7 +68,7 @@ bool gsr_encoder_init(gsr_encoder *self, gsr_replay_storage replay_storage, size
     return true;
 }
 
-void gsr_encoder_deinit(gsr_encoder *self)  {
+void gsr_encoder_deinit(gsr_encoder *self, bool exiting)  {
     if(self->file_write_mutex_created)
         pthread_mutex_lock(&self->file_write_mutex);
     for(size_t i = 0; i < self->num_recording_destinations; ++i) {
@@ -81,7 +81,10 @@ void gsr_encoder_deinit(gsr_encoder *self)  {
 
     if(self->replay_buffer) {
         pthread_mutex_lock(&self->replay_mutex);
-        gsr_replay_buffer_destroy(self->replay_buffer);
+        if(exiting)
+            gsr_replay_buffer_destroy_at_exit(self->replay_buffer);
+        else
+            gsr_replay_buffer_destroy(self->replay_buffer);
         self->replay_buffer = NULL;
         pthread_mutex_unlock(&self->replay_mutex);
     }

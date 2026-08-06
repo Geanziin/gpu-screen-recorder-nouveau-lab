@@ -500,7 +500,7 @@ static int record(args_parser *arg_parser, gsr_windowing *windowing, gsr_capture
 
     gsr_ipc_complete_request(ipc, GSR_IPC_DEFERRED_REQUEST_STOP, true, arg_parser->settings.is_replaying ? NULL : arg_parser->settings.filename);
     gsr_ipc_stop(ipc);
-    gsr_recorder_destroy(recorder);
+    gsr_recorder_destroy(recorder, true);
     recorder = NULL;
     return run_result;
 }

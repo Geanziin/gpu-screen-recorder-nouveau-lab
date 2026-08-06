@@ -14,6 +14,7 @@ typedef struct {
 
 struct gsr_replay_buffer {
     void (*destroy)(gsr_replay_buffer *self);
+    void (*destroy_at_exit)(gsr_replay_buffer *self);
     bool (*append)(gsr_replay_buffer *self, const AVPacket *av_packet, double timestamp);
     void (*clear)(gsr_replay_buffer *self);
     AVPacket* (*iterator_get_packet)(gsr_replay_buffer *self, gsr_replay_buffer_iterator iterator);
@@ -32,6 +33,13 @@ struct gsr_replay_buffer {
 
 gsr_replay_buffer* gsr_replay_buffer_create(gsr_replay_storage replay_storage, const char *replay_directory, double replay_buffer_time, size_t replay_buffer_num_packets);
 void gsr_replay_buffer_destroy(gsr_replay_buffer *self);
+/*
+    Only frees the resources that the operating system doesn't free when the process exits, such as files,
+    and leaves the memory to the operating system to free. Freeing a replay buffer that holds several gigabytes
+    of data takes seconds, which is time wasted when the process is exiting anyway.
+    |self| can't be used after this.
+*/
+void gsr_replay_buffer_destroy_at_exit(gsr_replay_buffer *self);
 
 bool gsr_replay_buffer_append(gsr_replay_buffer *self, const AVPacket *av_packet, double timestamp);
 void gsr_replay_buffer_clear(gsr_replay_buffer *self);

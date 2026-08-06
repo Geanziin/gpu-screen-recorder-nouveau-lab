@@ -70,6 +70,11 @@ static void gsr_replay_buffer_ram_destroy(gsr_replay_buffer *replay_buffer) {
     self->index = 0;
 }
 
+/* The replay buffer only holds memory, which the operating system frees when the process exits */
+static void gsr_replay_buffer_ram_destroy_at_exit(gsr_replay_buffer *replay_buffer) {
+    (void)replay_buffer;
+}
+
 static bool gsr_replay_buffer_ram_append(gsr_replay_buffer *replay_buffer, const AVPacket *av_packet, double timestamp) {
     gsr_replay_buffer_ram *self = (gsr_replay_buffer_ram*)replay_buffer;
     gsr_av_packet_ram *packet = gsr_av_packet_ram_create(av_packet, timestamp);
@@ -231,6 +236,7 @@ static bool gsr_replay_buffer_ram_iterator_next(gsr_replay_buffer *replay_buffer
 
 static void gsr_replay_buffer_ram_set_impl_funcs(gsr_replay_buffer_ram *self) {
     self->replay_buffer.destroy = gsr_replay_buffer_ram_destroy;
+    self->replay_buffer.destroy_at_exit = gsr_replay_buffer_ram_destroy_at_exit;
     self->replay_buffer.append = gsr_replay_buffer_ram_append;
     self->replay_buffer.clear = gsr_replay_buffer_ram_clear;
     self->replay_buffer.iterator_get_packet = gsr_replay_buffer_ram_iterator_get_packet;
