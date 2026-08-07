@@ -22,8 +22,6 @@ struct gsr_replay_buffer {
     uint8_t* (*iterator_get_packet_data)(gsr_replay_buffer *self, gsr_replay_buffer_iterator iterator);
     /* The clone has to be destroyed before the replay buffer it clones is destroyed */
     gsr_replay_buffer* (*clone)(gsr_replay_buffer *self);
-    /* Returns NULL on failure, in which case |self| is left untouched */
-    gsr_replay_buffer* (*take_data)(gsr_replay_buffer *self);
     /* Returns {0, 0} if replay buffer is empty */
     gsr_replay_buffer_iterator (*find_packet_index_by_time_passed)(gsr_replay_buffer *self, int seconds);
     /* Returns {-1, 0} if not found */
@@ -48,13 +46,6 @@ AVPacket* gsr_replay_buffer_iterator_get_packet(gsr_replay_buffer *self, gsr_rep
 uint8_t* gsr_replay_buffer_iterator_get_packet_data(gsr_replay_buffer *self, gsr_replay_buffer_iterator iterator);
 /* The clone has to be destroyed before the replay buffer it clones is destroyed */
 gsr_replay_buffer* gsr_replay_buffer_clone(gsr_replay_buffer *self);
-/*
-    Moves the data of |self| into a new replay buffer and leaves |self| empty and ready to be used again.
-    This is a cheap operation, unlike gsr_replay_buffer_clear, because freeing the data is deferred to
-    gsr_replay_buffer_destroy of the returned replay buffer, which can be done without blocking |self|.
-    Returns NULL on failure, in which case |self| is left untouched.
-*/
-gsr_replay_buffer* gsr_replay_buffer_take_data(gsr_replay_buffer *self);
 /* Returns {0, 0} if replay buffer is empty */
 gsr_replay_buffer_iterator gsr_replay_buffer_find_packet_index_by_time_passed(gsr_replay_buffer *self, int seconds);
 /* Returns {-1, 0} if not found */

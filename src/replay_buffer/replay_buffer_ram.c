@@ -130,32 +130,6 @@ static uint8_t* gsr_replay_buffer_ram_iterator_get_packet_data(gsr_replay_buffer
     return NULL;
 }
 
-static gsr_replay_buffer* gsr_replay_buffer_ram_take_data(gsr_replay_buffer *replay_buffer) {
-    gsr_replay_buffer_ram *self = (gsr_replay_buffer_ram*)replay_buffer;
-    gsr_av_packet_ram **packets = calloc(self->capacity_num_packets, sizeof(gsr_av_packet_ram*));
-    if(!packets)
-        return NULL;
-
-    gsr_replay_buffer_ram *destination = calloc(1, sizeof(gsr_replay_buffer_ram));
-    if(!destination) {
-        free(packets);
-        return NULL;
-    }
-
-    gsr_replay_buffer_ram_set_impl_funcs(destination);
-
-    destination->packets = self->packets;
-    destination->capacity_num_packets = self->capacity_num_packets;
-    destination->num_packets = self->num_packets;
-    destination->index = self->index;
-
-    self->packets = packets;
-    self->num_packets = 0;
-    self->index = 0;
-
-    return (gsr_replay_buffer*)destination;
-}
-
 static gsr_replay_buffer* gsr_replay_buffer_ram_clone(gsr_replay_buffer *replay_buffer) {
     gsr_replay_buffer_ram *self = (gsr_replay_buffer_ram*)replay_buffer;
     gsr_replay_buffer_ram *destination = calloc(1, sizeof(gsr_replay_buffer_ram));
@@ -242,7 +216,6 @@ static void gsr_replay_buffer_ram_set_impl_funcs(gsr_replay_buffer_ram *self) {
     self->replay_buffer.iterator_get_packet = gsr_replay_buffer_ram_iterator_get_packet;
     self->replay_buffer.iterator_get_packet_data = gsr_replay_buffer_ram_iterator_get_packet_data;
     self->replay_buffer.clone = gsr_replay_buffer_ram_clone;
-    self->replay_buffer.take_data = gsr_replay_buffer_ram_take_data;
     self->replay_buffer.find_packet_index_by_time_passed = gsr_replay_buffer_ram_find_packet_index_by_time_passed;
     self->replay_buffer.find_keyframe = gsr_replay_buffer_ram_find_keyframe;
     self->replay_buffer.iterator_next = gsr_replay_buffer_ram_iterator_next;

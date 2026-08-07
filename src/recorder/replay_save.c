@@ -23,15 +23,6 @@ static void gsr_replay_save_cleanup(gsr_replay_save *self) {
         self->cloned_replay_buffer = NULL;
     }
 
-    /*
-        This is the data that the replay buffer had before the replay was saved and nothing references it anymore,
-        so it can be free'd without holding the replay mutex. This can take a while when the replay buffer is large.
-    */
-    if(self->restarted_replay_buffer_data) {
-        gsr_replay_buffer_destroy(self->restarted_replay_buffer_data);
-        self->restarted_replay_buffer_data = NULL;
-    }
-
     if(self->audio_pts_offsets) {
         free(self->audio_pts_offsets);
         self->audio_pts_offsets = NULL;
@@ -125,7 +116,7 @@ static void* replay_save_thread(void *userdata) {
     return NULL;
 }
 
-bool gsr_replay_save_start(gsr_replay_save *self, AVCodecContext *video_codec_context, int video_stream_index, const gsr_audio_capture *audio_capture, gsr_encoder *encoder, const gsr_recorder_settings *settings, const char *file_extension, bool hdr, gsr_video_sources *video_sources, int current_save_replay_seconds, bool restart_replay) {
+bool gsr_replay_save_start(gsr_replay_save *self, AVCodecContext *video_codec_context, int video_stream_index, const gsr_audio_capture *audio_capture, gsr_encoder *encoder, const gsr_recorder_settings *settings, const char *file_extension, bool hdr, gsr_video_sources *video_sources, int current_save_replay_seconds) {
     if(self->thread_created)
         return true;
 
@@ -134,16 +125,10 @@ bool gsr_replay_save_start(gsr_replay_save *self, AVCodecContext *video_codec_co
     self->video_stream_index = video_stream_index;
     self->output_filepath[0] = '\0';
     self->success = false;
-    self->restarted_replay_buffer_data = NULL;
     atomic_store(&self->finished, 0);
 
     pthread_mutex_lock(&encoder->replay_mutex);
     self->cloned_replay_buffer = gsr_replay_buffer_clone(encoder->replay_buffer);
-    if(self->cloned_replay_buffer && restart_replay) {
-        self->restarted_replay_buffer_data = gsr_replay_buffer_take_data(encoder->replay_buffer);
-        if(!self->restarted_replay_buffer_data)
-            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_replay_save: failed to restart the replay buffer");
-    }
     pthread_mutex_unlock(&encoder->replay_mutex);
     if(!self->cloned_replay_buffer) {
         /* TODO: Return this error to mark the replay as failed */

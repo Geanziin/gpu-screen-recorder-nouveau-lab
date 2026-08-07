@@ -47,10 +47,6 @@ gsr_replay_buffer* gsr_replay_buffer_clone(gsr_replay_buffer *self) {
     return self->clone(self);
 }
 
-gsr_replay_buffer* gsr_replay_buffer_take_data(gsr_replay_buffer *self) {
-    return self->take_data(self);
-}
-
 gsr_replay_buffer_iterator gsr_replay_buffer_find_packet_index_by_time_passed(gsr_replay_buffer *self, int seconds) {
     return self->find_packet_index_by_time_passed(self, seconds);
 }
