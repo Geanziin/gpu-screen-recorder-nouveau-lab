@@ -95,14 +95,14 @@ static bool gsr_replay_buffer_ram_append(gsr_replay_buffer *replay_buffer, const
     return true;
 }
 
+/*
+    The packets are not free'd here because that takes seconds when the replay buffer holds several gigabytes of data,
+    which would block the thread that appends to the replay buffer for that long. The packets are instead left in place
+    where they are no longer reachable and gsr_replay_buffer_ram_append free's them one by one as it overwrites them,
+    which it already does when the ring buffer wraps around.
+*/
 static void gsr_replay_buffer_ram_clear(gsr_replay_buffer *replay_buffer) {
     gsr_replay_buffer_ram *self = (gsr_replay_buffer_ram*)replay_buffer;
-    for(size_t i = 0; i < self->num_packets; ++i) {
-        if(self->packets[i]) {
-            gsr_av_packet_ram_unref(self->packets[i]);
-            self->packets[i] = NULL;
-        }
-    }
     self->num_packets = 0;
     self->index = 0;
 }
