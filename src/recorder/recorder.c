@@ -911,6 +911,9 @@ void gsr_recorder_destroy(gsr_recorder *self, bool exiting) {
     if(self->color_conversion_initialized)
         gsr_color_conversion_deinit(&self->color_conversion);
 
+    if(self->video_frame)
+        av_frame_free(&self->video_frame);
+
     if(self->video_encoder)
         gsr_video_encoder_destroy(self->video_encoder, self->video_codec_context);
 
@@ -918,9 +921,6 @@ void gsr_recorder_destroy(gsr_recorder *self, bool exiting) {
         gsr_encoder_deinit(&self->encoder, exiting);
 
     gsr_video_sources_deinit(&self->video_sources_data);
-
-    if(self->video_frame)
-        av_frame_free(&self->video_frame);
 
     if(self->video_codec_context)
         avcodec_free_context(&self->video_codec_context);
