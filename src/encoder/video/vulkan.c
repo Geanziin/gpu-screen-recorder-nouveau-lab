@@ -37,6 +37,7 @@ typedef struct {
     PFN_vkResetFences                        vkResetFences;
     PFN_vkWaitForFences                      vkWaitForFences;
     PFN_vkGetDeviceQueue                     vkGetDeviceQueue;
+    PFN_vkGetDeviceQueue2                    vkGetDeviceQueue2;
     PFN_vkQueueSubmit                        vkQueueSubmit;
     PFN_vkResetCommandBuffer                 vkResetCommandBuffer;
     PFN_vkCreateSemaphore                    vkCreateSemaphore;
@@ -101,6 +102,7 @@ static bool gsr_vk_funcs_load(gsr_vk_funcs *vk, PFN_vkGetInstanceProcAddr get_in
     LOAD_DEV(vkResetFences)
     LOAD_DEV(vkWaitForFences)
     LOAD_DEV(vkGetDeviceQueue)
+    LOAD_DEV(vkGetDeviceQueue2)
     LOAD_DEV(vkQueueSubmit)
     LOAD_DEV(vkResetCommandBuffer)
     LOAD_DEV(vkCreateSemaphore)
@@ -160,6 +162,16 @@ static AVVulkanDeviceContext* video_codec_context_get_vulkan_data(AVCodecContext
         return NULL;
 
     return (AVVulkanDeviceContext*)device_context->hwctx;
+}
+
+/* The flags that FFmpeg created the device queues with, which vkGetDeviceQueue2 has to be given to return the queue */
+static VkDeviceQueueCreateFlags get_device_queue_create_flags(AVVulkanDeviceContext *vv) {
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(61, 1, 100)
+    return vv->queue_flags;
+#else
+    (void)vv;
+    return 0;
+#endif
 }
 
 static int get_graphics_queue_family(AVVulkanDeviceContext *vv) {
@@ -393,7 +405,22 @@ static bool gsr_video_encoder_vulkan_setup_textures(gsr_video_encoder_vulkan *se
         return false;
     }
 
-    self->vk.vkGetDeviceQueue(vv->act_dev, (uint32_t)get_graphics_queue_family(vv), 0, &self->vk_queue);
+    /*
+        The queues have to be retrieved with vkGetDeviceQueue2 because vkGetDeviceQueue only works for queues that
+        were created without flags, and FFmpeg creates them with VK_DEVICE_QUEUE_CREATE_INTERNALLY_SYNCHRONIZED_BIT_KHR
+        when the driver supports it. vkGetDeviceQueue returns a NULL queue in that case, which crashes when it's used.
+    */
+    VkDeviceQueueInfo2 queue_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2,
+        .flags = get_device_queue_create_flags(vv),
+        .queueFamilyIndex = (uint32_t)get_graphics_queue_family(vv),
+        .queueIndex = 0,
+    };
+    self->vk.vkGetDeviceQueue2(vv->act_dev, &queue_info, &self->vk_queue);
+    if(!self->vk_queue) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_vulkan_setup_textures: vkGetDeviceQueue2 failed");
+        return false;
+    }
 
     /* Transition export images UNDEFINED → GENERAL so GL can use them */
     VkCommandBufferBeginInfo begin_info = {
