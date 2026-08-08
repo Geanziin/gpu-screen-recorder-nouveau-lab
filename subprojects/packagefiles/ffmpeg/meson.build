@@ -1,4 +1,4 @@
-project('ffmpeg', 'c', version : '8.1')
+project('ffmpeg', 'c', version : '9.0')
 
 # Neither ffmpeg nor the libraries it depends on use meson, so they are built with their
 # own build systems into a shared prefix and then exposed to gpu-screen-recorder as

@@ -1,9 +1,9 @@
 --- a/libavformat/tls_mbedtls.c
 +++ b/libavformat/tls_mbedtls.c
-@@ -42,6 +42,65 @@
+@@ -43,6 +43,65 @@
+ #include "libavutil/parseutils.h"
  #include "libavutil/avstring.h"
  #include "libavutil/random_seed.h"
- #include "libavutil/intreadwrite.h"
 +#include "libavutil/getenv_utf8.h"
 +
 +/*
@@ -66,7 +66,7 @@
  
  static int mbedtls_x509_fingerprint(char *cert_buf, size_t cert_sz, char **fingerprint)
  {
-@@ -557,6 +617,9 @@
+@@ -555,6 +614,9 @@
              av_log(h, AV_LOG_ERROR, "mbedtls_x509_crt_parse_file for CA cert returned %d\n", ret);
              goto fail;
          }
