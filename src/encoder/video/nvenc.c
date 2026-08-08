@@ -152,7 +152,7 @@ void gsr_video_encoder_nvenc_stop(gsr_video_encoder_nvenc *self, AVCodecContext 
     self->target_textures[0] = 0;
     self->target_textures[1] = 0;
 
-    if(video_codec_context->hw_frames_ctx)
+    if(video_codec_context && video_codec_context->hw_frames_ctx)
         av_buffer_unref(&video_codec_context->hw_frames_ctx);
     if(self->device_ctx)
         av_buffer_unref(&self->device_ctx);

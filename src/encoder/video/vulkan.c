@@ -862,7 +862,7 @@ void gsr_video_encoder_vulkan_stop(gsr_video_encoder_vulkan *self, AVCodecContex
         }
     }
 
-    if(video_codec_context->hw_frames_ctx)
+    if(video_codec_context && video_codec_context->hw_frames_ctx)
         av_buffer_unref(&video_codec_context->hw_frames_ctx);
     if(self->device_ctx)
         av_buffer_unref(&self->device_ctx);
