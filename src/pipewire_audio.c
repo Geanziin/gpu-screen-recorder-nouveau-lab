@@ -447,7 +447,8 @@ static void on_node_info_cb(void *data, const struct pw_node_info *info) {
     if(!info || !info->props || !self->running)
         return;
 
-    const char *node_name = spa_dict_lookup(info->props, PW_KEY_NODE_NAME);
+    const char *app_name = spa_dict_lookup(info->props, PW_KEY_APP_NAME);
+    const char *node_name = app_name ? app_name : spa_dict_lookup(info->props, PW_KEY_NODE_NAME);
     if(!node_name)
         return;
 
