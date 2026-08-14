@@ -395,8 +395,6 @@ Add option to capture all monitors automatically.
 
 Make -w optional, to only capture audio.
 
-Use GL_RGBA16F or GL_RGBA32F for hdr, that allows color values to be outside the 0.0 to 1.0 range.
-
 https://registry.khronos.org/EGL/extensions/EXT/EGL_EXT_surface_SMPTE2086_metadata.txt
 
 Doesn't work: sibs run --args -w "/dev/video0;camera_width=800;camera_height=600;pixfmt=yuyv" -fm content -o video.mp4
@@ -431,3 +429,9 @@ Take color pipeline into consideration in kms hdr capture. Right now kde only us
 Maybe use 3D LUT for hdr tonemapping instead of per fragment math.
 
 Update cuda to the use the same device as the opengl context (egl device).
+
+List all available drm monitors on wayland (from any device) and select the gpu to record with based on the device attached to the monitor.
+    Do this by modifying the for_each_active_monitor_output to also return the device associated with the monitor.
+
+Support capturing directly in tty by using gbm to open the device instead of using x11/wayland.
+    It cant work on pre-gbm nvidia gpus, but eh; they cant run anything except x11 anyways.

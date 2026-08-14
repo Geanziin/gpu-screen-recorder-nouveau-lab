@@ -228,6 +228,7 @@ Note: this issue doesn't happen when you using the vulkan video encoding option 
 ## TEMPORARY ISSUES
 1) Videos are in variable framerate format. Use MPV to play such videos, otherwise you might experience stuttering in the video if you are using a buggy video player. You can try saving the video into a .mkv file instead as some software may have better support for .mkv files (such as kdenlive). You can use the "-fm cfr" option to to use constant framerate mode.
 2) FLAC audio codec is disabled at the moment because of temporary issues.
+3) Capturing webcam doesn't work on nvidia x11 when capturing a monitor at the same time.
 
 # Examples
 Look at the [scripts](https://git.dec05eba.com/gpu-screen-recorder/tree/scripts) directory for script examples. For example if you want to automatically save a recording/replay into a folder with the same name as the game you are recording.
