@@ -327,3 +327,5 @@ This is a hyprland bug. Capture the monitor directly with `-w monitor` or use an
 This is a bug in COSMIC and Wlroots. Their desktop portals send frame updates at low framerates (such as 25 fps) instead of the selected framerate (such as 60 fps). Capture a monitor directly instead (`-w DP-1` for example) to workaround that problem.
 ## How to adjust the volume of the recorded audio?
 GPU Screen Recorder doesn't have the option to do that yet, but you can change the volume by starting recording and then open `pavucontrol`, go to the `Recording` tab and set the volume there. The system will remember the settings even after reboot, as long as the audio capture options remain the same.
+## My game and recorded video is stuttering but my frame rate is high
+This is an issue with some compositors, such as kwin (kde plasma on wayland). The compositor is unable to keep up when you run too many things so the display of the game starts to stutter. Use another wayland compositor or x11 instead.
