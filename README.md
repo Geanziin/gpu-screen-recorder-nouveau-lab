@@ -31,8 +31,9 @@ This software works on X11 and Wayland on AMD, Intel and NVIDIA.
 # Installation
 If you are running an Arch Linux based distro then you can find gpu screen recorder in the official repositories under the name gpu-screen-recorder (`sudo pacman -S gpu-screen-recorder`).\
 If you are running another distro then you can run `sudo ./install.sh`, but you need to manually install the dependencies, as described below.\
-You can also install gpu screen recorder ([the ui version](https://git.dec05eba.com/gpu-screen-recorder-gtk/)) from [flathub](https://flathub.org/apps/details/com.dec05eba.gpu_screen_recorder), which is the easiest method
-to install GPU Screen Recorder on non-arch based distros.\
+When you run `install.sh` it will build FFmpeg from source, which can take a while. You can build GPU Screen Recorder from source without building FFmpeg if you setup the meson project with the `-Dffmpeg_static=false` option, for example: `meson setup --buildtype=release -Dffmpeg_static=false -Dstrip=true build`.\
+You can also install GPU Screen Recorder from [flathub](https://flathub.org/apps/details/com.dec05eba.gpu_screen_recorder), which is the easiest method
+to install GPU Screen Recorder on non-arch based distros (it includes both this cli and the [UI version](https://git.dec05eba.com/gpu-screen-recorder-ui/about/)).\
 You can alternatively install GPU Screen Recorder from one of the unofficial sources mentioned below.\
 If you install GPU Screen Recorder flatpak, which is the ui version then you can still run GPU Screen Recorder command line by using the flatpak command option, for example `flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -w screen -f 60 -o video.mp4`. Note that if you want to record your monitor on AMD/Intel then you need to install the flatpak system-wide (like so: `flatpak install --system com.dec05eba.gpu_screen_recorder`).
 
@@ -59,7 +60,7 @@ These are the dependencies needed to build GPU Screen Recorder:
 
 * x11 (libx11, libxcomposite, libxrandr, libxfixes, libxdamage)
 * wayland (wayland-client, wayland-egl, wayland-scanner)
-* ffmpeg (libavcodec, libavformat, libavutil, libswresample, libavfilter)
+* ffmpeg (libavcodec, libavformat, libavutil, libswresample, libavfilter) - Only needed if you build GPU Screen Recorder with `-Dffmpeg_static=false` meson option
 * libva (and libva-drm)
 * libpulse
 * libdrm
@@ -257,7 +258,7 @@ See [https://git.dec05eba.com/?p=about](https://git.dec05eba.com/?p=about).
 Some linux distros (such as manjaro and fedora) disable hardware accelerated h264/hevc on AMD/Intel because of "patent license issues". If you are using an arch-based distro then you can install mesa-git instead of mesa and if you are using another distro then you may have to switch to a better distro. On fedora based distros you can follow this: [Hardware Accelerated Codec](https://rpmfusion.org/Howto/Multimedia).\
 You can alternatively install the flatpak version of GPU Screen Recorder from [flathub](https://flathub.org/apps/details/com.dec05eba.gpu_screen_recorder) which doesn't have this issue on any distro.
 ## I have an old nvidia GPU that supports nvenc but I get a cuda error when trying to record
-Newer ffmpeg versions don't support older nvidia cards. Try installing GPU Screen Recorder flatpak from [flathub](https://flathub.org/apps/details/com.dec05eba.gpu_screen_recorder) instead. It comes with a custom version of ffmpeg to support older nvidia GPUs.
+Newer ffmpeg versions don't support older nvidia cards. Try installing GPU Screen Recorder flatpak from [flathub](https://flathub.org/apps/details/com.dec05eba.gpu_screen_recorder) instead or use the [AppImage](https://github.com/pkgforge-dev/gpu-screen-recorder-AppImage/releases), which uses a custom version of ffmpeg to support older nvidia gpus. Alternatively you can build GPU Screen Recorder from source, which builds ffmpeg from source with a patch to support older nvidia gpus.
 ## I get a black screen/glitches while live streaming
 It seems like ffmpeg earlier than version 6.1 has some type of bug. Install ffmpeg version 6.1 or later and then reinstall GPU Screen Recorder to fix this issue. The flatpak version of GPU Screen Recorder comes with a newer version of ffmpeg so no extra steps are needed.
 ## I can't play the video in my browser directly or in discord

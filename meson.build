@@ -73,8 +73,15 @@ src += protocol_src
 cc = meson.get_compiler('c')
 m_dep = cc.find_library('m', required : true)
 
+ffmpeg_static_option = get_option('ffmpeg_static')
+if ffmpeg_static_option == 'auto'
+    ffmpeg_static = get_option('buildtype') == 'release'
+else
+    ffmpeg_static = ffmpeg_static_option == 'true'
+endif
+
 # Overrides the libav* dependencies below with a statically linked ffmpeg built from source.
-if get_option('ffmpeg_static') == true
+if ffmpeg_static
     subproject('ffmpeg')
     add_project_arguments('-DGSR_FFMPEG_STATIC', language : 'c')
 endif
