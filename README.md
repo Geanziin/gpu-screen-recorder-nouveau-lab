@@ -60,13 +60,23 @@ These are the dependencies needed to build GPU Screen Recorder:
 
 * x11 (libx11, libxcomposite, libxrandr, libxfixes, libxdamage)
 * wayland (wayland-client, wayland-egl, wayland-scanner)
-* ffmpeg (libavcodec, libavformat, libavutil, libswresample, libavfilter) - Only needed if you build GPU Screen Recorder with `-Dffmpeg_static=false` meson option
 * libva (and libva-drm)
 * libpulse
 * libdrm
 * libcap
 * vulkan-headers
 * linux-api-headers
+
+## Static FFmpeg build dependencies
+Only needed if you build GPU Screen Recorder with `-Dffmpeg_static=true` meson option
+* make
+* cmake
+* python3
+* nasm
+
+## Non-static FFmpeg build dependencies
+Only needed if you build GPU Screen Recorder with `-Dffmpeg_static=false` meson option
+* ffmpeg (libavcodec, libavformat, libavutil, libswresample, libavfilter)
 
 ## Optional dependencies
 When building GPU Screen Recorder with portal support (`-Dportal=true` meson option, which is enabled by default) these dependencies are also needed:
