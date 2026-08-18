@@ -76,6 +76,7 @@ m_dep = cc.find_library('m', required : true)
 # Overrides the libav* dependencies below with a statically linked ffmpeg built from source.
 if get_option('ffmpeg_static') == true
     subproject('ffmpeg')
+    add_project_arguments('-DGSR_FFMPEG_STATIC', language : 'c')
 endif
 
 dep = [

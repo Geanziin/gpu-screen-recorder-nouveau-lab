@@ -6,10 +6,20 @@
 #include <dlfcn.h>
 #include <string.h>
 
+#include <libavcodec/version.h>
+
 #define NVENCAPI_MAJOR_VERSION_470 11
 #define NVENCAPI_MINOR_VERSION_470 1
 #define NVENCAPI_VERSION_470 (NVENCAPI_MAJOR_VERSION_470 | (NVENCAPI_MINOR_VERSION_470 << 24))
 #define NVENCAPI_STRUCT_VERSION_CUSTOM(nvenc_api_version, struct_version)  ((uint32_t)(nvenc_api_version) | ((struct_version)<<16) | (0x7 << 28))
+
+#define NVENCAPI_PACKED_VERSION(major, minor) (((major) << 4) | (minor))
+
+#if defined(GSR_FFMPEG_STATIC) || LIBAVCODEC_VERSION_MAJOR < 63
+#define FFMPEG_REQUIRED_NVENC_API_VERSION 0
+#else
+#define FFMPEG_REQUIRED_NVENC_API_VERSION NVENCAPI_PACKED_VERSION(13, 1)
+#endif
 
 static void* open_nvenc_library(void) {
     dlerror(); /* clear */
@@ -188,6 +198,33 @@ static bool get_supported_video_codecs(const NV_ENCODE_API_FUNCTION_LIST *functi
     return success;
 }
 
+static bool nvenc_driver_supports_ffmpeg_nvenc_api_version(void *nvenc_lib) {
+    if(FFMPEG_REQUIRED_NVENC_API_VERSION == 0)
+        return true;
+
+    typedef NVENCSTATUS NVENCAPI (*FUNC_NvEncodeAPIGetMaxSupportedVersion)(uint32_t *version);
+    FUNC_NvEncodeAPIGetMaxSupportedVersion nvEncodeAPIGetMaxSupportedVersion = (FUNC_NvEncodeAPIGetMaxSupportedVersion)dlsym(nvenc_lib, "NvEncodeAPIGetMaxSupportedVersion");
+    if(!nvEncodeAPIGetMaxSupportedVersion) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_nvenc: failed to find NvEncodeAPIGetMaxSupportedVersion in libnvidia-encode.so");
+        return false;
+    }
+
+    uint32_t driver_nvenc_api_version = 0;
+    if(nvEncodeAPIGetMaxSupportedVersion(&driver_nvenc_api_version) != NV_ENC_SUCCESS) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_nvenc: NvEncodeAPIGetMaxSupportedVersion failed");
+        return false;
+    }
+
+    if(driver_nvenc_api_version < FFMPEG_REQUIRED_NVENC_API_VERSION) {
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_get_supported_video_codecs_nvenc: your nvidia driver only supports nvenc api version %u.%u, but the FFmpeg version that GPU Screen Recorder uses requires nvenc api version %u.%u. Update your nvidia driver or use an older FFmpeg version to record with nvenc",
+            driver_nvenc_api_version >> 4, driver_nvenc_api_version & 0xf,
+            (uint32_t)FFMPEG_REQUIRED_NVENC_API_VERSION >> 4, (uint32_t)FFMPEG_REQUIRED_NVENC_API_VERSION & 0xf);
+        return false;
+    }
+
+    return true;
+}
+
 bool gsr_get_supported_video_codecs_nvenc(gsr_supported_video_codecs *video_codecs, bool cleanup) {
     memset(video_codecs, 0, sizeof(*video_codecs));
 
@@ -204,6 +241,9 @@ bool gsr_get_supported_video_codecs_nvenc(gsr_supported_video_codecs *video_code
 
     nvenc_lib = open_nvenc_library();
     if(!nvenc_lib)
+        goto done;
+
+    if(!nvenc_driver_supports_ffmpeg_nvenc_api_version(nvenc_lib))
         goto done;
 
     typedef NVENCSTATUS NVENCAPI (*FUNC_NvEncodeAPICreateInstance)(NV_ENCODE_API_FUNCTION_LIST *functionList);
