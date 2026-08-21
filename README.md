@@ -37,6 +37,9 @@ to install GPU Screen Recorder on non-arch based distros (it includes both this 
 You can alternatively install GPU Screen Recorder from one of the unofficial sources mentioned below.\
 If you install GPU Screen Recorder flatpak, which is the ui version then you can still run GPU Screen Recorder command line by using the flatpak command option, for example `flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -w screen -f 60 -o video.mp4`. Note that if you want to record your monitor on AMD/Intel then you need to install the flatpak system-wide (like so: `flatpak install --system com.dec05eba.gpu_screen_recorder`).
 
+If you use an older NVIDIA gpu (GTX 1080 or older) then it's recommended that you use either the flatpak version of GPU Screen Recorder or the AppImage version (mentioned below), or install GPU Screen Recorder from source.
+Otherwise hardware accelerated recording may not work (depending on your system FFmpeg version).
+
 ## Unofficial install methods
 The only official ways to install GPU Screen Recorder is either from source, arch linux extra repository or flathub. Other sources may be out of date and missing features or may not work correctly.\
 If you install GPU Screen Recorder from somewhere else and have an issue then try installing it from one of the official sources before reporting it as an issue.\
