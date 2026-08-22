@@ -78,6 +78,9 @@ if ffmpeg_static_option == 'auto'
     ffmpeg_static = get_option('buildtype') == 'release'
 else
     ffmpeg_static = ffmpeg_static_option == 'true'
+    if not ffmpeg_static
+        warning('You configured GPU Screen Recorder to build with the -Dffmpeg_static=false meson option. This prevents GPU Screen Recorder from working on GTX 1080 and older NVIDIA GPUs. It\'s highly recommended that you set the ffmpeg_static meson option to true instead.')
+    endif
 endif
 
 # Overrides the libav* dependencies below with a statically linked ffmpeg built from source.
