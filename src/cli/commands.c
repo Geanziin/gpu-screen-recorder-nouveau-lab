@@ -270,6 +270,7 @@ int info_command(void *userdata) {
     puts("section=containers");
     puts("mp4");
     puts("mkv");
+    puts("webm");
     puts("flv");
     puts("mov");
     puts("ts");

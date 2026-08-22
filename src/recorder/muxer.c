@@ -112,10 +112,10 @@ bool av_write_header(AVFormatContext *av_format_context, const gsr_recorder_sett
         // A keyframe is sent as a burst of hundreds of rtp packets and each packet uses ~2kb of kernel buffer accounting,
         // so this needs to be large. The kernel silently caps this to net.core.wmem_max, which may also need to be raised
         av_dict_set(&options, "ts_buffer_size", "4194304", 0);
-
-        if(settings->whip_token && settings->whip_token[0] != '\0')
-            av_dict_set(&options, "authorization", settings->whip_token, 0);
     }
+
+    if(settings->auth && settings->auth[0] != '\0')
+        av_dict_set(&options, "authorization", settings->auth, 0);
 
     // This is done last because -ffmpeg-opts is documented to overwrite options set by gpu screen recorder with the same name
     if(settings->ffmpeg_opts)

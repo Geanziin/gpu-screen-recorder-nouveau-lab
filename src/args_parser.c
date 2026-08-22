@@ -204,7 +204,7 @@ static void usage_header(void) {
            "[-k h264|hevc|av1|vp8|vp9|hevc_hdr|av1_hdr|hevc_10bit|av1_10bit] [-ac aac|opus|flac] [-ab <bitrate>] [-fm cfr|vfr|content] "
            "[-bm auto|qp|vbr|cbr] [-cr limited|full] [-tune performance|quality] [-df yes|no] [-sc <script_path>] [-p <plugin_path>] "
            "[-cursor yes|no] [-keyint <value>] [-restore-portal-session yes|no] [-portal-session-token-filepath filepath] [-encoder gpu|cpu] "
-           "[-fallback-cpu-encoding yes|no] [-o <output_file>] [-ro <output_directory>] [-ffmpeg-opts <options>] [-whip-token <token>] [--list-capture-options [card_path]] "
+           "[-fallback-cpu-encoding yes|no] [-o <output_file>] [-ro <output_directory>] [-ffmpeg-opts <options>] [-auth <token>] [--list-capture-options [card_path]] "
            "[--list-monitors] [--list-audio-devices] [--list-application-audio] [--list-v4l2-devices] [-write-first-frame-ts yes|no] [-low-power yes|no] "
            "[-ipc <socket_path>] [-v yes|no] [-gl-debug yes|no] [-exclude-metadata yes|no] [--version] [-h|--help]\n", program_name);
     fflush(stdout);
@@ -471,15 +471,11 @@ static bool args_parser_set_values(args_parser *self) {
     self->settings.ffmpeg_video_opts = args_get_value_by_key(self->args, NUM_ARGS, "-ffmpeg-video-opts");
     self->settings.ffmpeg_audio_opts = args_get_value_by_key(self->args, NUM_ARGS, "-ffmpeg-audio-opts");
 
-    self->settings.whip_token = args_get_value_by_key(self->args, NUM_ARGS, "-whip-token");
-    if(self->settings.whip_token && (!self->settings.container_format || strcmp(self->settings.container_format, "whip") != 0)) {
-        gsr_log(GSR_LOG_LEVEL_WARNING, "-whip-token is only applicable when streaming with the whip container (-c whip), ignoring it");
-        self->settings.whip_token = NULL;
-    }
+    self->settings.auth = args_get_value_by_key(self->args, NUM_ARGS, "-auth");
 
     // The environment variable allows passing the token without making it visible in the process list
-    if(!self->settings.whip_token && self->settings.container_format && strcmp(self->settings.container_format, "whip") == 0)
-        self->settings.whip_token = getenv("GSR_WHIP_TOKEN");
+    if(!self->settings.auth)
+        self->settings.auth = getenv("GSR_AUTH");
 
     return true;
 }
@@ -576,7 +572,7 @@ args_parse_result args_parser_parse(args_parser *self, int argc, char **argv, co
     self->args[arg_index++] = (Arg){ .key = "-replay-storage",                .optional = true,  .list = false, .type = ARG_TYPE_ENUM, .enum_values = replay_storage_enums, .num_enum_values = sizeof(replay_storage_enums)/sizeof(ArgEnum) };
     self->args[arg_index++] = (Arg){ .key = "-p",                             .optional = true,  .list = true,  .type = ARG_TYPE_STRING };
     self->args[arg_index++] = (Arg){ .key = "-ffmpeg-opts",                   .optional = true,  .list = false, .type = ARG_TYPE_STRING };
-    self->args[arg_index++] = (Arg){ .key = "-whip-token",                    .optional = true,  .list = false, .type = ARG_TYPE_STRING };
+    self->args[arg_index++] = (Arg){ .key = "-auth",                          .optional = true,  .list = false, .type = ARG_TYPE_STRING };
     self->args[arg_index++] = (Arg){ .key = "-ffmpeg-video-opts",             .optional = true,  .list = false, .type = ARG_TYPE_STRING };
     self->args[arg_index++] = (Arg){ .key = "-ffmpeg-audio-opts",             .optional = true,  .list = false, .type = ARG_TYPE_STRING };
     self->args[arg_index++] = (Arg){ .key = "-write-first-frame-ts",          .optional = true,  .list = false, .type = ARG_TYPE_BOOLEAN };

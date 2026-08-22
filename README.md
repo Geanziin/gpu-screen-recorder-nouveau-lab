@@ -152,8 +152,7 @@ FFmpeg since version 8.0 supports the WHIP protocol for very low latency streami
 2. Run `gpu-screen-recorder` with WHIP, for example: `gpu-screen-recorder -w screen -f 60 -k h264 -bm cbr -q 20000 -a default_output -ac opus -c whip -o "http://localhost:8889/mystream/whip"`.
    If you have a high refresh rate monitor you can set `-f 60` framerate option to your monitors framerate (for example `-f 144`) to have even lower latency.
 
-If the WHIP server requires authentication then you can pass a bearer token with the `-whip-token` option (the same as the "Bearer Token" field in OBS), for example: `-whip-token "mytoken"`.\
-WHIP can also be selected as a stream service in the GPU Screen Recorder GTK application, with an option to set the bearer token.
+If the WHIP server requires authentication then you can pass an authorization bearer token with the `-auth` option, for example: `-auth "mytoken"`.
 ## Recording while using replay/streaming
 You can record a regular video while using replay/streaming by launching GPU Screen Recorder with the `-ro` option to specify a directory where to save the recording (for example: `gpu-screen-recorder -w screen -c mp4 -r 60 -o "$HOME/Videos/replays" -ro "$HOME/Videos/recordings"`).\
 To start/stop (and save) recording use the SIGRTMIN signal, for example `pkill -SIGRTMIN -f "^gpu-screen-recorder"`. The path to the video will be displayed in stdout when saving the video.\
