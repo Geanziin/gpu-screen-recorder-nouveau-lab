@@ -298,10 +298,18 @@ Bitrate mode (default: auto → qp). CBR recommended for replay buffer and live 
 QP means to capture with constant quality, even in motion, while VBR and CBR means to capture with constant size.
 .TP
 .BI \-fm " cfr|vfr|content"
-Frame rate mode: cfr (constant), vfr (variable), or content (match content) (default: vfr). Content mode is only available on X11 or portal.
+Frame rate mode: cfr (constant), vfr (variable), or content (match content) (default: vfr). Content mode is only available on X11 or portal capture.
 
-Content mode syncs video to the captured content and is recommended for smoothest video when the game is running
+Content mode (-fm content) syncs video to the captured content and is recommended for smoothest video when the game is running
 at the same frame rate or lower than what you are trying to record at.
+
+Constant framerate mode (-fm cfr) ensures that the framerate of the video is constant throughout the video, as set by the -f option. This might be needed by some video editors.
+.br
+This option is not recommended because for example if you're trying to record at 60 fps and you play a heavy game and the game runs at below 60 fps, then the recording may capture at that framerate as well,
+.br
+which will overload the encoder and it may end up recording at 1-2 fps instead and may not be able to recover.
+.br
+Try recording to a mkv file instead in that case in variable framerate mode (-fm vfr), as Kdenlive supports variable framerate videos if they are in mkv files.
 .TP
 .BI \-cr " limited|full"
 Color range (default: limited). Full range may cause issues with some video players/websites.
