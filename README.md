@@ -147,10 +147,13 @@ Streaming works the same way as recording, but the `-o` argument should be path 
 GPU Screen Recorder uses Ffmpeg so GPU Screen Recorder supports all protocols that Ffmpeg supports.\
 If you want to reduce latency one thing you can do is to use the `-keyint` option, for example `-keyint 0.5`. Lower value means lower latency at the cost of increased bitrate/decreased quality.
 ## Very low latency streaming (WHIP)
-FFmpeg since version 7.1 supports the WHIP protocol for very low latency streaming (milliseconds latency). Here is a simple way to set it up:
+FFmpeg since version 8.0 supports the WHIP protocol for very low latency streaming (milliseconds latency). Here is a simple way to set it up:
 1. Download the latest [mediamtx](https://github.com/bluenviron/mediamtx/releases/) binary and run it (just run `./mediamtx`)
 2. Run `gpu-screen-recorder` with WHIP, for example: `gpu-screen-recorder -w screen -f 60 -k h264 -bm cbr -q 20000 -a default_output -ac opus -c whip -o "http://localhost:8889/mystream/whip"`.
    If you have a high refresh rate monitor you can set `-f 60` framerate option to your monitors framerate (for example `-f 144`) to have even lower latency.
+
+If the WHIP server requires authentication then you can pass a bearer token with the `-whip-token` option (the same as the "Bearer Token" field in OBS), for example: `-whip-token "mytoken"`.\
+WHIP can also be selected as a stream service in the GPU Screen Recorder GTK application, with an option to set the bearer token.
 ## Recording while using replay/streaming
 You can record a regular video while using replay/streaming by launching GPU Screen Recorder with the `-ro` option to specify a directory where to save the recording (for example: `gpu-screen-recorder -w screen -c mp4 -r 60 -o "$HOME/Videos/replays" -ro "$HOME/Videos/recordings"`).\
 To start/stop (and save) recording use the SIGRTMIN signal, for example `pkill -SIGRTMIN -f "^gpu-screen-recorder"`. The path to the video will be displayed in stdout when saving the video.\

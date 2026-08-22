@@ -25,7 +25,8 @@ typedef struct {
 AVStream* create_stream(AVFormatContext *av_format_context, AVCodecContext *codec_context);
 bool add_hdr_metadata_to_video_stream(gsr_capture *cap, AVStream *video_stream);
 void set_format_context_options(AVFormatContext *av_format_context);
-void av_write_header(AVFormatContext *av_format_context, const char *ffmpeg_opts);
+/* Returns false on failure */
+bool av_write_header(AVFormatContext *av_format_context, const gsr_recorder_settings *settings);
 
 /* Returns false on failure. Creates the output file and its video and audio streams */
 bool gsr_recording_output_start(gsr_recording_output *self, const char *filename, const gsr_recorder_settings *settings, AVCodecContext *video_codec_context, const gsr_audio_capture *audio_capture, bool hdr, gsr_video_sources *video_sources);

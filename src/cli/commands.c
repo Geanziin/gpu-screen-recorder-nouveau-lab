@@ -19,6 +19,8 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
+#include <libavformat/avformat.h>
+
 #ifndef GSR_VERSION
 #define GSR_VERSION "unknown"
 #endif
@@ -265,6 +267,15 @@ int info_command(void *userdata) {
     puts("section=image_formats");
     puts("jpeg");
     puts("png");
+    puts("section=containers");
+    puts("mp4");
+    puts("mkv");
+    puts("flv");
+    puts("mov");
+    puts("ts");
+    puts("m3u8");
+    if(av_guess_format("whip", NULL, NULL)) // Whip is only available in ffmpeg 8.0 and later
+        puts("whip");
     puts("section=capture_options");
     list_supported_capture_options(windowing.window, windowing.egl.card_path, windowing.card_path_found);
 

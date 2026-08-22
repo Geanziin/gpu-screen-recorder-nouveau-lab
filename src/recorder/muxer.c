@@ -102,25 +102,44 @@ void set_format_context_options(AVFormatContext *av_format_context) {
     }
 }
 
-void av_write_header(AVFormatContext *av_format_context, const char *ffmpeg_opts) {
+bool av_write_header(AVFormatContext *av_format_context, const gsr_recorder_settings *settings) {
     AVDictionary *options = NULL;
     av_dict_set(&options, "strict", "experimental", 0);
 
-    if(ffmpeg_opts)
-        av_dict_parse_string(&options, ffmpeg_opts, "=", ";", 0);
+    if(strcmp(av_format_context->oformat->name, "whip") == 0) {
+        // The default udp send buffer size of the ffmpeg whip muxer (32kb) is too small to handle keyframe bursts,
+        // which makes the muxer permanently fail with "UDP send blocked" errors (the muxer treats one blocked send as fatal).
+        // A keyframe is sent as a burst of hundreds of rtp packets and each packet uses ~2kb of kernel buffer accounting,
+        // so this needs to be large. The kernel silently caps this to net.core.wmem_max, which may also need to be raised
+        av_dict_set(&options, "ts_buffer_size", "4194304", 0);
+
+        if(settings->whip_token && settings->whip_token[0] != '\0')
+            av_dict_set(&options, "authorization", settings->whip_token, 0);
+    }
+
+    // This is done last because -ffmpeg-opts is documented to overwrite options set by gpu screen recorder with the same name
+    if(settings->ffmpeg_opts)
+        av_dict_parse_string(&options, settings->ffmpeg_opts, "=", ";", 0);
 
     const int ret = avformat_write_header(av_format_context, &options);
     if(ret < 0)
         gsr_log(GSR_LOG_LEVEL_ERROR, "error occurred when writing header to output file: %s", gsr_av_error_to_string(ret));
 
     av_dict_free(&options);
+    return ret >= 0;
 }
 
 bool gsr_recording_output_start(gsr_recording_output *self, const char *filename, const gsr_recorder_settings *settings, AVCodecContext *video_codec_context, const gsr_audio_capture *audio_capture, bool hdr, gsr_video_sources *video_sources) {
     memset(self, 0, sizeof(*self));
 
+    const char *container_format = settings->container_format;
+    // The whip muxer is network only. Local recordings created while streaming with whip are saved as mkv,
+    // which supports the h264+opus codecs that whip forces
+    if(container_format && strcmp(container_format, "whip") == 0)
+        container_format = "matroska";
+
     AVFormatContext *av_format_context = NULL;
-    avformat_alloc_output_context2(&av_format_context, NULL, settings->container_format, filename);
+    avformat_alloc_output_context2(&av_format_context, NULL, container_format, filename);
     if(!av_format_context) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_recording_output_start: failed to create output context for '%s'", filename);
         return false;

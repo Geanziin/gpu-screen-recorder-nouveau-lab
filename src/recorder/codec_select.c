@@ -162,6 +162,9 @@ gsr_audio_codec select_audio_codec_with_fallback(gsr_audio_codec audio_codec, co
                 //audio_codec_to_use = "opus";
                 audio_codec = GSR_AUDIO_CODEC_OPUS;
                 gsr_log(GSR_LOG_LEVEL_WARNING, ".webm files only support opus audio codec, changing audio codec from aac to opus");
+            } else if(strcmp(file_extension, "whip") == 0) {
+                audio_codec = GSR_AUDIO_CODEC_OPUS;
+                gsr_log(GSR_LOG_LEVEL_WARNING, "whip (webrtc) only supports opus audio codec, changing audio codec from aac to opus");
             }
             break;
         }
@@ -169,7 +172,7 @@ gsr_audio_codec select_audio_codec_with_fallback(gsr_audio_codec audio_codec, co
             if(strcmp(file_extension, "mp4") != 0 && strcmp(file_extension, "mkv") != 0 && strcmp(file_extension, "webm") != 0 && strcmp(file_extension, "ts") != 0 && strcmp(file_extension, "whip") != 0) {
                 //audio_codec_to_use = "aac";
                 audio_codec = GSR_AUDIO_CODEC_AAC;
-                gsr_log(GSR_LOG_LEVEL_WARNING, "opus audio codec is only supported by .mp4, .mkv, .webm and .ts files, falling back to aac instead");
+                gsr_log(GSR_LOG_LEVEL_WARNING, "opus audio codec is only supported by .mp4, .mkv, .webm, .ts and whip outputs, falling back to aac instead");
             }
             break;
         }
@@ -179,6 +182,9 @@ gsr_audio_codec select_audio_codec_with_fallback(gsr_audio_codec audio_codec, co
                 //audio_codec_to_use = "opus";
                 audio_codec = GSR_AUDIO_CODEC_OPUS;
                 gsr_log(GSR_LOG_LEVEL_WARNING, ".webm files only support opus audio codec, changing audio codec from flac to opus");
+            } else if(strcmp(file_extension, "whip") == 0) {
+                audio_codec = GSR_AUDIO_CODEC_OPUS;
+                gsr_log(GSR_LOG_LEVEL_WARNING, "whip (webrtc) only supports opus audio codec, changing audio codec from flac to opus");
             } else if(strcmp(file_extension, "mp4") != 0 && strcmp(file_extension, "mkv") != 0) {
                 //audio_codec_to_use = "aac";
                 audio_codec = GSR_AUDIO_CODEC_AAC;
@@ -193,6 +199,26 @@ gsr_audio_codec select_audio_codec_with_fallback(gsr_audio_codec audio_codec, co
         }
     }
     return audio_codec;
+}
+
+gsr_video_codec video_codec_fallback_for_container(gsr_video_codec video_codec, const char *file_extension) {
+    if(strcmp(file_extension, "whip") != 0)
+        return video_codec;
+
+    if(video_codec == (gsr_video_codec)GSR_VIDEO_CODEC_AUTO) {
+        gsr_log(GSR_LOG_LEVEL_INFO, "using h264 encoder because a codec was not specified and whip (webrtc) in ffmpeg currently only supports the h264 video codec");
+        return GSR_VIDEO_CODEC_H264;
+    }
+
+    if(video_codec != GSR_VIDEO_CODEC_H264 && video_codec != GSR_VIDEO_CODEC_H264_VULKAN) {
+        if(video_codec_is_hdr(video_codec))
+            gsr_log(GSR_LOG_LEVEL_WARNING, "whip (webrtc) in ffmpeg currently only supports the h264 video codec, falling back to h264 instead. HDR is tonemapped to sdr");
+        else
+            gsr_log(GSR_LOG_LEVEL_WARNING, "whip (webrtc) in ffmpeg currently only supports the h264 video codec, falling back to h264 instead.");
+        return video_codec_is_vulkan(video_codec) ? GSR_VIDEO_CODEC_H264_VULKAN : GSR_VIDEO_CODEC_H264;
+    }
+
+    return video_codec;
 }
 
 static bool video_codec_only_supports_low_power_mode(const gsr_supported_video_codecs *supported_video_codecs, gsr_video_codec video_codec) {

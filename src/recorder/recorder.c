@@ -121,7 +121,10 @@ static int recorder_setup_container(gsr_recorder *self) {
     avformat_alloc_output_context2(&self->av_format_context, NULL, self->settings.container_format, self->settings.filename);
     if (!self->av_format_context) {
         if(self->settings.container_format) {
-            gsr_log(GSR_LOG_LEVEL_ERROR, "Container format '%s' (argument -c) is not valid", self->settings.container_format);
+            if(strcmp(self->settings.container_format, "whip") == 0)
+                gsr_log(GSR_LOG_LEVEL_ERROR, "Container format 'whip' is not supported by your FFmpeg version. Whip streaming requires FFmpeg version 8.0 or later");
+            else
+                gsr_log(GSR_LOG_LEVEL_ERROR, "Container format '%s' (argument -c) is not valid", self->settings.container_format);
         } else {
             gsr_log(GSR_LOG_LEVEL_ERROR, "Failed to deduce container format from file extension. Use the '-c' option to specify container format");
             args_parser_print_usage();
@@ -149,6 +152,12 @@ static int recorder_setup_container(gsr_recorder *self) {
 
     self->uses_amix = gsr_audio_input_tracks_should_use_amix(self->audio_input_tracks);
     self->settings.audio_codec = select_audio_codec_with_fallback(self->settings.audio_codec, self->file_extension, self->uses_amix);
+    self->settings.video_codec = video_codec_fallback_for_container(self->settings.video_codec, self->file_extension);
+
+    // The whip muxer is network only so local recordings created while streaming with whip (-ro and replay) are saved as mkv instead,
+    // see gsr_recording_output_start
+    if(strcmp(self->file_extension, "whip") == 0)
+        snprintf(self->file_extension, sizeof(self->file_extension), "mkv");
 
     return GSR_ERROR_OK;
 }
@@ -389,8 +398,10 @@ static int recorder_open_output(gsr_recorder *self) {
         }
     }
 
-    if(!self->settings.is_replaying)
-        av_write_header(self->av_format_context, self->settings.ffmpeg_opts);
+    if(!self->settings.is_replaying) {
+        if(!av_write_header(self->av_format_context, &self->settings))
+            return GSR_ERROR_GENERIC;
+    }
 
     return GSR_ERROR_OK;
 }

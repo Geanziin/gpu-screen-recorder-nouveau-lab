@@ -362,6 +362,19 @@ for example: -ffmpeg-audio-opts "aac_coder=fast;aac_pce=true".
 .br
 Note: this overwrites options set by GPU Screen Recorder with the same name.
 .TP
+.BI \-whip-token " token"
+The optional bearer token to use for authorization when streaming with the whip protocol (-c whip). This is the same as the "Bearer Token" field in OBS.
+.br
+The token is sent to the streaming server in the "Authorization: Bearer" http header. Only applicable when streaming with the whip container (-c whip), ignored otherwise.
+.br
+For mediamtx servers with username/password authentication the token can be set to "username:password". Whip streaming requires FFmpeg version 8.0 or later.
+.br
+The token can alternatively be provided in the GSR_WHIP_TOKEN environment variable to keep it out of the process command line. The -whip-token option takes precedence over the environment variable.
+.br
+When streaming with whip the muxer option ts_buffer_size is set to 4194304 by default (the FFmpeg default of 32768 is too small to handle keyframe bursts, causing fatal "UDP send blocked" errors). It can be overridden with -ffmpeg-opts "ts_buffer_size=<value>".
+.br
+The kernel silently caps the buffer at the net.core.wmem_max sysctl (usually only ~208kb). If whip streaming stops with "UDP send blocked" errors then raise it, for example: sysctl -w net.core.wmem_max=8388608
+.TP
 .BI \-gl\-debug " yes|no"
 OpenGL debug output (default: no).
 .TP
@@ -677,7 +690,7 @@ gpu-screen-recorder -w "DP-1|DP-2;x=1920" -o video.mp4
 .B Stream whip with an authorization key:
 .nf
 .RS
-gpu-screen-recorder -w screen -bm cbr -q 3500 -ffmpeg-opts "authorization=streamtest;ts_buffer_size=131072" -c whip -o https://b.siobud.com/api/whip
+gpu-screen-recorder -w screen -bm cbr -q 3500 -whip-token "streamtest" -c whip -o https://b.siobud.com/api/whip
 .PP
 .RE
 .fi

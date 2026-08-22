@@ -3,6 +3,7 @@
 #include "../../include/log.h"
 
 #include <assert.h>
+#include <string.h>
 
 #include <libavutil/opt.h>
 
@@ -176,8 +177,13 @@ AVCodecContext *create_video_codec_context(enum AVPixelFormat pix_fmt, const AVC
 
     //av_opt_set(codec_context->priv_data, "bsf", "hevc_metadata=colour_primaries=9:transfer_characteristics=16:matrix_coefficients=9", 0);
 
-    if(settings->tune == GSR_TUNE_QUALITY)
-        codec_context->max_b_frames = 2;
+    if(settings->tune == GSR_TUNE_QUALITY) {
+        // WebRTC (whip) doesn't support b-frames
+        if(settings->container_format && strcmp(settings->container_format, "whip") == 0)
+            gsr_log(GSR_LOG_LEVEL_WARNING, "whip (webrtc) doesn't support b-frames, ignoring b-frames that would otherwise be enabled by -tune quality");
+        else
+            codec_context->max_b_frames = 2;
+    }
 
     codec_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 

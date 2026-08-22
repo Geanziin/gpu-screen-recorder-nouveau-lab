@@ -27,6 +27,7 @@ typedef struct {
     const char *ffmpeg_opts;
     const char *ffmpeg_video_opts;
     const char *ffmpeg_audio_opts;
+    const char *whip_token;
     bool verbose;
     bool gl_debug;
     bool fallback_cpu_encoding;
