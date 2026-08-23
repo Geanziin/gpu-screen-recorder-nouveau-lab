@@ -47,7 +47,9 @@ If you still prefer to install GPU Screen Recorder with a package manager instea
 Here are some known unofficial packages:
 * Alpine Linux: [gpu-screen-recorder](https://pkgs.alpinelinux.org/package/edge/testing/x86/gpu-screen-recorder)
 * AppImage [AppImage GitHub releases](https://github.com/pkgforge-dev/gpu-screen-recorder-AppImage/releases)
+* CentOS: [Copr](https://copr.fedorainfracloud.org/coprs/brycensranch/gpu-screen-recorder-git/)
 * Debian: [gpu-screen-recorder-cli](https://tracker.debian.org/pkg/gpu-screen-recorder) or [gpu-screen-recorder alternative repository](https://sekoohaka.ddns.net/?p=about#debian-repository)
+* Fedora: [Copr](https://copr.fedorainfracloud.org/coprs/brycensranch/gpu-screen-recorder-git/)
 * Nix: [NixOS wiki](https://wiki.nixos.org/wiki/Gpu-screen-recorder)
 * Nobara: [Nobara wiki](https://wiki.nobaraproject.org/en/general-usage/additional-software/GPU-Screen-Recorder)
 * OpenMandriva: [gpu-screen-recorder](https://github.com/OpenMandrivaAssociation/gpu-screen-recorder)
