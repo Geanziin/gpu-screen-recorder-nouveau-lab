@@ -439,3 +439,5 @@ Support capturing directly in tty by using gbm to open the device instead of usi
 In application audio, list all pipewire clients instead of nodes that we can capture. That way we can list applications to capture in --list-application-audio before they start playing audio.
 
 kms take into consideration color pipeline for hdr/sdr capture.
+
+Add option to do replay with max ram usage (of the replay data) instead of replay duration. Good especially for CQP. Implement that by popping replay data from the front until the new data can fit without exceeding memory limit.

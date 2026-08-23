@@ -29,24 +29,27 @@ Supported image formats:
 This software works on X11 and Wayland on AMD, Intel and NVIDIA.
 
 # Installation
-If you are running an Arch Linux based distro then you can find gpu screen recorder in the official repositories under the name gpu-screen-recorder (`sudo pacman -S gpu-screen-recorder`).\
-If you are running another distro then you can run `sudo ./install.sh`, but you need to manually install the dependencies, as described below.\
-When you run `install.sh` it will build FFmpeg from source, which can take a while. You can build GPU Screen Recorder from source without building FFmpeg if you setup the meson project with the `-Dffmpeg_static=false` option, for example: `meson setup --buildtype=release -Dffmpeg_static=false -Dstrip=true build`.\
-You can also install GPU Screen Recorder from [flathub](https://flathub.org/apps/details/com.dec05eba.gpu_screen_recorder), which is the easiest method
-to install GPU Screen Recorder on non-arch based distros (it includes both this cli and the [UI version](https://git.dec05eba.com/gpu-screen-recorder-ui/about/)).\
-You can alternatively install GPU Screen Recorder from one of the unofficial sources mentioned below.\
-If you install GPU Screen Recorder flatpak, which is the ui version then you can still run GPU Screen Recorder command line by using the flatpak command option, for example `flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -w screen -f 60 -o video.mp4`. Note that if you want to record your monitor on AMD/Intel then you need to install the flatpak system-wide (like so: `flatpak install --system com.dec05eba.gpu_screen_recorder`).
+If you are running an Arch Linux based distro then you can find gpu screen recorder in the official repositories under the name gpu-screen-recorder (`sudo pacman -S gpu-screen-recorder`).
+If you are running another distro then you can run `sudo ./install.sh` to build and install GPU Screen Recorder from source, but you need to manually install the dependencies, as described below.
+When you run `install.sh` it will use the system FFmpeg version. Depending on your system FFmpeg version, older NVIDIA GPUs may not be supported (GTX 1080 or older).
+To fix this you can instead build GPU Screen Recorder with an FFmpeg patch that adds support for older NVIDIA GPUs, which you can do by using the `-Dffmpeg_static=true` meson option, for example:
+`meson setup --buildtype=release -Dffmpeg_static=false -Dstrip=true build`.
 
-If you use an older NVIDIA gpu (GTX 1080 or older) then it's recommended that you use either the flatpak version of GPU Screen Recorder or the AppImage version (mentioned below), or install GPU Screen Recorder from source.
-Otherwise hardware accelerated recording may not work (depending on your system FFmpeg version).
+You can also install GPU Screen Recorder from [flathub](https://flathub.org/apps/details/com.dec05eba.gpu_screen_recorder), which is the easiest method
+to install GPU Screen Recorder on non-arch based distros (it includes both this CLI and the [UI version](https://git.dec05eba.com/gpu-screen-recorder-ui/about/)).
+The flatpak version is built with the FFmpeg patch so it works on older NVIDIA GPUs as well. Flatpak also includes all of the video encoding drivers so you dont have to install anything extra.
+You can alternatively install GPU Screen Recorder from one of the unofficial sources mentioned below.
+
+If you install GPU Screen Recorder flatpak, which is the UI version then you can still run GPU Screen Recorder command line by using the flatpak command option, for example `flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder -w screen -f 60 -o video.mp4`. Note that if you want to record your monitor on AMD/Intel then you need to install the flatpak system-wide (like so: `flatpak install --system com.dec05eba.gpu_screen_recorder`).
 
 ## Unofficial install methods
-The only official ways to install GPU Screen Recorder is either from source, arch linux extra repository or flathub. Other sources may be out of date and missing features or may not work correctly.\
-If you install GPU Screen Recorder from somewhere else and have an issue then try installing it from one of the official sources before reporting it as an issue.\
-If you still prefer to install GPU Screen Recorder with a package manager instead of from source or as a flatpak then you may be able to find a package for your distro.\
+The only official ways to install GPU Screen Recorder is either from source, arch linux extra repository or flathub. Other sources may be out of date and missing features or may not work correctly.
+If you install GPU Screen Recorder from somewhere else and have an issue then try installing it from one of the official sources before reporting it as an issue.
+If you still prefer to install GPU Screen Recorder with a package manager instead of from source or as a flatpak then you may be able to find a package for your distro.
+
 Here are some known unofficial packages:
 * Alpine Linux: [gpu-screen-recorder](https://pkgs.alpinelinux.org/package/edge/testing/x86/gpu-screen-recorder)
-* AppImage [AppImage GitHub releases](https://github.com/pkgforge-dev/gpu-screen-recorder-AppImage/releases)
+* AppImage [AppImage GitHub releases](https://github.com/pkgforge-dev/gpu-screen-recorder-AppImage/releases) - This is built with the FFmpeg patch which adds support for older NVIDIA GPUs. It also includes all of the video encoding drivers so you dont have to install anything extra
 * CentOS: [Copr](https://copr.fedorainfracloud.org/coprs/brycensranch/gpu-screen-recorder-git/)
 * Debian: [gpu-screen-recorder-cli](https://tracker.debian.org/pkg/gpu-screen-recorder) or [gpu-screen-recorder alternative repository](https://sekoohaka.ddns.net/?p=about#debian-repository)
 * Fedora: [Copr](https://copr.fedorainfracloud.org/coprs/brycensranch/gpu-screen-recorder-git/)
@@ -88,16 +91,6 @@ When building GPU Screen Recorder with portal support (`-Dportal=true` meson opt
 * libdbus
 * libpipewire (and libspa which is usually part of libpipewire)
 
-## Building with a statically linked ffmpeg
-The `-Dffmpeg_static=true` meson option (disabled by default) downloads ffmpeg and the libraries that ffmpeg depends on (x264, opus, mbedtls, srt and nv-codec-headers), builds them from source with lto and only the components that GPU Screen Recorder uses and then links them statically into GPU Screen Recorder.
-This removes the runtime dependency on the system ffmpeg and on all of those libraries. `make`, `nasm`, `cmake` and `python3` are needed to build them and the first `meson setup` takes a few minutes longer because of it.
-
-mbedtls is used as the tls backend instead of openssl because it's much smaller. mbedtls has no built-in default certificate location, so ffmpeg is patched to look for the certificate store of the system (and to honor the `SSL_CERT_FILE` and `SSL_CERT_DIR` environment variables) the same way that openssl does.
-
-The only libraries that ffmpeg is still dynamically linked to are libva, libdrm (which GPU Screen Recorder also uses directly) and the c/c++ runtime.
-
-This uses the same ffmpeg version as the GPU Screen Recorder flatpak, including the patch that makes nvenc negotiate the NVENC API version at runtime instead of at build time, which makes nvidia video encoding work on drivers down to 470.57.02 (Kepler) while still supporting AV1 and the RTX 5000 series.
-
 ## Runtime dependencies
 * libglvnd (which provides libgl, libglx and libegl) is needed. Your system needs to support at least OpenGL ES 3.0 (released in 2012)
 * vulkan-icd-loader (which provides the runtime vulkan library. This is only needed if vulkan video encoding option is used)
@@ -117,6 +110,12 @@ There are also additional dependencies needed at runtime depending on your GPU v
 * cuda runtime (libcuda.so.1) (libnvidia-compute)
 * nvenc (libnvidia-encode)
 * nvfbc (libnvidia-fbc1, when recording the screen on x11)
+
+## Building with a statically linked ffmpeg
+The `-Dffmpeg_static=true` meson option (disabled by default) downloads ffmpeg and the libraries that ffmpeg depends on (x264, opus, mbedtls, srt and nv-codec-headers), builds them from source with lto and only the components that GPU Screen Recorder uses and then links them statically into GPU Screen Recorder.
+This removes the runtime dependency on the system ffmpeg and on all of those libraries. `make`, `nasm`, `cmake` and `python3` are needed to build them and the first `meson setup` takes a few minutes longer because of it.
+
+This uses the same ffmpeg version as the GPU Screen Recorder flatpak, including the patch that makes nvenc negotiate the NVENC API version at runtime instead of at build time, which makes nvidia video encoding work on drivers down to 470.57.02 (Kepler) while still supporting AV1 and the RTX 5000 series.
 
 # How to use
 Run `gpu-screen-recorder --help` to see all options and run `man gpu-screen-recorder` to see more detailed explanations for the options and also examples.\

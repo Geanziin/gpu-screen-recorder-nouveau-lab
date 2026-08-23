@@ -73,25 +73,15 @@ src += protocol_src
 cc = meson.get_compiler('c')
 m_dep = cc.find_library('m', required : true)
 
-ffmpeg_static_option = get_option('ffmpeg_static')
-if ffmpeg_static_option == 'auto'
-    ffmpeg_static = get_option('buildtype') == 'release'
-else
-    ffmpeg_static = ffmpeg_static_option == 'true'
-    if not ffmpeg_static
-        warning('You configured GPU Screen Recorder to build with the -Dffmpeg_static=false meson option. This prevents GPU Screen Recorder from working on GTX 1080 and older NVIDIA GPUs. It\'s highly recommended that you set the ffmpeg_static meson option to true instead.')
-    endif
-endif
-
 # Overrides the libav* dependencies below with a statically linked ffmpeg built from source.
-if ffmpeg_static
+if get_option('ffmpeg_static') == true
     subproject('ffmpeg')
     add_project_arguments('-DGSR_FFMPEG_STATIC', language : 'c')
 endif
 
 dep = [
-    dependency('threads'),
     m_dep,
+    dependency('threads'),
     dependency('libavcodec'),
     dependency('libavformat'),
     dependency('libavutil'),
