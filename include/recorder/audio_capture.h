@@ -75,6 +75,7 @@ bool gsr_audio_capture_add_track(gsr_audio_capture *self, const gsr_audio_track 
 /* Allocates the silence buffer and starts one thread per audio device, plus the amix thread when |uses_amix| is set */
 int gsr_audio_capture_start(gsr_audio_capture *self, int audio_max_frame_size, bool uses_amix);
 void gsr_audio_capture_join_threads(gsr_audio_capture *self);
+void gsr_audio_capture_flush(gsr_audio_capture *self);
 void gsr_audio_capture_lock_filter(gsr_audio_capture *self);
 void gsr_audio_capture_unlock_filter(gsr_audio_capture *self);
 

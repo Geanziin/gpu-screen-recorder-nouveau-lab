@@ -174,7 +174,6 @@ void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_contex
             break;
         } else if (res == AVERROR_EOF) { // this is the end of the stream
             av_packet_free(&av_packet);
-            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_encoder_receive_packets: end of stream");
             break;
         } else {
             av_packet_free(&av_packet);

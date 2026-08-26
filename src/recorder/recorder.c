@@ -882,6 +882,9 @@ static void gsr_recorder_stop_recording(gsr_recorder *self) {
 
     gsr_plugins_deinit(&self->plugins);
 
+    gsr_audio_capture_join_threads(&self->audio_capture);
+    gsr_audio_capture_flush(&self->audio_capture);
+
     if(self->replay_recording_output.av_format_context) {
         for(size_t i = 0; i < self->num_replay_recording_items; ++i) {
             gsr_encoder_remove_recording_destination(&self->encoder, self->replay_recording_items[i]);
@@ -897,8 +900,6 @@ static void gsr_recorder_stop_recording(gsr_recorder *self) {
                 self->callbacks.recording_stopped(NULL, self->callbacks.userdata);
         }
     }
-
-    gsr_audio_capture_join_threads(&self->audio_capture);
 
     // TODO: Replace this with start_recording_create_steams
     if(!self->settings.is_replaying && gsr_av_format_context_write_trailer(self->av_format_context) != 0) {

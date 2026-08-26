@@ -329,6 +329,20 @@ static void* audio_device_thread(void *userdata) {
     return NULL;
 }
 
+static void audio_track_encode_filtered_frames(gsr_audio_capture *self, gsr_audio_track *track, AVFrame *aframe) {
+    while(av_buffersink_get_frame(track->sink, aframe) >= 0) {
+        aframe->pts = track->pts;
+        if(avcodec_send_frame(track->codec_context, aframe) >= 0) {
+            /* TODO: Move to separate thread because this could write to network (for example when livestreaming) */
+            gsr_encoder_receive_packets(self->encoder, track->codec_context, aframe->pts, track->stream_index);
+        } else {
+            gsr_log(GSR_LOG_LEVEL_ERROR, "Failed to encode audio");
+        }
+        av_frame_unref(aframe);
+        track->pts += track->codec_context->frame_size;
+    }
+}
+
 static void* amix_thread(void *userdata) {
     gsr_audio_capture *self = userdata;
     AVFrame *aframe = av_frame_alloc();
@@ -339,19 +353,7 @@ static void* amix_thread(void *userdata) {
             if(!track->sink)
                 continue;
 
-            int err = 0;
-            while((err = av_buffersink_get_frame(track->sink, aframe)) >= 0) {
-                aframe->pts = track->pts;
-                err = avcodec_send_frame(track->codec_context, aframe);
-                if(err >= 0) {
-                    /* TODO: Move to separate thread because this could write to network (for example when livestreaming) */
-                    gsr_encoder_receive_packets(self->encoder, track->codec_context, aframe->pts, track->stream_index);
-                } else {
-                    gsr_log(GSR_LOG_LEVEL_ERROR, "Failed to encode audio");
-                }
-                av_frame_unref(aframe);
-                track->pts += track->codec_context->frame_size;
-            }
+            audio_track_encode_filtered_frames(self, track, aframe);
         }
         pthread_mutex_unlock(&self->filter_mutex);
         av_usleep(5 * 1000); /* 5 milliseconds */
@@ -459,6 +461,32 @@ void gsr_audio_capture_join_threads(gsr_audio_capture *self) {
         pthread_join(self->amix_thread, NULL);
         self->amix_thread_created = false;
     }
+}
+
+void gsr_audio_capture_flush(gsr_audio_capture *self) {
+    AVFrame *aframe = av_frame_alloc();
+
+    pthread_mutex_lock(&self->filter_mutex);
+    for(size_t i = 0; i < self->num_tracks; ++i) {
+        gsr_audio_track *track = &self->tracks[i];
+        if(!track->codec_context)
+            continue;
+
+        if(track->sink && aframe) {
+            for(size_t j = 0; j < track->num_audio_devices; ++j) {
+                AVFilterContext *src_filter_ctx = track->audio_devices[j].src_filter_ctx;
+                if(src_filter_ctx && av_buffersrc_add_frame(src_filter_ctx, NULL) < 0)
+                    gsr_log(GSR_LOG_LEVEL_ERROR, "failed to flush audio filter");
+            }
+            audio_track_encode_filtered_frames(self, track, aframe);
+        }
+
+        if(avcodec_send_frame(track->codec_context, NULL) >= 0)
+            gsr_encoder_receive_packets(self->encoder, track->codec_context, track->pts, track->stream_index);
+    }
+    pthread_mutex_unlock(&self->filter_mutex);
+
+    av_frame_free(&aframe);
 }
 
 void gsr_audio_capture_lock_filter(gsr_audio_capture *self) {
