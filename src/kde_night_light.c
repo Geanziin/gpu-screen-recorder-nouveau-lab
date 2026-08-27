@@ -1,8 +1,6 @@
 #include "../include/kde_night_light.h"
 #include "../include/log.h"
 
-#ifdef GSR_DBUS
-
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -339,26 +337,3 @@ bool gsr_kde_night_light_get_inverse_matrix(gsr_kde_night_light *self, gsr_night
     memcpy(inverse_matrix, self->cached_inverse_matrix[cache_index], sizeof(self->cached_inverse_matrix[cache_index]));
     return true;
 }
-
-#else /* GSR_DBUS */
-
-#include <stddef.h>
-
-gsr_kde_night_light* gsr_kde_night_light_create(void) {
-    gsr_log(GSR_LOG_LEVEL_WARNING, "kde night light handling disabled because gsr was compiled without pipewire (which also disables dbus)");
-    return NULL;
-}
-
-void gsr_kde_night_light_destroy(gsr_kde_night_light *self) {
-    (void)self;
-}
-
-bool gsr_kde_night_light_get_inverse_matrix(gsr_kde_night_light *self, gsr_night_light_compensation compensation, const gsr_color_chromaticities *container_primaries, float inverse_matrix[9]) {
-    (void)self;
-    (void)compensation;
-    (void)container_primaries;
-    (void)inverse_matrix;
-    return false;
-}
-
-#endif /* GSR_DBUS */

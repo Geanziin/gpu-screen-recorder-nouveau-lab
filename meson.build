@@ -63,6 +63,7 @@ src = [
     'src/defs.c',
     'src/plugins.c',
     'src/wayland_host_bridge.c',
+    'src/dbus.c',
     'src/sound.c',
     'src/cli/main.c',
 ]
@@ -98,6 +99,7 @@ dep = [
     dependency('libdrm'),
     dependency('wayland-egl'),
     dependency('wayland-client'),
+    dependency('dbus-1'),
 ]
 
 if build_machine.system() == 'linux'
@@ -111,7 +113,6 @@ uses_pipewire = false
 if get_option('portal') == true
     src += [
         'src/capture/portal.c',
-        'src/dbus.c',
         'src/pipewire_video.c',
     ]
     add_project_arguments('-DGSR_PORTAL', language : 'c')
@@ -130,9 +131,7 @@ if uses_pipewire == true
     dep += [
         dependency('libpipewire-0.3'),
         dependency('libspa-0.2'),
-        dependency('dbus-1'),
     ]
-    add_project_arguments('-DGSR_DBUS', language : 'c')
 endif
 
 add_project_arguments('-DGSR_VERSION="' + meson.project_version() + '"', language: 'c')
