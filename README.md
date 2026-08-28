@@ -289,7 +289,7 @@ Alternatively you can record with h264 codec (-k h264, which is also the default
 ## The video doesn't display or has a green/yellow overlay
 This can happen if your video player is missing the H264/HEVC video codecs. Either install the codecs or use mpv.
 ## I get stutter in the video
-Try recording to an SSD and make sure it's not using NTFS file system. Also try recording with "content" framerate mode (`-fm content`).
+Try recording to an SSD and make sure it's not using NTFS file system. Also try recording with "content" framerate mode (`-fm content`). On Wayland this "content" framerate mode is only available with `-w portal` capture option.
 ## GPU Screen Recorder records night light
 On KDE Plasma the night light tint is automatically removed from the recording (both in SDR and HDR mode).
 On other compositors you can record with desktop portal option (`-w portal`) instead which ignores night light, if you are ok with recording without HDR.
