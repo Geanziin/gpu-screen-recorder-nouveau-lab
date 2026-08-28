@@ -1,4 +1,4 @@
-project('gpu-screen-recorder', 'c', version : '6.0.1', default_options : ['c_std=gnu11', 'warning_level=2'])
+project('gpu-screen-recorder', 'c', version : '6.0.2', default_options : ['c_std=gnu11', 'warning_level=2'])
 
 add_project_arguments('-Wshadow', language : 'c')
 if get_option('buildtype') == 'debug'
