@@ -53,6 +53,7 @@ Here are some known unofficial packages:
 * CentOS: [Copr](https://copr.fedorainfracloud.org/coprs/brycensranch/gpu-screen-recorder-git/)
 * Debian: [gpu-screen-recorder-cli](https://tracker.debian.org/pkg/gpu-screen-recorder) or [gpu-screen-recorder alternative repository](https://sekoohaka.ddns.net/Sarisan/gpu-screen-recorder/packages)
 * Fedora: [Copr](https://copr.fedorainfracloud.org/coprs/brycensranch/gpu-screen-recorder-git/)
+* Guix: [gpu-screen-recorder](https://packages.guix.gnu.org/packages/gpu-screen-recorder/5.15.3/)
 * Nix: [NixOS wiki](https://wiki.nixos.org/wiki/Gpu-screen-recorder)
 * Nobara: [Nobara wiki](https://wiki.nobaraproject.org/en/general-usage/additional-software/GPU-Screen-Recorder)
 * OpenMandriva: [gpu-screen-recorder](https://github.com/OpenMandrivaAssociation/gpu-screen-recorder)
@@ -339,7 +340,7 @@ This is an nvidia power management driver bug which can happen when the system i
 This is a known issue. The issue is that nvfbc which is used for screen capture only supports glx on older systems and glx is not compatible with the webcam capture method used in GPU Screen Recorder.
 This will be fixed in the future.
 ## Desktop portal capture doesn't work on Hyprland
-This is a hyprland bug. Capture the monitor directly with `-w monitor` or use another Wayland compositor.
+This is a hyprland bug. I fixed it in xdg-desktop-portal-hyprland in [2026-08-29](https://github.com/hyprwm/xdg-desktop-portal-hyprland/commit/ba31964ee42b56bcb0d3b78a64ead5d8a1c3c6f6). If your xdg-desktop-portal-hyprland doesn't have that fix yet you have to capture the monitor directly with `-w monitor` instead or use another Wayland compositor.
 ## The captured video is laggy when capturing with desktop portal on COSMIC/Wlroots (sway)
 This is a bug in COSMIC and Wlroots. Their desktop portals send frame updates at low framerates (such as 25 fps) instead of the selected framerate (such as 60 fps). Capture a monitor directly instead (`-w DP-1` for example) to workaround that problem.
 ## How to adjust the volume of the recorded audio?

@@ -34,6 +34,9 @@ typedef struct {
     size_t num_items;
 } gsr_video_sources;
 
+/* Returns the name of the first monitor that will be captured. Returns false if no monitor is captured */
+bool gsr_capture_sources_get_monitor_to_capture(const gsr_capture_sources *self, const gsr_window *window, char *monitor_name, size_t monitor_name_size);
+
 void gsr_capture_deps_init(gsr_capture_deps *self);
 void gsr_capture_deps_init_cursor(gsr_capture_deps *self, gsr_egl *egl, bool record_cursor);
 void gsr_capture_deps_deinit(gsr_capture_deps *self);

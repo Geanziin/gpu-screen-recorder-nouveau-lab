@@ -36,7 +36,7 @@ static int gsr_capture_ximage_start(gsr_capture *cap, gsr_capture_metadata *capt
     gsr_capture_ximage *self = cap->priv;
     self->root_window = DefaultRootWindow(self->display);
 
-    if(!get_monitor_by_name(self->params.egl, GSR_CONNECTION_X11, self->params.display_to_capture, &self->monitor)) {
+    if(!get_monitor_by_name(self->params.egl->window, self->params.egl->card_path, GSR_CONNECTION_X11, self->params.display_to_capture, &self->monitor)) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_capture_ximage_start: failed to find monitor by name \"%s\"", self->params.display_to_capture);
         gsr_capture_ximage_stop(self);
         return -1;

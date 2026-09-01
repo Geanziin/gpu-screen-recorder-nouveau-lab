@@ -31,15 +31,31 @@ typedef struct {
     bool found_monitor;
 } get_monitor_by_name_userdata;
 
+#define GSR_MAX_DRI_CARDS 16
+#define GSR_DRI_CARD_PATH_MAX_SIZE 128
+
+typedef struct {
+    char paths[GSR_MAX_DRI_CARDS][GSR_DRI_CARD_PATH_MAX_SIZE];
+    int num_cards;
+} gsr_dri_cards;
+
 double clock_get_monotonic_seconds(void);
 bool generate_random_characters(char *buffer, int buffer_size, const char *alphabet, size_t alphabet_size);
 bool generate_random_characters_standard_alphabet(char *buffer, int buffer_size);
 
 typedef void (*active_monitor_callback)(const gsr_monitor *monitor, void *userdata);
 void for_each_active_monitor_output_x11_not_cached(Display *display, active_monitor_callback callback, void *userdata);
+/* |card_path| is only used when |connection_type| is |GSR_CONNECTION_DRM|. Every gpu is used when |card_path| is NULL or empty */
 void for_each_active_monitor_output(const gsr_window *window, const char *card_path, gsr_connection_type connection_type, active_monitor_callback callback, void *userdata);
-bool get_monitor_by_name(const gsr_egl *egl, gsr_connection_type connection_type, const char *name, gsr_monitor *monitor);
+bool get_monitor_by_name(const gsr_window *window, const char *card_path, gsr_connection_type connection_type, const char *name, gsr_monitor *monitor);
 bool drm_monitor_get_display_server_data(const gsr_window *window, const gsr_monitor *monitor, gsr_monitor_rotation *monitor_rotation, vec2i *monitor_position);
+
+/* Lists every /dev/dri/cardN device that is a hardware accelerated gpu */
+void gsr_dri_cards_get(gsr_dri_cards *self);
+/* |card_path| should be at least |GSR_DRI_CARD_PATH_MAX_SIZE| bytes in size. Returns the gpu that the monitor is connected to */
+bool gsr_get_monitor_card_path(const gsr_window *window, const char *monitor_name, char *card_path);
+/* Returns true if the two paths refer to the same drm device. The paths can be either a card or a render node */
+bool gsr_drm_device_paths_equal(const char *path1, const char *path2);
 
 int get_connector_type_by_name(const char *name);
 int get_connector_type_id_by_name(const char *name);

@@ -88,6 +88,11 @@ typedef void(*__GLXextFuncPtr)(void);
 #define EGL_GREEN_SIZE                          0x3023
 #define EGL_DEVICE_EXT                          0x322C
 #define EGL_DRM_DEVICE_FILE_EXT                 0x3233
+#define EGL_DRM_RENDER_NODE_FILE_EXT            0x3377
+#define EGL_PLATFORM_DEVICE_EXT                 0x313F
+#define EGL_PLATFORM_GBM_KHR                    0x31D7
+#define EGL_SURFACE_TYPE                        0x3033
+#define EGL_DONT_CARE                           ((int32_t)-1)
 
 #define GL_FLOAT                                0x1406
 #define GL_FALSE                                0
@@ -162,6 +167,8 @@ typedef int (*FUNC_glXSwapIntervalSGI)(int interval);
 typedef void (*GLDEBUGPROC)(unsigned int source, unsigned int type, unsigned int id, unsigned int severity, int length, const char *message, const void *userParam);
 typedef int (*FUNC_eglQueryDisplayAttribEXT)(EGLDisplay dpy, int32_t attribute, intptr_t *value);
 typedef const char* (*FUNC_eglQueryDeviceStringEXT)(void *device, int32_t name);
+typedef unsigned int (*FUNC_eglQueryDevicesEXT)(int32_t max_devices, void **devices, int32_t *num_devices);
+typedef EGLDisplay (*FUNC_eglGetPlatformDisplayEXT)(unsigned int platform, void *native_display, const int32_t *attrib_list);
 typedef int (*FUNC_eglQueryDmaBufModifiersEXT)(EGLDisplay dpy, int32_t format, int32_t max_modifiers, uint64_t *modifiers, int *external_only, int32_t *num_modifiers);
 typedef void (*FUNC_glCreateMemoryObjectsEXT)(int n, unsigned int *memoryObjects);
 typedef void (*FUNC_glImportMemoryFdEXT)(unsigned int memory, uint64_t size, unsigned int handleType, int fd);
@@ -184,6 +191,7 @@ struct gsr_egl {
     void *egl_library;
     void *glx_library;
     void *gl_library;
+    void *gbm_library;
 
     gsr_gl_context_type context_type;
     gsr_window *window;
@@ -192,6 +200,11 @@ struct gsr_egl {
     EGLSurface egl_surface;
     EGLContext egl_context;
     const char *dri_card_path;
+
+    void *gbm_device;
+    int gbm_fd;
+    /* True when the egl display was created for a specific gpu instead of from the window, in which case there is no window to render to */
+    bool windowless_display;
 
     void *glx_context;
     void *glx_fb_config;
@@ -207,6 +220,7 @@ struct gsr_egl {
     unsigned int (*eglTerminate)(EGLDisplay dpy);
     unsigned int (*eglChooseConfig)(EGLDisplay dpy, const int32_t *attrib_list, EGLConfig *configs, int32_t config_size, int32_t *num_config);
     EGLSurface (*eglCreateWindowSurface)(EGLDisplay dpy, EGLConfig config, EGLNativeWindowType win, const int32_t *attrib_list);
+    EGLSurface (*eglCreatePbufferSurface)(EGLDisplay dpy, EGLConfig config, const int32_t *attrib_list);
     EGLContext (*eglCreateContext)(EGLDisplay dpy, EGLConfig config, EGLContext share_context, const int32_t *attrib_list);
     unsigned int (*eglMakeCurrent)(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx);
     EGLImage (*eglCreateImage)(EGLDisplay dpy, EGLContext ctx, unsigned int target, EGLClientBuffer buffer, const intptr_t *attrib_list);
@@ -223,6 +237,8 @@ struct gsr_egl {
     FUNC_glEGLImageTargetTexture2DOES glEGLImageTargetTexture2DOES;
     FUNC_eglQueryDisplayAttribEXT eglQueryDisplayAttribEXT;
     FUNC_eglQueryDeviceStringEXT eglQueryDeviceStringEXT;
+    FUNC_eglQueryDevicesEXT eglQueryDevicesEXT;
+    FUNC_eglGetPlatformDisplayEXT eglGetPlatformDisplayEXT;
     FUNC_eglQueryDmaBufModifiersEXT eglQueryDmaBufModifiersEXT;
     FUNC_glCreateMemoryObjectsEXT glCreateMemoryObjectsEXT;
     FUNC_glImportMemoryFdEXT glImportMemoryFdEXT;
@@ -319,10 +335,17 @@ struct gsr_egl {
     void* (*glMapBufferRange)(unsigned int target, intptr_t offset, ssize_t length, unsigned int access);
     unsigned char (*glUnmapBuffer)(unsigned int target);
     void (*glGetIntegerv)(unsigned int pname, int *params);
+
+    void* (*gbm_create_device)(int fd);
+    void (*gbm_device_destroy)(void *gbm);
 };
 
-bool gsr_egl_load(gsr_egl *self, gsr_window *window, bool is_monitor_capture, bool enable_debug);
+/* |card_path| is the gpu to create the opengl context on, only used on wayland.
+   The gpu that the display server runs on is used when it's NULL or when it fails */
+bool gsr_egl_load(gsr_egl *self, gsr_window *window, bool is_monitor_capture, bool enable_debug, const char *card_path);
 void gsr_egl_unload(gsr_egl *self);
+/* Returns true if the opengl context runs on the gpu |card_path| */
+bool gsr_egl_uses_card(const gsr_egl *self, const char *card_path);
 
 /* Does opengl swap with egl or glx, depending on which one is active */
 void gsr_egl_swap_buffers(gsr_egl *self);

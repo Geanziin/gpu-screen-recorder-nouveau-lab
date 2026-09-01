@@ -224,8 +224,8 @@ static void for_each_active_monitor_output_drm(const char *card_path, active_mon
             const char *connection_name = drmModeGetConnectorTypeName(connector->connector_type);
 
             if(connection_name && crtc_id > 0 && crtc) {
-                const int connector_type_index_name = get_connector_type_by_name(display_name);
                 const int display_name_len = snprintf(display_name, sizeof(display_name), "%s-%u", connection_name, connector->connector_type_id);
+                const int connector_type_index_name = get_connector_type_by_name(display_name);
 
                 const gsr_monitor monitor = {
                     .name = display_name,
@@ -252,6 +252,46 @@ static void for_each_active_monitor_output_drm(const char *card_path, active_mon
     close(fd);
 }
 
+#define GSR_MAX_MONITORS 32
+#define GSR_MONITOR_NAME_MAX_SIZE 32
+
+typedef struct {
+    active_monitor_callback callback;
+    void *userdata;
+    char monitor_names[GSR_MAX_MONITORS][GSR_MONITOR_NAME_MAX_SIZE];
+    int num_monitor_names;
+} unique_monitor_userdata;
+
+/* TODO: Two gpus can have a monitor with the same name (DP-1 for example), in which case only the monitor on the first gpu can be captured */
+static void unique_monitor_callback(const gsr_monitor *monitor, void *userdata) {
+    unique_monitor_userdata *data = userdata;
+    for(int i = 0; i < data->num_monitor_names; ++i) {
+        if(strcmp(data->monitor_names[i], monitor->name) == 0)
+            return;
+    }
+
+    if(data->num_monitor_names < GSR_MAX_MONITORS) {
+        snprintf(data->monitor_names[data->num_monitor_names], GSR_MONITOR_NAME_MAX_SIZE, "%s", monitor->name);
+        ++data->num_monitor_names;
+    }
+
+    data->callback(monitor, data->userdata);
+}
+
+static void for_each_active_monitor_output_drm_every_card(active_monitor_callback callback, void *userdata) {
+    gsr_dri_cards cards;
+    gsr_dri_cards_get(&cards);
+
+    unique_monitor_userdata unique_userdata;
+    unique_userdata.callback = callback;
+    unique_userdata.userdata = userdata;
+    unique_userdata.num_monitor_names = 0;
+
+    for(int i = 0; i < cards.num_cards; ++i) {
+        for_each_active_monitor_output_drm(cards.paths[i], unique_monitor_callback, &unique_userdata);
+    }
+}
+
 void for_each_active_monitor_output(const gsr_window *window, const char *card_path, gsr_connection_type connection_type, active_monitor_callback callback, void *userdata) {
     switch(connection_type) {
         case GSR_CONNECTION_X11:
@@ -259,7 +299,10 @@ void for_each_active_monitor_output(const gsr_window *window, const char *card_p
             gsr_window_for_each_active_monitor_output_cached(window, callback, userdata);
             break;
         case GSR_CONNECTION_DRM:
-            for_each_active_monitor_output_drm(card_path, callback, userdata);
+            if(card_path && card_path[0] != '\0')
+                for_each_active_monitor_output_drm(card_path, callback, userdata);
+            else
+                for_each_active_monitor_output_drm_every_card(callback, userdata);
             break;
     }
 }
@@ -278,14 +321,30 @@ static void get_monitor_by_name_callback(const gsr_monitor *monitor, void *userd
     }
 }
 
-bool get_monitor_by_name(const gsr_egl *egl, gsr_connection_type connection_type, const char *name, gsr_monitor *monitor) {
+bool get_monitor_by_name(const gsr_window *window, const char *card_path, gsr_connection_type connection_type, const char *name, gsr_monitor *monitor) {
     get_monitor_by_name_userdata userdata;
     userdata.name = name;
     userdata.name_len = strlen(name);
     userdata.monitor = monitor;
     userdata.found_monitor = false;
-    for_each_active_monitor_output(egl->window, egl->card_path, connection_type, get_monitor_by_name_callback, &userdata);
+    for_each_active_monitor_output(window, card_path, connection_type, get_monitor_by_name_callback, &userdata);
     return userdata.found_monitor;
+}
+
+bool gsr_get_monitor_card_path(const gsr_window *window, const char *monitor_name, char *card_path) {
+    gsr_dri_cards cards;
+    gsr_dri_cards_get(&cards);
+
+    for(int i = 0; i < cards.num_cards; ++i) {
+        gsr_monitor monitor;
+        if(get_monitor_by_name(window, cards.paths[i], GSR_CONNECTION_DRM, monitor_name, &monitor)) {
+            snprintf(card_path, GSR_DRI_CARD_PATH_MAX_SIZE, "%s", cards.paths[i]);
+            return true;
+        }
+    }
+
+    card_path[0] = '\0';
+    return false;
 }
 
 typedef struct {
@@ -405,8 +464,45 @@ bool gl_get_gpu_info(gsr_egl *egl, gsr_gpu_info *info) {
     return true;
 }
 
+/* Nouveau is not supported by gpu screen recorder. The other drm drivers dont do hardware accelerated
+   rendering, mesa falls back to llvmpipe (software rendering) on them.
+   Note: this list is kept in sync with gpu screen recorder ui */
+static const char* unsupported_drm_drivers[] = {
+    "nouveau",
+    "vkms",
+    "vgem",
+    "simpledrm",
+    "ofdrm",
+    "udl",
+    "evdi"
+};
+
+static bool drm_driver_is_unsupported(const char *driver_name) {
+    for(size_t i = 0; i < sizeof(unsupported_drm_drivers)/sizeof(*unsupported_drm_drivers); ++i) {
+        if(strcmp(driver_name, unsupported_drm_drivers[i]) == 0)
+            return true;
+    }
+    return false;
+}
+
+/* A drm device that doesn't do hardware accelerated rendering (llvmpipe for example) has no render node */
+static bool drm_fd_is_hardware_accelerated_gpu(int drm_fd) {
+    drmVersion *ver = drmGetVersion(drm_fd);
+    if(!ver)
+        return false;
+
+    bool hardware_accelerated = false;
+    if(!drm_driver_is_unsupported(ver->name)) {
+        char *render_path = drmGetRenderDeviceNameFromFd(drm_fd);
+        hardware_accelerated = render_path != NULL;
+        free(render_path);
+    }
+
+    drmFreeVersion(ver);
+    return hardware_accelerated;
+}
+
 bool try_card_has_valid_plane(const char *card_path) {
-    drmVersion *ver = NULL;
     drmModePlaneResPtr planes = NULL;
     bool found_screen_card = false;
 
@@ -414,8 +510,7 @@ bool try_card_has_valid_plane(const char *card_path) {
     if(fd == -1)
         return false;
 
-    ver = drmGetVersion(fd);
-    if(!ver || strstr(ver->name, "nouveau"))
+    if(!drm_fd_is_hardware_accelerated_gpu(fd))
         goto next;
 
     drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
@@ -440,8 +535,6 @@ bool try_card_has_valid_plane(const char *card_path) {
     next:
     if(planes)
         drmModeFreePlaneResources(planes);
-    if(ver)
-        drmFreeVersion(ver);
     close(fd);
     if(found_screen_card)
         return true;
@@ -479,6 +572,41 @@ bool gsr_card_path_get_render_path(const char *card_path, char *render_path) {
 
     close(fd);
     return false;
+}
+
+void gsr_dri_cards_get(gsr_dri_cards *self) {
+    self->num_cards = 0;
+    for(int i = 0; i < GSR_MAX_DRI_CARDS; ++i) {
+        char card_path[GSR_DRI_CARD_PATH_MAX_SIZE];
+        snprintf(card_path, sizeof(card_path), DRM_DEV_NAME, DRM_DIR_NAME, i);
+
+        const int fd = open(card_path, O_RDONLY);
+        if(fd == -1)
+            continue;
+
+        const bool hardware_accelerated = drm_fd_is_hardware_accelerated_gpu(fd);
+        close(fd);
+        if(!hardware_accelerated)
+            continue;
+
+        snprintf(self->paths[self->num_cards], GSR_DRI_CARD_PATH_MAX_SIZE, "%s", card_path);
+        ++self->num_cards;
+    }
+}
+
+bool gsr_drm_device_paths_equal(const char *path1, const char *path2) {
+    if(!path1 || !path2)
+        return false;
+
+    if(strcmp(path1, path2) == 0)
+        return true;
+
+    char render_path1[128];
+    char render_path2[128];
+    if(!gsr_card_path_get_render_path(path1, render_path1) || !gsr_card_path_get_render_path(path2, render_path2))
+        return false;
+
+    return strcmp(render_path1, render_path2) == 0;
 }
 
 int create_directory_recursive(char *path) {

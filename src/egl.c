@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <dlfcn.h>
 #include <assert.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 // TODO: rename gsr_egl to something else since this includes both egl and glx and in the future maybe vulkan too
 
@@ -28,14 +30,158 @@
 #define GLX_DEPTH_SIZE                     12
 #define GLX_RGBA_TYPE                      0x8014
 
+static void gsr_egl_unload_gbm(gsr_egl *self) {
+    if(self->gbm_device) {
+        self->gbm_device_destroy(self->gbm_device);
+        self->gbm_device = NULL;
+    }
+
+    if(self->gbm_fd > 0) {
+        close(self->gbm_fd);
+        self->gbm_fd = 0;
+    }
+
+    if(self->gbm_library) {
+        dlclose(self->gbm_library);
+        self->gbm_library = NULL;
+    }
+}
+
+static bool gsr_egl_create_display_from_window(gsr_egl *self) {
+    self->egl_display = self->eglGetDisplay((EGLNativeDisplayType)gsr_window_get_display(self->window));
+    if(!self->egl_display) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_display_from_window failed: eglGetDisplay failed");
+        return false;
+    }
+
+    if(!self->eglInitialize(self->egl_display, NULL, NULL)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_display_from_window failed: eglInitialize failed");
+        self->egl_display = NULL;
+        return false;
+    }
+
+    return true;
+}
+
+#define GSR_MAX_EGL_DEVICES 32
+
+static EGLDisplay gsr_egl_get_device_display(gsr_egl *self, const char *card_path) {
+    if(!self->eglQueryDevicesEXT || !self->eglGetPlatformDisplayEXT || !self->eglQueryDeviceStringEXT)
+        return NULL;
+
+    void *devices[GSR_MAX_EGL_DEVICES];
+    int32_t num_devices = 0;
+    if(!self->eglQueryDevicesEXT(GSR_MAX_EGL_DEVICES, devices, &num_devices))
+        return NULL;
+
+    for(int32_t i = 0; i < num_devices; ++i) {
+        const char *device_card_path = self->eglQueryDeviceStringEXT(devices[i], EGL_DRM_DEVICE_FILE_EXT);
+        const char *device_render_path = self->eglQueryDeviceStringEXT(devices[i], EGL_DRM_RENDER_NODE_FILE_EXT);
+        if(gsr_drm_device_paths_equal(device_card_path, card_path) || gsr_drm_device_paths_equal(device_render_path, card_path))
+            return self->eglGetPlatformDisplayEXT(EGL_PLATFORM_DEVICE_EXT, devices[i], NULL);
+    }
+
+    return NULL;
+}
+
+static EGLDisplay gsr_egl_get_gbm_display(gsr_egl *self, const char *card_path) {
+    if(!self->eglGetPlatformDisplayEXT)
+        return NULL;
+
+    self->gbm_library = dlopen("libgbm.so.1", RTLD_LAZY);
+    if(!self->gbm_library) {
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_egl_get_gbm_display: failed to load libgbm.so.1");
+        return NULL;
+    }
+
+    const dlsym_assign required_dlsym[] = {
+        { (void**)&self->gbm_create_device, "gbm_create_device" },
+        { (void**)&self->gbm_device_destroy, "gbm_device_destroy" },
+
+        { NULL, NULL }
+    };
+
+    if(!dlsym_load_list(self->gbm_library, required_dlsym)) {
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_egl_get_gbm_display: missing required symbols in libgbm.so.1");
+        return NULL;
+    }
+
+    char render_path[128];
+    if(!gsr_card_path_get_render_path(card_path, render_path)) {
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_egl_get_gbm_display: failed to get /dev/dri/renderDXXX file from %s", card_path);
+        return NULL;
+    }
+
+    self->gbm_fd = open(render_path, O_RDWR);
+    if(self->gbm_fd <= 0) {
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_egl_get_gbm_display: failed to open %s", render_path);
+        self->gbm_fd = 0;
+        return NULL;
+    }
+
+    self->gbm_device = self->gbm_create_device(self->gbm_fd);
+    if(!self->gbm_device) {
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_egl_get_gbm_display: failed to create a gbm device for %s", render_path);
+        return NULL;
+    }
+
+    return self->eglGetPlatformDisplayEXT(EGL_PLATFORM_GBM_KHR, self->gbm_device, NULL);
+}
+
+static bool gsr_egl_create_display_from_card(gsr_egl *self, const char *card_path) {
+    self->egl_display = gsr_egl_get_device_display(self, card_path);
+    if(!self->egl_display)
+        self->egl_display = gsr_egl_get_gbm_display(self, card_path);
+
+    if(!self->egl_display) {
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_egl_create_display_from_card failed: failed to create an egl display for %s", card_path);
+        gsr_egl_unload_gbm(self);
+        return false;
+    }
+
+    if(!self->eglInitialize(self->egl_display, NULL, NULL)) {
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_egl_create_display_from_card failed: eglInitialize failed for %s", card_path);
+        self->egl_display = NULL;
+        gsr_egl_unload_gbm(self);
+        return false;
+    }
+
+    self->windowless_display = true;
+    return true;
+}
+
+static void gsr_egl_query_dri_card_path(gsr_egl *self) {
+    self->dri_card_path = NULL;
+    if(!self->eglQueryDisplayAttribEXT || !self->eglQueryDeviceStringEXT)
+        return;
+
+    intptr_t device = 0;
+    if(self->eglQueryDisplayAttribEXT(self->egl_display, EGL_DEVICE_EXT, &device) && device)
+        self->dri_card_path = self->eglQueryDeviceStringEXT((void*)device, EGL_DRM_DEVICE_FILE_EXT);
+}
+
 // TODO: Create egl context without surface (in other words, x11/wayland agnostic, doesn't require x11/wayland dependency)
-static bool gsr_egl_create_window(gsr_egl *self, bool enable_debug) {
+static bool gsr_egl_create_context(gsr_egl *self, bool enable_debug) {
     EGLConfig  ecfg;
     int32_t    num_config = 0;
 
-    const int32_t attr[] = {
+    const int32_t window_attr[] = {
         EGL_BUFFER_SIZE, 24,
         EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+        EGL_NONE, EGL_NONE
+    };
+
+    /* The gbm platform only has window configs and the device platform only has pbuffer configs.
+       The surface type doesn't matter because the context is made current without a surface */
+    const int32_t windowless_attr[] = {
+        EGL_SURFACE_TYPE, EGL_DONT_CARE,
+        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+        EGL_NONE, EGL_NONE
+    };
+
+    const int32_t pbuffer_attr[] = {
+        EGL_WIDTH, 16,
+        EGL_HEIGHT, 16,
         EGL_NONE, EGL_NONE
     };
 
@@ -49,46 +195,40 @@ static bool gsr_egl_create_window(gsr_egl *self, bool enable_debug) {
         ctxattr[3] = EGL_TRUE;
     }
 
-    self->eglBindAPI(EGL_OPENGL_ES_API);
+    const bool windowless = self->windowless_display;
 
-    self->egl_display = self->eglGetDisplay((EGLNativeDisplayType)gsr_window_get_display(self->window));
-    if(!self->egl_display) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_window failed: eglGetDisplay failed");
-        goto fail;
-    }
-
-    if(!self->eglInitialize(self->egl_display, NULL, NULL)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_window failed: eglInitialize failed");
-        goto fail;
-    }
-
-    if(!self->eglChooseConfig(self->egl_display, attr, &ecfg, 1, &num_config) || num_config != 1) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_window failed: failed to find a matching config");
-        goto fail;
+    if(!self->eglChooseConfig(self->egl_display, windowless ? windowless_attr : window_attr, &ecfg, 1, &num_config) || num_config != 1) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_context failed: failed to find a matching config");
+        return false;
     }
 
     self->egl_context = self->eglCreateContext(self->egl_display, ecfg, NULL, ctxattr);
     if(!self->egl_context) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_window failed: failed to create egl context");
-        goto fail;
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_context failed: failed to create egl context");
+        return false;
     }
 
-    self->egl_surface = self->eglCreateWindowSurface(self->egl_display, ecfg, (EGLNativeWindowType)gsr_window_get_window(self->window), NULL);
-    if(!self->egl_surface) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_window failed: failed to create window surface");
-        goto fail;
+    if(!windowless) {
+        self->egl_surface = self->eglCreateWindowSurface(self->egl_display, ecfg, (EGLNativeWindowType)gsr_window_get_window(self->window), NULL);
+        if(!self->egl_surface) {
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_context failed: failed to create window surface");
+            return false;
+        }
+    } else if(!self->eglMakeCurrent(self->egl_display, NULL, NULL, self->egl_context)) {
+        /* The driver doesn't support EGL_KHR_surfaceless_context, render to a dummy surface instead */
+        self->egl_surface = self->eglCreatePbufferSurface(self->egl_display, ecfg, pbuffer_attr);
+        if(!self->egl_surface) {
+            gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_context failed: failed to create pbuffer surface");
+            return false;
+        }
     }
 
     if(!self->eglMakeCurrent(self->egl_display, self->egl_surface, self->egl_surface, self->egl_context)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_window failed: failed to make egl context current");
-        goto fail;
+        gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_egl_create_context failed: failed to make egl context current");
+        return false;
     }
 
     return true;
-
-    fail:
-    gsr_egl_unload(self);
-    return false;
 }
 
 static GLXFBConfig glx_fb_config_choose(gsr_egl *self, Display *display) {
@@ -178,6 +318,7 @@ static bool gsr_egl_load_egl(gsr_egl *self, void *library) {
         { (void**)&self->eglTerminate, "eglTerminate" },
         { (void**)&self->eglChooseConfig, "eglChooseConfig" },
         { (void**)&self->eglCreateWindowSurface, "eglCreateWindowSurface" },
+        { (void**)&self->eglCreatePbufferSurface, "eglCreatePbufferSurface" },
         { (void**)&self->eglCreateContext, "eglCreateContext" },
         { (void**)&self->eglMakeCurrent, "eglMakeCurrent" },
         { (void**)&self->eglCreateImage, "eglCreateImage" },
@@ -206,6 +347,8 @@ static bool gsr_egl_proc_load_egl(gsr_egl *self) {
     self->glEGLImageTargetTexture2DOES = (FUNC_glEGLImageTargetTexture2DOES)self->eglGetProcAddress("glEGLImageTargetTexture2DOES");
     self->eglQueryDisplayAttribEXT = (FUNC_eglQueryDisplayAttribEXT)self->eglGetProcAddress("eglQueryDisplayAttribEXT");
     self->eglQueryDeviceStringEXT = (FUNC_eglQueryDeviceStringEXT)self->eglGetProcAddress("eglQueryDeviceStringEXT");
+    self->eglQueryDevicesEXT = (FUNC_eglQueryDevicesEXT)self->eglGetProcAddress("eglQueryDevicesEXT");
+    self->eglGetPlatformDisplayEXT = (FUNC_eglGetPlatformDisplayEXT)self->eglGetProcAddress("eglGetPlatformDisplayEXT");
     self->eglQueryDmaBufModifiersEXT = (FUNC_eglQueryDmaBufModifiersEXT)self->eglGetProcAddress("eglQueryDmaBufModifiersEXT");
 
     self->glCreateMemoryObjectsEXT = (FUNC_glCreateMemoryObjectsEXT)self->eglGetProcAddress("glCreateMemoryObjectsEXT");
@@ -399,7 +542,7 @@ static void gsr_egl_disable_vsync(gsr_egl *self) {
     }
 }
 
-bool gsr_egl_load(gsr_egl *self, gsr_window *window, bool is_monitor_capture, bool enable_debug) {
+bool gsr_egl_load(gsr_egl *self, gsr_window *window, bool is_monitor_capture, bool enable_debug, const char *card_path) {
     memset(self, 0, sizeof(gsr_egl));
     self->context_type = GSR_GL_CONTEXT_TYPE_EGL;
     self->window = window;
@@ -432,17 +575,25 @@ bool gsr_egl_load(gsr_egl *self, gsr_window *window, bool is_monitor_capture, bo
     if(!gsr_egl_proc_load_egl(self))
         goto fail;
 
-    if(!gsr_egl_create_window(self, enable_debug))
+    self->eglBindAPI(EGL_OPENGL_ES_API);
+
+    /* On x11 every monitor is part of one framebuffer on the gpu that the display server runs on and nvfbc requires that gpu as well,
+       but on wayland the monitor to capture can be connected to another gpu than the one that the display server runs on */
+    const bool use_monitor_gpu = card_path && card_path[0] != '\0' && gsr_window_get_display_server(self->window) == GSR_DISPLAY_SERVER_WAYLAND;
+    bool display_created = false;
+    if(use_monitor_gpu)
+        display_created = gsr_egl_create_display_from_card(self, card_path);
+
+    if(!display_created && !gsr_egl_create_display_from_window(self))
+        goto fail;
+
+    gsr_egl_query_dri_card_path(self);
+
+    if(!gsr_egl_create_context(self, enable_debug))
         goto fail;
 
     if(!gl_get_gpu_info(self, &self->gpu_info))
         goto fail;
-
-    if(self->eglQueryDisplayAttribEXT && self->eglQueryDeviceStringEXT) {
-        intptr_t device = 0;
-        if(self->eglQueryDisplayAttribEXT(self->egl_display, EGL_DEVICE_EXT, &device) && device)
-            self->dri_card_path = self->eglQueryDeviceStringEXT((void*)device, EGL_DRM_DEVICE_FILE_EXT);
-    }
 
     /* Nvfbc requires glx */
     if(gsr_window_get_display_server(self->window) == GSR_DISPLAY_SERVER_X11 && is_monitor_capture && self->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA) {
@@ -520,7 +671,13 @@ void gsr_egl_unload(gsr_egl *self) {
         self->gl_library = NULL;
     }
 
+    gsr_egl_unload_gbm(self);
+
     memset(self, 0, sizeof(gsr_egl));
+}
+
+bool gsr_egl_uses_card(const gsr_egl *self, const char *card_path) {
+    return gsr_drm_device_paths_equal(self->dri_card_path, card_path);
 }
 
 void gsr_egl_swap_buffers(gsr_egl *self) {

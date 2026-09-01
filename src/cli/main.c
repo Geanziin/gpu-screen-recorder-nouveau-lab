@@ -576,25 +576,26 @@ static int run(args_parser *arg_parser) {
         goto done;
     }
 
+    char monitor_to_capture[GSR_CAPTURE_SOURCE_NAME_MAX_SIZE];
+    monitor_to_capture[0] = '\0';
+
     gsr_windowing_params windowing_params;
     windowing_params.monitor_capture = gsr_capture_sources_has_monitor_or_region(&capture_sources);
     windowing_params.gl_debug = arg_parser->settings.gl_debug;
     windowing_params.listen_to_x11_events = true;
+    windowing_params.monitor_to_capture = monitor_to_capture;
     if(gsr_windowing_init(&windowing, &windowing_params) != GSR_ERROR_OK) {
         exit_code = 1;
         goto done;
     }
 
-    if(gsr_capture_sources_has_type(&capture_sources, GSR_CAPTURE_SOURCE_TYPE_PORTAL)) {
-        if(gsr_windowing_is_using_prime_run()) {
-            gsr_log(GSR_LOG_LEVEL_WARNING, "use of prime-run with -w portal option is currently not supported. Disabling prime-run");
-            gsr_windowing_disable_prime_run();
-        }
+    /* On x11 every monitor is part of one framebuffer on the gpu that the display server runs on */
+    if(gsr_windowing_is_wayland(&windowing))
+        gsr_capture_sources_get_monitor_to_capture(&capture_sources, windowing.window, monitor_to_capture, sizeof(monitor_to_capture));
 
-        if(video_codec_is_hdr(arg_parser->settings.video_codec)) {
-            gsr_log(GSR_LOG_LEVEL_WARNING, "portal capture option doesn't support hdr yet (PipeWire doesn't support hdr), the video will be tonemapped from hdr to sdr");
-            arg_parser->settings.video_codec = hdr_video_codec_to_sdr_video_codec(arg_parser->settings.video_codec);
-        }
+    if(gsr_capture_sources_has_type(&capture_sources, GSR_CAPTURE_SOURCE_TYPE_PORTAL) && video_codec_is_hdr(arg_parser->settings.video_codec)) {
+        gsr_log(GSR_LOG_LEVEL_WARNING, "portal capture option doesn't support hdr yet (PipeWire doesn't support hdr), the video will be tonemapped from hdr to sdr");
+        arg_parser->settings.video_codec = hdr_video_codec_to_sdr_video_codec(arg_parser->settings.video_codec);
     }
 
     if(gsr_windowing_load_egl(&windowing, &windowing_params) != GSR_ERROR_OK) {

@@ -185,29 +185,26 @@ static void camera_query_callback(const char *path, const gsr_capture_v4l2_suppo
     printf("%s|%ux%u@%uhz|%s\n", path, setup->resolution.width, setup->resolution.height, gsr_capture_v4l2_framerate_to_number(setup->framerate), gsr_capture_v4l2_pixfmt_to_string(setup->pixfmt));
 }
 
-static int list_monitors(const gsr_window *window, const char *card_path) {
+static int list_monitors(const gsr_window *window) {
     capture_options_callback options;
     options.window = window;
     options.num_monitors = 0;
 
     const bool is_x11 = gsr_window_get_display_server(window) == GSR_DISPLAY_SERVER_X11;
     const gsr_connection_type connection_type = is_x11 ? GSR_CONNECTION_X11 : GSR_CONNECTION_DRM;
-    for_each_active_monitor_output(window, card_path, connection_type, output_monitor_info, &options);
+    for_each_active_monitor_output(window, NULL, connection_type, output_monitor_info, &options);
 
     return options.num_monitors;
 }
 
-static void list_supported_capture_options(const gsr_window *window, const char *card_path, bool do_list_monitors) {
+static void list_supported_capture_options(const gsr_window *window) {
     const bool wayland = gsr_window_get_display_server(window) == GSR_DISPLAY_SERVER_WAYLAND;
     if(!wayland) {
         puts("window");
         puts("focused");
     }
 
-    int num_monitors = 0;
-    if(do_list_monitors)
-        num_monitors = list_monitors(window, card_path);
-
+    const int num_monitors = list_monitors(window);
     if(num_monitors > 0)
         puts("region");
 
@@ -278,7 +275,7 @@ int info_command(void *userdata) {
     if(av_guess_format("whip", NULL, NULL)) // Whip is only available in ffmpeg 8.0 and later
         puts("whip");
     puts("section=capture_options");
-    list_supported_capture_options(windowing.window, windowing.egl.card_path, windowing.card_path_found);
+    list_supported_capture_options(windowing.window);
 
     fflush(stdout);
     gsr_windowing_deinit(&windowing);
@@ -335,6 +332,7 @@ int list_v4l2_devices(void *userdata) {
     return 0;
 }
 
+/* |card_path| is ignored, the monitors of every gpu are listed. It's only used to skip loading opengl */
 int list_capture_options_command(const char *card_path, void *userdata) {
     (void)userdata;
     gsr_windowing windowing;
@@ -347,10 +345,7 @@ int list_capture_options_command(const char *card_path, void *userdata) {
         return 22;
     }
 
-    if(card_path)
-        list_supported_capture_options(windowing.window, card_path, true);
-    else
-        list_supported_capture_options(windowing.window, windowing.egl.card_path, windowing.card_path_found);
+    list_supported_capture_options(windowing.window);
 
     fflush(stdout);
     gsr_windowing_deinit(&windowing);
@@ -369,8 +364,7 @@ int list_monitors_command(void *userdata) {
         return 22;
     }
 
-    if(windowing.card_path_found)
-        list_monitors(windowing.window, windowing.egl.card_path);
+    list_monitors(windowing.window);
 
     fflush(stdout);
     gsr_windowing_deinit(&windowing);

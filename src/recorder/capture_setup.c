@@ -20,7 +20,7 @@
 #include <unistd.h>
 
 typedef struct {
-    gsr_window *window;
+    const gsr_window *window;
 } monitor_output_callback_userdata;
 
 typedef struct {
@@ -28,7 +28,6 @@ typedef struct {
 } first_output_callback_userdata;
 
 typedef struct {
-    gsr_window *window;
     vec2i position;
     char *output_name;
     vec2i monitor_pos;
@@ -131,27 +130,37 @@ void gsr_capture_deps_update_kms(gsr_capture_deps *self) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "failed to get kms, error: %d (%s)", self->kms_response.result, self->kms_response.err_msg);
 }
 
+/* Used together with a NULL card path to list the monitors of every gpu */
+static gsr_connection_type monitor_connection_type(const gsr_window *window) {
+    return gsr_window_get_display_server(window) == GSR_DISPLAY_SERVER_X11 ? GSR_CONNECTION_X11 : GSR_CONNECTION_DRM;
+}
+
+static bool get_first_monitor(const gsr_window *window, char *output_name, size_t output_name_size) {
+    first_output_callback_userdata data;
+    data.output_name = NULL;
+    for_each_active_monitor_output(window, NULL, monitor_connection_type(window), get_first_output_callback, &data);
+
+    output_name[0] = '\0';
+    if(data.output_name) {
+        snprintf(output_name, output_name_size, "%s", data.output_name);
+        free(data.output_name);
+    }
+    return output_name[0] != '\0';
+}
+
 static int validate_monitor_get_valid(const gsr_egl *egl, const char *window, char *output_name, size_t output_name_size) {
-    const bool is_x11 = gsr_window_get_display_server(egl->window) == GSR_DISPLAY_SERVER_X11;
-    const gsr_connection_type connection_type = is_x11 ? GSR_CONNECTION_X11 : GSR_CONNECTION_DRM;
+    const gsr_connection_type connection_type = monitor_connection_type(egl->window);
     const bool capture_use_drm = monitor_capture_use_drm(egl->window, egl->gpu_info.vendor);
 
     snprintf(output_name, output_name_size, "%s", window);
     if(strcmp(output_name, "screen") == 0) {
-        first_output_callback_userdata data;
-        data.output_name = NULL;
-        for_each_active_monitor_output(egl->window, egl->card_path, connection_type, get_first_output_callback, &data);
-
-        if(data.output_name) {
-            snprintf(output_name, output_name_size, "%s", data.output_name);
-            free(data.output_name);
-        } else {
+        if(!get_first_monitor(egl->window, output_name, output_name_size)) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "no usable output found");
             return GSR_ERROR_MONITOR_NOT_FOUND;
         }
     } else if(capture_use_drm || (strcmp(output_name, "screen-direct") != 0 && strcmp(output_name, "screen-direct-force") != 0)) {
         gsr_monitor gmon;
-        if(!get_monitor_by_name(egl, connection_type, output_name, &gmon)) {
+        if(!get_monitor_by_name(egl->window, NULL, connection_type, output_name, &gmon)) {
             gsr_log(GSR_LOG_LEVEL_ERROR, "display \"%s\" not found, expected one of:", output_name);
             fprintf(stderr, "  \"screen\"\n");
             if(!capture_use_drm)
@@ -159,7 +168,7 @@ static int validate_monitor_get_valid(const gsr_egl *egl, const char *window, ch
 
             monitor_output_callback_userdata userdata;
             userdata.window = egl->window;
-            for_each_active_monitor_output(egl->window, egl->card_path, connection_type, monitor_output_callback_print, &userdata);
+            for_each_active_monitor_output(egl->window, NULL, connection_type, monitor_output_callback_print, &userdata);
             return GSR_ERROR_MONITOR_NOT_FOUND;
         }
     }
@@ -167,18 +176,19 @@ static int validate_monitor_get_valid(const gsr_egl *egl, const char *window, ch
     return GSR_ERROR_OK;
 }
 
-static bool get_monitor_by_region_center(const gsr_egl *egl, vec2i region_position, vec2i region_size, char *output_name, size_t output_name_size, vec2i *monitor_pos, vec2i *monitor_size, double *monitor_scale_inverted) {
-    const bool is_x11 = gsr_window_get_display_server(egl->window) == GSR_DISPLAY_SERVER_X11;
-    const gsr_connection_type connection_type = is_x11 ? GSR_CONNECTION_X11 : GSR_CONNECTION_WAYLAND;
+/* The region is in display server coordinates, so the display server monitor list is used instead of the drm monitor list */
+static gsr_connection_type region_connection_type(const gsr_window *window) {
+    return gsr_window_get_display_server(window) == GSR_DISPLAY_SERVER_X11 ? GSR_CONNECTION_X11 : GSR_CONNECTION_WAYLAND;
+}
 
+static bool get_monitor_by_region_center(const gsr_window *window, vec2i region_position, vec2i region_size, char *output_name, size_t output_name_size, vec2i *monitor_pos, vec2i *monitor_size, double *monitor_scale_inverted) {
     monitor_by_position_callback_userdata data;
-    data.window = egl->window;
     data.position = (vec2i){ region_position.x + region_size.x / 2, region_position.y + region_size.y / 2 };
     data.output_name = NULL;
     data.monitor_pos = (vec2i){0, 0};
     data.monitor_size = (vec2i){0, 0};
     data.monitor_scale_inverted = 1.0;
-    for_each_active_monitor_output(egl->window, egl->card_path, connection_type, get_monitor_by_position_callback, &data);
+    for_each_active_monitor_output(window, NULL, region_connection_type(window), get_monitor_by_position_callback, &data);
 
     output_name[0] = '\0';
     if(data.output_name) {
@@ -195,11 +205,9 @@ static int region_get_data(gsr_egl *egl, vec2i *region_size, vec2i *region_posit
     vec2i monitor_pos = {0, 0};
     vec2i monitor_size = {0, 0};
     double monitor_scale_inverted = 1.0;
-    if(!get_monitor_by_region_center(egl, *region_position, *region_size, output_name, output_name_size, &monitor_pos, &monitor_size, &monitor_scale_inverted)) {
-        const bool is_x11 = gsr_window_get_display_server(egl->window) == GSR_DISPLAY_SERVER_X11;
-        const gsr_connection_type connection_type = is_x11 ? GSR_CONNECTION_X11 : GSR_CONNECTION_WAYLAND;
+    if(!get_monitor_by_region_center(egl->window, *region_position, *region_size, output_name, output_name_size, &monitor_pos, &monitor_size, &monitor_scale_inverted)) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "the region %dx%d+%d+%d doesn't match any monitor. Available monitors and their regions:", region_size->x, region_size->y, region_position->x, region_position->y);
-        for_each_active_monitor_output(egl->window, egl->card_path, connection_type, monitor_output_callback_print_region, NULL);
+        for_each_active_monitor_output(egl->window, NULL, region_connection_type(egl->window), monitor_output_callback_print_region, NULL);
         return GSR_ERROR_MONITOR_NOT_FOUND;
     }
 
@@ -219,6 +227,55 @@ static int region_get_data(gsr_egl *egl, vec2i *region_size, vec2i *region_posit
     }
 
     return GSR_ERROR_OK;
+}
+
+static bool capture_source_get_monitor_name(const gsr_capture_source *capture_source, const gsr_window *window, char *monitor_name, size_t monitor_name_size) {
+    switch(capture_source->type) {
+        case GSR_CAPTURE_SOURCE_TYPE_MONITOR: {
+            if(strcmp(capture_source->name, "screen") == 0)
+                return get_first_monitor(window, monitor_name, monitor_name_size);
+
+            /* Nvfbc captures the whole x11 screen instead of a monitor connected to a drm card */
+            if(strcmp(capture_source->name, "screen-direct") == 0 || strcmp(capture_source->name, "screen-direct-force") == 0)
+                return false;
+
+            snprintf(monitor_name, monitor_name_size, "%s", capture_source->name);
+            return true;
+        }
+        case GSR_CAPTURE_SOURCE_TYPE_REGION: {
+            vec2i monitor_pos = {0, 0};
+            vec2i monitor_size = {0, 0};
+            double monitor_scale_inverted = 1.0;
+            return get_monitor_by_region_center(window, capture_source->region_pos, capture_source->region_size, monitor_name, monitor_name_size, &monitor_pos, &monitor_size, &monitor_scale_inverted);
+        }
+        default:
+            return false;
+    }
+}
+
+/* TODO: Support capturing monitors that are connected to different gpus at the same time. That requires sharing gpu buffers between gpus */
+bool gsr_capture_sources_get_monitor_to_capture(const gsr_capture_sources *self, const gsr_window *window, char *monitor_name, size_t monitor_name_size) {
+    monitor_name[0] = '\0';
+    char card_path[GSR_DRI_CARD_PATH_MAX_SIZE];
+    card_path[0] = '\0';
+
+    for(size_t i = 0; i < self->num_items; ++i) {
+        char name[GSR_CAPTURE_SOURCE_NAME_MAX_SIZE];
+        if(!capture_source_get_monitor_name(&self->items[i], window, name, sizeof(name)))
+            continue;
+
+        if(monitor_name[0] == '\0') {
+            snprintf(monitor_name, monitor_name_size, "%s", name);
+            gsr_get_monitor_card_path(window, name, card_path);
+            continue;
+        }
+
+        char other_card_path[GSR_DRI_CARD_PATH_MAX_SIZE];
+        if(gsr_get_monitor_card_path(window, name, other_card_path) && strcmp(other_card_path, card_path) != 0)
+            gsr_log(GSR_LOG_LEVEL_WARNING, "the monitor \"%s\" is connected to %s and the monitor \"%s\" is connected to %s. Capturing monitors that are connected to different gpus at the same time is not supported and the capture of \"%s\" will most likely fail", monitor_name, card_path, name, other_card_path, name);
+    }
+
+    return monitor_name[0] != '\0';
 }
 
 static gsr_capture* create_monitor_capture(const gsr_recorder_settings *settings, gsr_egl *egl, gsr_capture_deps *deps, const gsr_capture_source *capture_source, bool prefer_ximage, int *error) {
