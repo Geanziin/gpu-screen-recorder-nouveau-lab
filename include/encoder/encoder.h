@@ -18,7 +18,7 @@ typedef struct {
     AVCodecContext *codec_context;
     AVFormatContext *format_context;
     AVStream *stream;
-    int64_t start_pts;
+    /* The pts that the recording starts at, in the time base of |codec_context|. -1 until the recordings first video keyframe has been encoded */
     int64_t first_pts;
     bool has_received_keyframe;
     char *first_frame_ts_filepath;
@@ -49,7 +49,7 @@ void gsr_encoder_deinit(gsr_encoder *self, bool exiting);
 
 void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_context, int64_t pts, int stream_index);
 /* Returns the id to the recording destination, or -1 on error */
-size_t gsr_encoder_add_recording_destination(gsr_encoder *self, AVCodecContext *codec_context, AVFormatContext *format_context, AVStream *stream, int64_t start_pts);
+size_t gsr_encoder_add_recording_destination(gsr_encoder *self, AVCodecContext *codec_context, AVFormatContext *format_context, AVStream *stream);
 bool gsr_encoder_remove_recording_destination(gsr_encoder *self, size_t id);
 bool gsr_encoder_set_recording_destination_first_frame_ts_filepath(gsr_encoder *self, size_t id, const char *filepath);
 

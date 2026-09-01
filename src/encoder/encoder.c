@@ -104,6 +104,18 @@ void gsr_encoder_deinit(gsr_encoder *self, bool exiting)  {
     self->first_pts = -1;
 }
 
+/* The streams of a recording all write to the same output file, so the format context identifies the streams that belong to the same recording.
+   Every stream counts its pts from the time the capture started, which makes it possible to convert the video pts to the time base of the other streams */
+static void gsr_encoder_recording_group_set_first_pts(gsr_encoder *self, const gsr_encoder_recording_destination *video_destination, AVRational video_time_base) {
+    for(size_t i = 0; i < self->num_recording_destinations; ++i) {
+        gsr_encoder_recording_destination *recording_destination = &self->recording_destinations[i];
+        if(recording_destination->format_context != video_destination->format_context || recording_destination->first_pts != -1)
+            continue;
+
+        recording_destination->first_pts = av_rescale_q(video_destination->first_pts, video_time_base, recording_destination->codec_context->time_base);
+    }
+}
+
 void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_context, int64_t pts, int stream_index) {
     for(;;) {
         AVPacket *av_packet = av_packet_alloc();
@@ -141,16 +153,28 @@ void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_contex
                 else if(!recording_destination->has_received_keyframe)
                     continue;
 
+                if(recording_destination->first_pts == -1) {
+                    /* A recording starts at a video keyframe, which can be up to one key interval after the recording was started.
+                       Every stream of the recording starts at that keyframe, otherwise the audio is out of sync with the video */
+                    if(codec_context->codec_type != AVMEDIA_TYPE_VIDEO)
+                        continue;
+
+                    recording_destination->first_pts = pts;
+                    gsr_encoder_recording_group_set_first_pts(self, recording_destination, codec_context->time_base);
+                }
+
+                const int64_t packet_pts = pts - recording_destination->first_pts;
+                /* Audio that was captured before the first video keyframe of the recording */
+                if(packet_pts < 0)
+                    continue;
+
                 if(recording_destination->first_frame_ts_filepath && !recording_destination->first_frame_ts_written) {
                     gsr_write_first_frame_timestamp_file(recording_destination->first_frame_ts_filepath);
                     recording_destination->first_frame_ts_written = true;
                 }
 
-                if(recording_destination->first_pts == -1)
-                    recording_destination->first_pts = pts - recording_destination->start_pts;
-
-                av_packet->pts = pts - recording_destination->start_pts - recording_destination->first_pts;
-                av_packet->dts = av_packet->pts;
+                av_packet->pts = packet_pts;
+                av_packet->dts = packet_pts;
 
                 av_packet_rescale_ts(av_packet, codec_context->time_base, recording_destination->stream->time_base);
                 // TODO: Is av_interleaved_write_frame needed?. Answer: might be needed for mkv but dont use it! it causes frames to be inconsistent, skipping frames and duplicating frames.
@@ -183,7 +207,7 @@ void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_contex
     }
 }
 
-size_t gsr_encoder_add_recording_destination(gsr_encoder *self, AVCodecContext *codec_context, AVFormatContext *format_context, AVStream *stream, int64_t start_pts) {
+size_t gsr_encoder_add_recording_destination(gsr_encoder *self, AVCodecContext *codec_context, AVFormatContext *format_context, AVStream *stream) {
     if(self->num_recording_destinations >= GSR_MAX_RECORDING_DESTINATIONS) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_encoder_add_recording_destination: failed to add destination, reached the max amount of recording destinations (%d)", GSR_MAX_RECORDING_DESTINATIONS);
         return (size_t)-1;
@@ -202,7 +226,6 @@ size_t gsr_encoder_add_recording_destination(gsr_encoder *self, AVCodecContext *
     recording_destination->codec_context = codec_context;
     recording_destination->format_context = format_context;
     recording_destination->stream = stream;
-    recording_destination->start_pts = start_pts;
     recording_destination->first_pts = -1;
     recording_destination->has_received_keyframe = false;
     recording_destination->first_frame_ts_filepath = NULL;
