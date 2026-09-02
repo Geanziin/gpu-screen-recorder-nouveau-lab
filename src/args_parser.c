@@ -204,7 +204,8 @@ static void usage_header(void) {
            "[-k h264|hevc|av1|vp8|vp9|hevc_hdr|av1_hdr|hevc_10bit|av1_10bit] [-ac aac|opus|flac] [-ab <bitrate>] [-fm cfr|vfr|content] "
            "[-bm auto|qp|vbr|cbr] [-cr limited|full] [-tune performance|quality] [-df yes|no] [-sc <script_path>] [-p <plugin_path>] "
            "[-cursor yes|no] [-keyint <value>] [-restore-portal-session yes|no] [-portal-session-token-filepath filepath] [-encoder gpu|cpu] "
-           "[-fallback-cpu-encoding yes|no] [-o <output_file>] [-ro <output_directory>] [-ffmpeg-opts <options>] [-auth <token>] [--list-capture-options [card_path]] "
+           "[-fallback-cpu-encoding yes|no] [-o <output_file>] [-ro <output_directory>] [-ffmpeg-opts <options>] [-ffmpeg-video-opts <options>] [-ffmpeg-audio-opts <options>] "
+           " [-auth <token>] [--list-capture-options [card_path]] "
            "[--list-monitors] [--list-audio-devices] [--list-application-audio] [--list-v4l2-devices] [-write-first-frame-ts yes|no] [-low-power yes|no] "
            "[-ipc <socket_path>] [-v yes|no] [-gl-debug yes|no] [-exclude-metadata yes|no] [--version] [-h|--help]\n", program_name);
     fflush(stdout);
