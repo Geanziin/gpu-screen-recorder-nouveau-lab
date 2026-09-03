@@ -197,16 +197,18 @@ static void* audio_device_thread(void *userdata) {
     while(atomic_load(running)) {
         void *sound_buffer;
         int sound_buffer_size = -1;
-        double latency_seconds = 0.0;
         const double time_before_read_seconds = clock_get_monotonic_seconds();
         if(device->sound_device.handle) {
+            // TODO: use this instead of calculating time to read. But this can fluctuate and we dont want to go back in time,
+            // also it's 0.0 for some users???
+            double latency_seconds = 0.0;
             sound_buffer_size = sound_device_read_next_chunk(&device->sound_device, &sound_buffer, timeout_sec * 2.0, &latency_seconds);
         }
 
         const bool got_audio_data = sound_buffer_size >= 0;
         //fprintf(stderr, "got audio data: %s\n", got_audio_data ? "yes" : "no");
         //fprintf(stderr, "time to read: %f, %s, %f\n", time_to_read_seconds, got_audio_data ? "yes" : "no", timeout_sec);
-        const double this_audio_frame_time = gsr_recording_clock_get_time(clock) - latency_seconds;
+        const double this_audio_frame_time = gsr_recording_clock_get_time(clock);
 
         if(gsr_recording_clock_is_paused(clock)) {
             if(!device->sound_device.handle)
