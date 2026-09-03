@@ -24,7 +24,7 @@ static void xwayland_check_callback(const gsr_monitor *monitor, void *userdata) 
     bool *xwayland_found = (bool*)userdata;
     if(monitor->name_len >= 8 && strncmp(monitor->name, "XWAYLAND", 8) == 0)
         *xwayland_found = true;
-    else if(memmem(monitor->name, monitor->name_len, "X11", 3))
+    else if(strstr(monitor->name, "X11"))
         *xwayland_found = true;
 }
 
