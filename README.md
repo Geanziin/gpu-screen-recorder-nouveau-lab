@@ -300,13 +300,7 @@ This is a [steam issue](https://github.com/ValveSoftware/steam-for-linux/issues/
 ## How do I apply audio effects, such as noise suppression?
 You have to use external software for that, such as Easy Effects or NoiseTorch.
 ## How do I choose which GPU to record/encode with?
-It's not really possible except in some cases. You can only record with the GPU that is displaying the graphics on your monitor.\
-Some laptops have display adapters that connect external monitors directly to the external GPU (if you have one)
-and on Wayland the external GPU will display the graphics for that monitor.
-In that case you can record the monitor with the external GPU by launching GPU Screen Recorder with [prime-run or by setting the DRI_PRIME environment variable](https://wiki.archlinux.org/title/PRIME) depending on your GPU brand.
-Alternatively you can capture with the desktop portal option (`-w portal`), which should allow you to capture any monitor.\
-However if you really want to change which GPU you want to record and encode with with then you can instead configure your display server (Xorg or Wayland compositor) to run with that GPU,
-then GPU Screen Recorder will automatically use that same GPU for recording and encoding.
+It's not possible. GPU Screen Recorder needs to do the capture and encoding on the same GPU, so GPU Screen Recorder will automatically choose the GPU associated with a monitor.
 ## The rotation of the video is incorrect when the monitor is rotated when using desktop portal capture
 This is a bug in kde plasma wayland. When using desktop portal capture and the monitor is rotated and a window is made fullscreen kde plasma wayland will give incorrect rotation to GPU Screen Recorder.
 This also affects other screen recording software such as obs studio.\
