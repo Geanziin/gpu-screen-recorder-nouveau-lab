@@ -64,7 +64,7 @@ static void* replay_save_thread(void *userdata) {
         av_packet.size = replay_packet->size;
         av_packet.stream_index = replay_packet->stream_index;
         av_packet.pts = replay_packet->pts;
-        av_packet.dts = replay_packet->pts;
+        av_packet.dts = replay_packet->dts;
         av_packet.flags = replay_packet->flags;
         //av_packet.duration = replay_packet->duration;
 
@@ -145,7 +145,7 @@ bool gsr_replay_save_start(gsr_replay_save *self, AVCodecContext *video_codec_co
         return false;
     }
 
-    self->video_pts_offset = gsr_replay_buffer_iterator_get_packet(self->cloned_replay_buffer, self->video_start_iterator)->pts;
+    self->video_pts_offset = gsr_replay_buffer_iterator_get_packet(self->cloned_replay_buffer, self->video_start_iterator)->dts;
 
     if(audio_capture->num_tracks > 0) {
         self->audio_pts_offsets = calloc(audio_capture->num_tracks, sizeof(gsr_audio_pts_offset));

@@ -109,11 +109,18 @@ void gsr_encoder_deinit(gsr_encoder *self, bool exiting)  {
 static void gsr_encoder_recording_group_set_first_pts(gsr_encoder *self, const gsr_encoder_recording_destination *video_destination, AVRational video_time_base) {
     for(size_t i = 0; i < self->num_recording_destinations; ++i) {
         gsr_encoder_recording_destination *recording_destination = &self->recording_destinations[i];
-        if(recording_destination->format_context != video_destination->format_context || recording_destination->first_pts != -1)
+        if(recording_destination->format_context != video_destination->format_context || recording_destination->first_pts != GSR_RECORDING_FIRST_PTS_NEXT_KEYFRAME)
             continue;
 
         recording_destination->first_pts = av_rescale_q(video_destination->first_pts, video_time_base, recording_destination->codec_context->time_base);
     }
+}
+
+/* Video encoders such as libx264 output the packet of a frame that was sent to it several frames earlier */
+static int64_t gsr_encoder_get_packet_timestamp(const AVCodecContext *codec_context, int64_t packet_timestamp, int64_t sent_frame_pts) {
+    if(codec_context->codec_type == AVMEDIA_TYPE_VIDEO && packet_timestamp != AV_NOPTS_VALUE)
+        return packet_timestamp;
+    return sent_frame_pts;
 }
 
 void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_context, int64_t pts, int stream_index) {
@@ -126,12 +133,15 @@ void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_contex
         av_packet->size = 0;
         int res = avcodec_receive_packet(codec_context, av_packet);
         if(res == 0) { // we have a packet, send the packet to the muxer
+            const int64_t packet_pts_timestamp = gsr_encoder_get_packet_timestamp(codec_context, av_packet->pts, pts);
+            const int64_t packet_dts_timestamp = gsr_encoder_get_packet_timestamp(codec_context, av_packet->dts, pts);
+
             if(self->first_pts == -1)
-                self->first_pts = pts;
+                self->first_pts = packet_dts_timestamp;
 
             av_packet->stream_index = stream_index;
-            av_packet->pts = pts - self->first_pts;
-            av_packet->dts = av_packet->pts;
+            av_packet->pts = packet_pts_timestamp - self->first_pts;
+            av_packet->dts = packet_dts_timestamp - self->first_pts;
 
             if(self->replay_buffer) {
                 pthread_mutex_lock(&self->replay_mutex);
@@ -153,17 +163,18 @@ void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_contex
                 else if(!recording_destination->has_received_keyframe)
                     continue;
 
-                if(recording_destination->first_pts == -1) {
+                if(recording_destination->first_pts == GSR_RECORDING_FIRST_PTS_NEXT_KEYFRAME) {
                     /* A recording starts at a video keyframe, which can be up to one key interval after the recording was started.
                        Every stream of the recording starts at that keyframe, otherwise the audio is out of sync with the video */
                     if(codec_context->codec_type != AVMEDIA_TYPE_VIDEO)
                         continue;
 
-                    recording_destination->first_pts = pts;
+                    recording_destination->first_pts = packet_dts_timestamp;
                     gsr_encoder_recording_group_set_first_pts(self, recording_destination, codec_context->time_base);
                 }
 
-                const int64_t packet_pts = pts - recording_destination->first_pts;
+                const int64_t packet_pts = packet_pts_timestamp - recording_destination->first_pts;
+                const int64_t packet_dts = packet_dts_timestamp - recording_destination->first_pts;
                 /* Audio that was captured before the first video keyframe of the recording */
                 if(packet_pts < 0)
                     continue;
@@ -174,7 +185,7 @@ void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_contex
                 }
 
                 av_packet->pts = packet_pts;
-                av_packet->dts = packet_pts;
+                av_packet->dts = packet_dts;
 
                 av_packet_rescale_ts(av_packet, codec_context->time_base, recording_destination->stream->time_base);
                 // TODO: Is av_interleaved_write_frame needed?. Answer: might be needed for mkv but dont use it! it causes frames to be inconsistent, skipping frames and duplicating frames.
@@ -207,7 +218,7 @@ void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_contex
     }
 }
 
-size_t gsr_encoder_add_recording_destination(gsr_encoder *self, AVCodecContext *codec_context, AVFormatContext *format_context, AVStream *stream) {
+size_t gsr_encoder_add_recording_destination(gsr_encoder *self, AVCodecContext *codec_context, AVFormatContext *format_context, AVStream *stream, int64_t first_pts) {
     if(self->num_recording_destinations >= GSR_MAX_RECORDING_DESTINATIONS) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_encoder_add_recording_destination: failed to add destination, reached the max amount of recording destinations (%d)", GSR_MAX_RECORDING_DESTINATIONS);
         return (size_t)-1;
@@ -226,7 +237,7 @@ size_t gsr_encoder_add_recording_destination(gsr_encoder *self, AVCodecContext *
     recording_destination->codec_context = codec_context;
     recording_destination->format_context = format_context;
     recording_destination->stream = stream;
-    recording_destination->first_pts = -1;
+    recording_destination->first_pts = first_pts;
     recording_destination->has_received_keyframe = false;
     recording_destination->first_frame_ts_filepath = NULL;
     recording_destination->first_frame_ts_written = false;

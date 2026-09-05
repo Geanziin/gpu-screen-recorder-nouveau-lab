@@ -9,6 +9,11 @@
 
 #define GSR_MAX_RECORDING_DESTINATIONS 128
 
+/* The recording starts at the first video keyframe that is encoded after the destination was added */
+#define GSR_RECORDING_FIRST_PTS_NEXT_KEYFRAME -1
+/* The recording starts at the same time as the capture, at the first frame that is sent to the video encoder */
+#define GSR_RECORDING_FIRST_PTS_CAPTURE_START 0
+
 typedef struct AVCodecContext AVCodecContext;
 typedef struct AVFormatContext AVFormatContext;
 typedef struct AVStream AVStream;
@@ -48,8 +53,9 @@ bool gsr_encoder_init(gsr_encoder *self, gsr_replay_storage replay_storage, size
 void gsr_encoder_deinit(gsr_encoder *self, bool exiting);
 
 void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_context, int64_t pts, int stream_index);
+
 /* Returns the id to the recording destination, or -1 on error */
-size_t gsr_encoder_add_recording_destination(gsr_encoder *self, AVCodecContext *codec_context, AVFormatContext *format_context, AVStream *stream);
+size_t gsr_encoder_add_recording_destination(gsr_encoder *self, AVCodecContext *codec_context, AVFormatContext *format_context, AVStream *stream, int64_t first_pts);
 bool gsr_encoder_remove_recording_destination(gsr_encoder *self, size_t id);
 bool gsr_encoder_set_recording_destination_first_frame_ts_filepath(gsr_encoder *self, size_t id, const char *filepath);
 

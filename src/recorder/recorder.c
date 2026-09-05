@@ -284,7 +284,7 @@ static int recorder_setup_video_encoder(gsr_recorder *self) {
 
     if(self->video_stream) {
         avcodec_parameters_from_context(self->video_stream->codecpar, self->video_codec_context);
-        const size_t video_destination_id = gsr_encoder_add_recording_destination(&self->encoder, self->video_codec_context, self->av_format_context, self->video_stream);
+        const size_t video_destination_id = gsr_encoder_add_recording_destination(&self->encoder, self->video_codec_context, self->av_format_context, self->video_stream, GSR_RECORDING_FIRST_PTS_CAPTURE_START);
         if(self->settings.write_first_frame_ts && video_destination_id != (size_t)-1) {
             char ts_filepath[PATH_MAX + 4];
             snprintf(ts_filepath, sizeof(ts_filepath), "%s.ts", self->settings.filename);
@@ -310,7 +310,7 @@ static int recorder_setup_audio_track(gsr_recorder *self, const gsr_merged_audio
         if(!audio_stream)
             return GSR_ERROR_GENERIC;
 
-        if(gsr_encoder_add_recording_destination(&self->encoder, audio_track->codec_context, self->av_format_context, audio_stream) == (size_t)-1)
+        if(gsr_encoder_add_recording_destination(&self->encoder, audio_track->codec_context, self->av_format_context, audio_stream, GSR_RECORDING_FIRST_PTS_CAPTURE_START) == (size_t)-1)
             gsr_log(GSR_LOG_LEVEL_ERROR, "added too many audio sources");
     }
 
@@ -694,7 +694,7 @@ static void recorder_apply_replay_recording_toggle(gsr_recorder *self) {
         self->num_replay_recording_items = 0;
         const bool filepath_created = gsr_create_new_recording_filepath_from_timestamp(self->replay_recording_filepath, sizeof(self->replay_recording_filepath), self->settings.replay_recording_directory, "Video", self->file_extension, self->settings.date_folders);
         if(filepath_created && gsr_recording_output_start(&self->replay_recording_output, self->replay_recording_filepath, &self->settings, self->video_codec_context, &self->audio_capture, self->hdr, self->video_sources)) {
-            const size_t video_recording_destination_id = gsr_encoder_add_recording_destination(&self->encoder, self->video_codec_context, self->replay_recording_output.av_format_context, self->replay_recording_output.video_stream);
+            const size_t video_recording_destination_id = gsr_encoder_add_recording_destination(&self->encoder, self->video_codec_context, self->replay_recording_output.av_format_context, self->replay_recording_output.video_stream, GSR_RECORDING_FIRST_PTS_NEXT_KEYFRAME);
             if(self->settings.write_first_frame_ts && video_recording_destination_id != (size_t)-1) {
                 char ts_filepath[PATH_MAX + 4];
                 snprintf(ts_filepath, sizeof(ts_filepath), "%s.ts", self->replay_recording_filepath);
@@ -708,7 +708,7 @@ static void recorder_apply_replay_recording_toggle(gsr_recorder *self) {
 
             for(size_t i = 0; i < self->replay_recording_output.num_audio_streams; ++i) {
                 const gsr_recording_audio_stream *audio_stream = &self->replay_recording_output.audio_streams[i];
-                const size_t audio_recording_destination_id = gsr_encoder_add_recording_destination(&self->encoder, audio_stream->audio_track->codec_context, self->replay_recording_output.av_format_context, audio_stream->stream);
+                const size_t audio_recording_destination_id = gsr_encoder_add_recording_destination(&self->encoder, audio_stream->audio_track->codec_context, self->replay_recording_output.av_format_context, audio_stream->stream, GSR_RECORDING_FIRST_PTS_NEXT_KEYFRAME);
                 if(audio_recording_destination_id != (size_t)-1 && self->num_replay_recording_items < GSR_MAX_RECORDING_DESTINATIONS) {
                     self->replay_recording_items[self->num_replay_recording_items] = audio_recording_destination_id;
                     ++self->num_replay_recording_items;
@@ -870,6 +870,14 @@ int gsr_recorder_run(gsr_recorder *self) {
     return self->should_stop_error ? GSR_ERROR_CAPTURE_FAILED : GSR_ERROR_OK;
 }
 
+static void gsr_recorder_flush_video(gsr_recorder *self) {
+    if(!self->video_codec_context || !self->video_frame)
+        return;
+
+    if(avcodec_send_frame(self->video_codec_context, NULL) >= 0)
+        gsr_encoder_receive_packets(&self->encoder, self->video_codec_context, self->video_frame->pts, GSR_VIDEO_STREAM_INDEX);
+}
+
 static void gsr_recorder_stop_recording(gsr_recorder *self) {
     atomic_store(&self->running, 0);
 
@@ -881,6 +889,8 @@ static void gsr_recorder_stop_recording(gsr_recorder *self) {
     }
 
     gsr_plugins_deinit(&self->plugins);
+
+    gsr_recorder_flush_video(self);
 
     gsr_audio_capture_join_threads(&self->audio_capture);
     gsr_audio_capture_flush(&self->audio_capture);
