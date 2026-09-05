@@ -233,7 +233,7 @@ static bool nvenc_driver_supports_ffmpeg_nvenc_api_version(void *nvenc_lib) {
     return true;
 }
 
-bool gsr_get_supported_video_codecs_nvenc(gsr_supported_video_codecs *video_codecs, bool cleanup) {
+bool gsr_get_supported_video_codecs_nvenc(gsr_supported_video_codecs *video_codecs, const char *card_path, bool cleanup) {
     memset(video_codecs, 0, sizeof(*video_codecs));
 
     bool success = false;
@@ -242,7 +242,7 @@ bool gsr_get_supported_video_codecs_nvenc(gsr_supported_video_codecs *video_code
     gsr_cuda cuda;
     memset(&cuda, 0, sizeof(cuda));
 
-    if(!gsr_cuda_load(&cuda)) {
+    if(!gsr_cuda_load(&cuda, card_path)) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_get_supported_video_codecs_nvenc: failed to load cuda");
         goto done;
     }

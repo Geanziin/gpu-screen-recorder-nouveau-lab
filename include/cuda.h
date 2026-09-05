@@ -80,6 +80,7 @@ struct gsr_cuda {
     CUresult (*cuInit)(unsigned int Flags);
     CUresult (*cuDeviceGetCount)(int *count);
     CUresult (*cuDeviceGet)(CUdevice *device, int ordinal);
+    CUresult (*cuDeviceGetByPCIBusId)(CUdevice *dev, const char *pciBusId);
     CUresult (*cuCtxCreate_v2)(CUcontext *pctx, unsigned int flags, CUdevice dev);
     CUresult (*cuCtxDestroy_v2)(CUcontext ctx);
     CUresult (*cuCtxPushCurrent_v2)(CUcontext ctx);
@@ -98,7 +99,9 @@ struct gsr_cuda {
     CUresult (*cuGraphicsSubResourceGetMappedArray)(CUarray *pArray, CUgraphicsResource resource, unsigned int arrayIndex, unsigned int mipLevel);
 };
 
-bool gsr_cuda_load(gsr_cuda *self);
+/* |card_path| is the gpu to create the cuda context on, which should be the same gpu that opengl uses.
+   The first cuda device is used when it's NULL or when the gpu isn't found */
+bool gsr_cuda_load(gsr_cuda *self, const char *card_path);
 void gsr_cuda_unload(gsr_cuda *self);
 
 #endif /* GSR_CUDA_H */

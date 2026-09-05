@@ -594,6 +594,28 @@ void gsr_dri_cards_get(gsr_dri_cards *self) {
     }
 }
 
+bool gsr_card_path_get_pci_bus_id(const char *card_path, char *pci_bus_id) {
+    int fd = open(card_path, O_RDONLY);
+    if(fd == -1)
+        return false;
+
+    drmDevicePtr device = NULL;
+    if(drmGetDevice2(fd, 0, &device) != 0) {
+        close(fd);
+        return false;
+    }
+
+    bool success = false;
+    if(device->bustype == DRM_BUS_PCI) {
+        snprintf(pci_bus_id, GSR_PCI_BUS_ID_MAX_SIZE, "%04x:%02x:%02x.%u", device->businfo.pci->domain, device->businfo.pci->bus, device->businfo.pci->dev, device->businfo.pci->func);
+        success = true;
+    }
+
+    drmFreeDevice(&device);
+    close(fd);
+    return success;
+}
+
 bool gsr_drm_device_paths_equal(const char *path1, const char *path2) {
     if(!path1 || !path2)
         return false;

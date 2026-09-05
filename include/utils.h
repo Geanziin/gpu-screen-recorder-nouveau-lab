@@ -33,6 +33,8 @@ typedef struct {
 
 #define GSR_MAX_DRI_CARDS 16
 #define GSR_DRI_CARD_PATH_MAX_SIZE 128
+/* Large enough to fit "domain:bus:device.function" */
+#define GSR_PCI_BUS_ID_MAX_SIZE 32
 
 typedef struct {
     char paths[GSR_MAX_DRI_CARDS][GSR_DRI_CARD_PATH_MAX_SIZE];
@@ -56,6 +58,8 @@ void gsr_dri_cards_get(gsr_dri_cards *self);
 bool gsr_get_monitor_card_path(const gsr_window *window, const char *monitor_name, char *card_path);
 /* Returns true if the two paths refer to the same drm device. The paths can be either a card or a render node */
 bool gsr_drm_device_paths_equal(const char *path1, const char *path2);
+/* |pci_bus_id| should be at least |GSR_PCI_BUS_ID_MAX_SIZE| bytes in size. Only works for gpus connected to pci */
+bool gsr_card_path_get_pci_bus_id(const char *card_path, char *pci_bus_id);
 
 int get_connector_type_by_name(const char *name);
 int get_connector_type_id_by_name(const char *name);

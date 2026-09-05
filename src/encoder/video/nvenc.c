@@ -116,7 +116,7 @@ static void gsr_video_encoder_nvenc_stop(gsr_video_encoder_nvenc *self, AVCodecC
 static bool gsr_video_encoder_nvenc_start(gsr_video_encoder *encoder, AVCodecContext *video_codec_context, AVFrame *frame) {
     gsr_video_encoder_nvenc *self = encoder->priv;
 
-    if(!gsr_cuda_load(&self->cuda)) {
+    if(!gsr_cuda_load(&self->cuda, self->params.egl->card_path)) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "gsr_video_encoder_nvenc_start: failed to load cuda");
         gsr_video_encoder_nvenc_stop(self, video_codec_context);
         return false;
