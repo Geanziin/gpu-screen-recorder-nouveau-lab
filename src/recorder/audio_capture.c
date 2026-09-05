@@ -149,6 +149,31 @@ fail:
     return err;
 }
 
+#define AUDIO_FRAMES_EARLY_PAD_THRESHOLD 2
+#define AUDIO_FRAMES_LATE_DROP_THRESHOLD 2
+#define AUDIO_FRAMES_LATE_DROP_PERSISTENCE 10
+#define AUDIO_FRAMES_MISSING_WITHOUT_DATA_PAD_THRESHOLD 5
+#define AUDIO_DROP_DISABLED_AFTER_MISSING_DATA_PAD_SECONDS 2.0
+
+static void audio_device_send_frame(gsr_audio_capture *self, gsr_audio_track *track, gsr_audio_device_capture *device) {
+    if(track->graph) {
+        // TODO: av_buffersrc_add_frame
+        if(av_buffersrc_write_frame(device->src_filter_ctx, device->frame) < 0)
+            gsr_log(GSR_LOG_LEVEL_ERROR, "failed to add audio frame to filter");
+    } else {
+        const int ret = avcodec_send_frame(track->codec_context, device->frame);
+        if(ret >= 0) {
+            // TODO: Move to separate thread because this could write to network (for example when livestreaming)
+            gsr_encoder_receive_packets(self->encoder, track->codec_context, device->frame->pts, track->stream_index);
+        } else {
+            gsr_log(GSR_LOG_LEVEL_ERROR, "Failed to encode audio");
+        }
+        track->pts += track->codec_context->frame_size;
+    }
+
+    device->frame->pts += track->codec_context->frame_size;
+}
+
 static void* audio_device_thread(void *userdata) {
     const gsr_audio_device_thread_userdata *thread_userdata = userdata;
     gsr_audio_capture *self = thread_userdata->audio_capture;
@@ -187,28 +212,24 @@ static void* audio_device_thread(void *userdata) {
     const double audio_fps = (double)track->codec_context->sample_rate / (double)track->codec_context->frame_size;
     const int64_t timeout_ms = llround(1000.0 / audio_fps);
     const double timeout_sec = 1000.0 / audio_fps / 1000.0;
-    int64_t num_received_frames = 0;
-
-    /* The sound device is opened before the recording starts, so it can contain old audio from before the recording started.
-       Discard it so the recording doesn't start with old audio. */
-    if(device->sound_device.handle)
-        sound_device_flush(&device->sound_device);
+    int64_t num_sent_frames = 0;
+    double latency_seconds = 0.0;
+    double drop_disabled_until_time = 0.0;
+    int64_t num_consecutive_late_frames = 0;
 
     while(atomic_load(running)) {
         void *sound_buffer;
         int sound_buffer_size = -1;
         const double time_before_read_seconds = clock_get_monotonic_seconds();
-        if(device->sound_device.handle) {
-            // TODO: use this instead of calculating time to read. But this can fluctuate and we dont want to go back in time,
-            // also it's 0.0 for some users???
-            double latency_seconds = 0.0;
+        if(device->sound_device.handle)
             sound_buffer_size = sound_device_read_next_chunk(&device->sound_device, &sound_buffer, timeout_sec * 2.0, &latency_seconds);
-        }
 
         const bool got_audio_data = sound_buffer_size >= 0;
         //fprintf(stderr, "got audio data: %s\n", got_audio_data ? "yes" : "no");
         //fprintf(stderr, "time to read: %f, %s, %f\n", time_to_read_seconds, got_audio_data ? "yes" : "no", timeout_sec);
+        //fprintf(stderr, "audio latency: %f\n", latency_seconds);
         const double this_audio_frame_time = gsr_recording_clock_get_time(clock);
+        const double audio_capture_end_time = this_audio_frame_time - latency_seconds;
 
         if(gsr_recording_clock_is_paused(clock)) {
             if(!device->sound_device.handle)
@@ -223,15 +244,29 @@ static void* audio_device_thread(void *userdata) {
             break;
         }
 
-        // TODO: Is this |received_audio_time| really correct?
-        const int64_t num_expected_frames = floor((this_audio_frame_time - gsr_recording_clock_get_start_time(clock)) / timeout_sec);
-        int64_t num_missing_frames = num_expected_frames > num_received_frames ? num_expected_frames - num_received_frames : 0;
-
-        if(got_audio_data)
-            num_missing_frames = num_missing_frames > 1 ? num_missing_frames - 1 : 0;
-
-        if(!device->sound_device.handle)
-            num_missing_frames = num_missing_frames < 1 ? 1 : num_missing_frames;
+        const int64_t num_expected_frames = floor((audio_capture_end_time - gsr_recording_clock_get_start_time(clock)) / timeout_sec);
+        int64_t num_frames_to_pad = 0;
+        bool drop_audio_data = false;
+        if(got_audio_data) {
+            const int64_t num_frames_audio_is_early = num_expected_frames - 1 - num_sent_frames;
+            if(num_frames_audio_is_early <= -AUDIO_FRAMES_LATE_DROP_THRESHOLD)
+                num_consecutive_late_frames++;
+            else
+                num_consecutive_late_frames = 0;
+            const bool drop_allowed = this_audio_frame_time >= drop_disabled_until_time && num_consecutive_late_frames >= AUDIO_FRAMES_LATE_DROP_PERSISTENCE;
+            if(num_frames_audio_is_early >= AUDIO_FRAMES_EARLY_PAD_THRESHOLD)
+                num_frames_to_pad = num_frames_audio_is_early;
+            else if(num_frames_audio_is_early <= -AUDIO_FRAMES_LATE_DROP_THRESHOLD && drop_allowed)
+                drop_audio_data = true;
+        } else {
+            const int64_t num_frames_missing = num_expected_frames - num_sent_frames;
+            if(!device->sound_device.handle) {
+                num_frames_to_pad = num_frames_missing < 1 ? 1 : num_frames_missing;
+            } else if(num_frames_missing >= AUDIO_FRAMES_MISSING_WITHOUT_DATA_PAD_THRESHOLD) {
+                num_frames_to_pad = num_frames_missing;
+                drop_disabled_until_time = this_audio_frame_time + AUDIO_DROP_DISABLED_AFTER_MISSING_DATA_PAD_SECONDS;
+            }
+        }
 
         // Fucking hell is there a better way to do this? I JUST WANT TO KEEP VIDEO AND AUDIO SYNCED HOLY FUCK I WANT TO KILL MYSELF NOW.
         // THIS PIECE OF SHIT WANTS EMPTY FRAMES OTHERWISE VIDEO PLAYS TOO FAST TO KEEP UP WITH AUDIO OR THE AUDIO PLAYS TOO EARLY.
@@ -240,7 +275,8 @@ static void* audio_device_thread(void *userdata) {
         // videos because bad software such as video editing software and VLC do not support variable frame rate software,
         // despite nvidia shadowplay and xbox game bar producing variable frame rate videos.
         // So we have to make sure we produce frames at the same relative rate as the video.
-        if((num_missing_frames >= 1 && got_audio_data) || num_missing_frames >= 5 || !device->sound_device.handle) {
+        if(num_frames_to_pad > 0) {
+            //fprintf(stderr, "write dummy frame\n");
             // Fill the missing frames with silence. Duplicating the previous audio frame to fill the gap instead
             // sounds like a stutter and it's especially noticeable at the start of the recording when the audio device
             // hasn't started to deliver audio at a stable rate yet, which repeats the first audio frame multiple times.
@@ -251,25 +287,9 @@ static void* audio_device_thread(void *userdata) {
 
             // TODO: Check if duplicate frame can be saved just by writing it with a different pts instead of sending it again
             pthread_mutex_lock(&self->filter_mutex);
-            for(int i = 0; i < num_missing_frames; ++i) {
-                if(track->graph) {
-                    // TODO: av_buffersrc_add_frame
-                    if(av_buffersrc_write_frame(device->src_filter_ctx, device->frame) < 0) {
-                        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to add audio frame to filter");
-                    }
-                } else {
-                    ret = avcodec_send_frame(track->codec_context, device->frame);
-                    if(ret >= 0) {
-                        // TODO: Move to separate thread because this could write to network (for example when livestreaming)
-                        gsr_encoder_receive_packets(self->encoder, track->codec_context, device->frame->pts, track->stream_index);
-                    } else {
-                        gsr_log(GSR_LOG_LEVEL_ERROR, "Failed to encode audio");
-                    }
-                    track->pts += track->codec_context->frame_size;
-                }
-
-                device->frame->pts += track->codec_context->frame_size;
-                num_received_frames++;
+            for(int64_t i = 0; i < num_frames_to_pad; ++i) {
+                audio_device_send_frame(self, track, device);
+                num_sent_frames++;
             }
             pthread_mutex_unlock(&self->filter_mutex);
         }
@@ -277,6 +297,9 @@ static void* audio_device_thread(void *userdata) {
         if(!device->sound_device.handle) {
             av_usleep(timeout_ms * 1000);
         } else if(got_audio_data) {
+            if(drop_audio_data)
+                continue;
+
             // The frame has to be made writable again if the frame was already sent to the audio filter above (when filling missing frames)
             // because the audio filter only references the frame data instead of copying it. Without this the sent frames data would be
             // overwritten with the audio data below, causing the audio to repeat instead of the missing frames being silent.
@@ -293,25 +316,8 @@ static void* audio_device_thread(void *userdata) {
                 device->frame->data[0] = (uint8_t*)sound_buffer;
 
             pthread_mutex_lock(&self->filter_mutex);
-
-            if(track->graph) {
-                // TODO: av_buffersrc_add_frame
-                if(av_buffersrc_write_frame(device->src_filter_ctx, device->frame) < 0) {
-                    gsr_log(GSR_LOG_LEVEL_ERROR, "failed to add audio frame to filter");
-                }
-            } else {
-                ret = avcodec_send_frame(track->codec_context, device->frame);
-                if(ret >= 0) {
-                    // TODO: Move to separate thread because this could write to network (for example when livestreaming)
-                    gsr_encoder_receive_packets(self->encoder, track->codec_context, device->frame->pts, track->stream_index);
-                } else {
-                    gsr_log(GSR_LOG_LEVEL_ERROR, "Failed to encode audio");
-                }
-                track->pts += track->codec_context->frame_size;
-            }
-
-            device->frame->pts += track->codec_context->frame_size;
-            num_received_frames++;
+            audio_device_send_frame(self, track, device);
+            num_sent_frames++;
             pthread_mutex_unlock(&self->filter_mutex);
         } else {
             // TODO: Maybe sleep for time_to_sleep_until_next_frame/4? for better latency

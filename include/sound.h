@@ -40,15 +40,10 @@ int sound_device_get_by_name(SoundDevice *device, const char *node_name, const c
 void sound_device_close(SoundDevice *device);
 
 /*
-    Discards the audio that has been captured so far.
-    Call this before the first call to sound_device_read_next_chunk to not get audio that was captured before that point,
-    since the sound device can be created a while before audio capture starts.
-*/
-void sound_device_flush(SoundDevice *device);
-
-/*
     Returns the next chunk of audio into @buffer.
     Returns the number of frames read, or a negative value on failure.
+    @latency_seconds is set to the time between the end of the audio that has been read and now, also on failure.
+    This includes audio that has been captured by the audio server but not yet read.
 */
 int sound_device_read_next_chunk(SoundDevice *device, void **buffer, double timeout_sec, double *latency_seconds);
 

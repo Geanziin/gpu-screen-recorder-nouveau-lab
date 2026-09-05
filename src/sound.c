@@ -15,6 +15,7 @@
 
 #define RECONNECT_TRY_TIMEOUT_SECONDS 0.5
 #define DEVICE_NAME_MAX_SIZE 128
+#define MAX_PENDING_EVENT_DISPATCHES 64
 
 #define CHECK_DEAD_GOTO(p, rerror, label)                               \
     do {                                                                \
@@ -387,6 +388,46 @@ static bool pa_sound_device_handle_reconnect(pa_handle *p, char *device_name, si
     return true;
 }
 
+static void pa_sound_device_dispatch_pending_events(pa_handle *p) {
+    for(int i = 0; i < MAX_PENDING_EVENT_DISPATCHES; ++i) {
+        if(pa_mainloop_iterate(p->mainloop, 0, NULL) <= 0)
+            break;
+    }
+}
+
+static void pa_sound_device_update_latency(pa_handle *p) {
+    pa_sound_device_dispatch_pending_events(p);
+
+    const double bytes_per_second = (double)pa_bytes_per_second(&p->ss);
+    const size_t peeked_chunk_bytes_copied = p->read_data ? p->read_index : 0;
+    const double peeked_chunk_seconds_copied = (double)peeked_chunk_bytes_copied / bytes_per_second;
+
+    pa_operation *timing_update_op = pa_stream_update_timing_info(p->stream, NULL, NULL);
+    if(timing_update_op)
+        pa_operation_unref(timing_update_op);
+
+    double latency_seconds = 0.0;
+    const pa_timing_info *timing_info = pa_stream_get_timing_info(p->stream);
+    if(timing_info && !timing_info->write_index_corrupt && !timing_info->read_index_corrupt) {
+        const double unread_at_timing_update_seconds = (double)(timing_info->write_index - timing_info->read_index) / bytes_per_second;
+        double seconds_since_timing_update = ((double)pa_rtclock_now() - (double)pa_timeval_load(&timing_info->timestamp)) / (double)PA_USEC_PER_SEC;
+        if(seconds_since_timing_update < 0.0)
+            seconds_since_timing_update = 0.0;
+        const double source_latency_seconds = (double)timing_info->source_usec / (double)PA_USEC_PER_SEC;
+        latency_seconds = unread_at_timing_update_seconds + seconds_since_timing_update + source_latency_seconds - peeked_chunk_seconds_copied;
+    }
+
+    const size_t readable_size = pa_stream_readable_size(p->stream);
+    if(readable_size != (size_t)-1) {
+        const size_t unread_bytes = readable_size > peeked_chunk_bytes_copied ? readable_size - peeked_chunk_bytes_copied : 0;
+        const double unread_seconds = (double)unread_bytes / bytes_per_second;
+        if(unread_seconds > latency_seconds)
+            latency_seconds = unread_seconds;
+    }
+
+    p->latency_seconds = latency_seconds < 0.0 ? 0.0 : latency_seconds;
+}
+
 static int pa_sound_device_read(pa_handle *p, double timeout_seconds) {
     assert(p);
 
@@ -396,8 +437,6 @@ static int pa_sound_device_read(pa_handle *p, double timeout_seconds) {
     bool success = false;
     int r = 0;
     int *rerror = &r;
-    pa_usec_t latency = 0;
-    int negative = 0;
 
     pa_mainloop_iterate(p->mainloop, 0, NULL);
 
@@ -419,8 +458,10 @@ static int pa_sound_device_read(pa_handle *p, double timeout_seconds) {
     CHECK_DEAD_GOTO(p, rerror, fail);
 
     while (p->output_index < p->output_length) {
-        if(clock_get_monotonic_seconds() - start_time >= timeout_seconds)
+        if(clock_get_monotonic_seconds() - start_time >= timeout_seconds) {
+            pa_sound_device_update_latency(p);
             return -1;
+        }
 
         if(!p->read_data) {
             pa_mainloop_prepare(p->mainloop, 1 * 1000); // 1 ms
@@ -448,15 +489,6 @@ static int pa_sound_device_read(pa_handle *p, double timeout_seconds) {
                 CHECK_DEAD_GOTO(p, rerror, fail);
                 continue;
             }
-
-            pa_operation_unref(pa_stream_update_timing_info(p->stream, NULL, NULL));
-            // TODO: Deal with one pa_stream_peek not being enough. In that case we need to add multiple of these together(?)
-            if(pa_stream_get_latency(p->stream, &latency, &negative) >= 0) {
-                p->latency_seconds = negative ? -(double)latency : latency;
-                if(p->latency_seconds < 0.0)
-                    p->latency_seconds = 0.0;
-                p->latency_seconds *= 0.0000001;
-            }
         }
 
         const size_t space_free_in_output_buffer = p->output_length - p->output_index;
@@ -483,6 +515,7 @@ static int pa_sound_device_read(pa_handle *p, double timeout_seconds) {
         }
     }
 
+    pa_sound_device_update_latency(p);
     success = true;
 
     fail:
@@ -540,35 +573,13 @@ void sound_device_close(SoundDevice *device) {
     device->handle = NULL;
 }
 
-void sound_device_flush(SoundDevice *device) {
-    pa_handle *p = (pa_handle*)device->handle;
-    if(!p || !p->stream)
-        return;
-
-    if(pa_stream_get_state(p->stream) != PA_STREAM_READY)
-        return;
-
-    pa_operation *op = pa_stream_flush(p->stream, NULL, NULL);
-    if(!op)
-        return;
-
-    /* The flush operation should finish immediately, the timeout is to not freeze if pulseaudio is in a bad state */
-    const double start_time = clock_get_monotonic_seconds();
-    while(pa_operation_get_state(op) == PA_OPERATION_RUNNING && clock_get_monotonic_seconds() - start_time < 0.1) {
-        pa_mainloop_iterate(p->mainloop, 1, NULL);
-    }
-    pa_operation_unref(op);
-}
-
 int sound_device_read_next_chunk(SoundDevice *device, void **buffer, double timeout_sec, double *latency_seconds) {
     pa_handle *pa = (pa_handle*)device->handle;
-    if(pa_sound_device_read(pa, timeout_sec) < 0) {
-        //gsr_log(GSR_LOG_LEVEL_ERROR, "pa_simple_read() failed: %s", pa_strerror(error));
-        *latency_seconds = 0.0;
-        return -1;
-    }
-    *buffer = pa->output_data;
+    const int read_result = pa_sound_device_read(pa, timeout_sec);
     *latency_seconds = pa->latency_seconds;
+    if(read_result < 0)
+        return -1;
+    *buffer = pa->output_data;
     return device->frames;
 }
 
