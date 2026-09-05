@@ -455,7 +455,7 @@ static int pa_sound_device_read(pa_handle *p, double timeout_seconds) {
                 p->latency_seconds = negative ? -(double)latency : latency;
                 if(p->latency_seconds < 0.0)
                     p->latency_seconds = 0.0;
-                p->latency_seconds *= 0.0000001;
+                p->latency_seconds *= 0.000001;
             }
         }
 
