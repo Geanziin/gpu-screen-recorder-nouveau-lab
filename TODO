@@ -441,3 +441,4 @@ In application audio, list all pipewire clients instead of nodes that we can cap
 kms take into consideration color pipeline for hdr/sdr capture.
 
 Add option to do replay with max ram usage (of the replay data) instead of replay duration. Good especially for CQP. Implement that by popping replay data from the front until the new data can fit without exceeding memory limit.
+
