@@ -42,6 +42,23 @@ static int max_int(int a, int b) {
     return a > b ? a : b;
 }
 
+static void close_fd(int *fd) {
+    if(*fd != -1) {
+        close(*fd);
+        *fd = -1;
+    }
+}
+
+static void kms_response_close_fds(gsr_kms_response *response) {
+    for(int i = 0; i < response->num_items; ++i) {
+        for(int j = 0; j < response->items[i].num_dma_bufs; ++j) {
+            close_fd(&response->items[i].dma_buf[j].fd);
+        }
+        response->items[i].num_dma_bufs = 0;
+    }
+    response->num_items = 0;
+}
+
 static int count_num_fds(const gsr_kms_response *response) {
     int num_fds = 0;
     for(int i = 0; i < response->num_items; ++i) {
@@ -100,22 +117,14 @@ static int recv_msg_from_client(int client_fd, gsr_kms_request *request) {
     response_message.msg_control = cmsgbuf;
     response_message.msg_controllen = sizeof(cmsgbuf);
 
-    int res = recvmsg(client_fd, &response_message, MSG_WAITALL);
+    const int res = recvmsg(client_fd, &response_message, MSG_WAITALL | MSG_CMSG_CLOEXEC);
     if(res <= 0)
         return res;
 
-    if(request->new_connection_fd > 0) {
-        struct cmsghdr *cmsg = CMSG_FIRSTHDR(&response_message);
-        if(cmsg) {
-            int *fds = (int*)CMSG_DATA(cmsg);
-            request->new_connection_fd = fds[0];
-        } else {
-            if(request->new_connection_fd > 0) {
-                close(request->new_connection_fd);
-                request->new_connection_fd = 0;
-            }
-        }
-    }
+    request->new_connection_fd = -1;
+    const struct cmsghdr *cmsg = CMSG_FIRSTHDR(&response_message);
+    if(cmsg && cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS && cmsg->cmsg_len == CMSG_LEN(sizeof(int)))
+        memcpy(&request->new_connection_fd, CMSG_DATA(cmsg), sizeof(int));
 
     return res;
 }
@@ -471,20 +480,24 @@ static int kms_get_fb(gsr_drm *drm, gsr_kms_response *response) {
     if(response->result == KMS_RESULT_OK) {
         result = 0;
     } else {
-        for(int i = 0; i < response->num_items; ++i) {
-            for(int j = 0; j < response->items[i].num_dma_bufs; ++j) {
-                gsr_kms_response_dma_buf *dma_buf = &response->items[i].dma_buf[j];
-                if(dma_buf->fd > 0) {
-                    close(dma_buf->fd);
-                    dma_buf->fd = -1;
-                }
-            }
-            response->items[i].num_dma_bufs = 0;
-        }
-        response->num_items = 0;
+        kms_response_close_fds(response);
     }
 
     return result;
+}
+
+static void handle_replace_connection_request(int *socket_fd, int *new_connection_fd, gsr_kms_response *response) {
+    if(*new_connection_fd == -1) {
+        response->result = KMS_RESULT_INVALID_REQUEST;
+        snprintf(response->err_msg, sizeof(response->err_msg), "received invalid connection fd");
+        fprintf(stderr, "kms server error: %s\n", response->err_msg);
+        return;
+    }
+
+    close_fd(socket_fd);
+    *socket_fd = *new_connection_fd;
+    *new_connection_fd = -1;
+    response->result = KMS_RESULT_OK;
 }
 
 static double clock_get_monotonic_seconds(void) {
@@ -499,9 +512,9 @@ int main(int argc, char **argv) {
     setlocale(LC_ALL, "C"); // Sigh... stupid C
 
     int res = 0;
-    int socket_fd = 0;
+    int socket_fd = -1;
     gsr_drm drm;
-    drm.drmfd = 0;
+    drm.drmfd = -1;
 
     if(argc != 3) {
         fprintf(stderr, "usage: gsr-kms-server <domain_socket_path> <card_path>\n");
@@ -517,9 +530,15 @@ int main(int argc, char **argv) {
 
     const char *card_path = argv[2];
 
-    drm.drmfd = open(card_path, O_RDONLY);
+    drm.drmfd = open(card_path, O_RDONLY | O_CLOEXEC);
     if(drm.drmfd < 0) {
-        fprintf(stderr, "kms server error: failed to open %s, error: %s", card_path, strerror(errno));
+        fprintf(stderr, "kms server error: failed to open %s, error: %s\n", card_path, strerror(errno));
+        res = 2;
+        goto done;
+    }
+
+    if(drmGetNodeTypeFromFd(drm.drmfd) != DRM_NODE_PRIMARY) {
+        fprintf(stderr, "kms server error: %s is not a drm primary node\n", card_path);
         res = 2;
         goto done;
     }
@@ -572,7 +591,7 @@ int main(int argc, char **argv) {
         gsr_kms_request request;
         request.version = 0;
         request.type = -1;
-        request.new_connection_fd = 0;
+        request.new_connection_fd = -1;
 
         const int recv_res = recv_msg_from_client(socket_fd, &request);
         if(recv_res == 0) {
@@ -592,84 +611,39 @@ int main(int argc, char **argv) {
 
         if(request.version != GSR_KMS_PROTOCOL_VERSION) {
             fprintf(stderr, "kms server error: expected gpu screen recorder protocol version to be %u, but it's %u. please reinstall gpu screen recorder\n", GSR_KMS_PROTOCOL_VERSION, request.version);
-            /*
-            if(request.new_connection_fd > 0)
-                close(request.new_connection_fd);
-            */
+            close_fd(&request.new_connection_fd);
             continue;
         }
 
+        gsr_kms_response response;
+        memset(&response, 0, sizeof(response));
+        response.version = GSR_KMS_PROTOCOL_VERSION;
+        response.result = KMS_RESULT_INVALID_REQUEST;
+        response.num_items = 0;
+
         switch(request.type) {
-            case KMS_REQUEST_TYPE_REPLACE_CONNECTION: {
-                gsr_kms_response response;
-                response.version = GSR_KMS_PROTOCOL_VERSION;
-                response.num_items = 0;
-
-                if(request.new_connection_fd > 0) {
-                    if(socket_fd > 0)
-                        close(socket_fd);
-                    socket_fd = request.new_connection_fd;
-
-                    response.result = KMS_RESULT_OK;
-                    if(send_msg_to_client(socket_fd, &response) == -1)
-                        fprintf(stderr, "kms server error: failed to respond to client KMS_REQUEST_TYPE_REPLACE_CONNECTION request\n");
-                } else {
-                    response.result = KMS_RESULT_INVALID_REQUEST;
-                    snprintf(response.err_msg, sizeof(response.err_msg), "received invalid connection fd");
-                    fprintf(stderr, "kms server error: %s\n", response.err_msg);
-                    if(send_msg_to_client(socket_fd, &response) == -1)
-                        fprintf(stderr, "kms server error: failed to respond to client request\n");
-                }
-
+            case KMS_REQUEST_TYPE_REPLACE_CONNECTION:
+                handle_replace_connection_request(&socket_fd, &request.new_connection_fd, &response);
                 break;
-            }
-            case KMS_REQUEST_TYPE_GET_KMS: {
-                gsr_kms_response response;
-                response.version = GSR_KMS_PROTOCOL_VERSION;
-                response.num_items = 0;
-                
-                if(kms_get_fb(&drm, &response) == 0) {
-                    if(send_msg_to_client(socket_fd, &response) == -1)
-                        fprintf(stderr, "kms server error: failed to respond to client KMS_REQUEST_TYPE_GET_KMS request\n");
-                } else {
-                    if(send_msg_to_client(socket_fd, &response) == -1)
-                        fprintf(stderr, "kms server error: failed to respond to client KMS_REQUEST_TYPE_GET_KMS request\n");
-                }
-
-                for(int i = 0; i < response.num_items; ++i) {
-                    for(int j = 0; j < response.items[i].num_dma_bufs; ++j) {
-                        gsr_kms_response_dma_buf *dma_buf = &response.items[i].dma_buf[j];
-                        if(dma_buf->fd > 0) {
-                            close(dma_buf->fd);
-                            dma_buf->fd = -1;
-                        }
-                    }
-                    response.items[i].num_dma_bufs = 0;
-                }
-                response.num_items = 0;
-
+            case KMS_REQUEST_TYPE_GET_KMS:
+                kms_get_fb(&drm, &response);
                 break;
-            }
-            default: {
-                gsr_kms_response response;
-                response.version = GSR_KMS_PROTOCOL_VERSION;
-                response.result = KMS_RESULT_INVALID_REQUEST;
-                response.num_items = 0;
-
+            default:
                 snprintf(response.err_msg, sizeof(response.err_msg), "invalid request type %d, expected %d (%s)", request.type, KMS_REQUEST_TYPE_GET_KMS, "KMS_REQUEST_TYPE_GET_KMS");
                 fprintf(stderr, "kms server error: %s\n", response.err_msg);
-                if(send_msg_to_client(socket_fd, &response) == -1)
-                    fprintf(stderr, "kms server error: failed to respond to client request\n");
-
                 break;
-            }
         }
+
+        close_fd(&request.new_connection_fd);
+
+        if(send_msg_to_client(socket_fd, &response) == -1)
+            fprintf(stderr, "kms server error: failed to respond to client request type %d\n", request.type);
+
+        kms_response_close_fds(&response);
     }
 
     done:
-    if(drm.drmfd > 0)
-        close(drm.drmfd);
-    if(socket_fd > 0)
-        close(socket_fd);
+    close_fd(&drm.drmfd);
+    close_fd(&socket_fd);
     return res;
 }

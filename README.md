@@ -50,16 +50,15 @@ If you still prefer to install GPU Screen Recorder with a package manager instea
 Here are some known unofficial packages:
 * Alpine Linux: [gpu-screen-recorder](https://pkgs.alpinelinux.org/package/edge/testing/x86/gpu-screen-recorder)
 * AppImage [AppImage GitHub releases](https://github.com/pkgforge-dev/gpu-screen-recorder-AppImage/releases) - This is built with the FFmpeg patch which adds support for older NVIDIA GPUs. It also includes all of the video encoding drivers so you dont have to install anything extra
-* CentOS: [Copr](https://copr.fedorainfracloud.org/coprs/brycensranch/gpu-screen-recorder-git/)
 * Debian: [gpu-screen-recorder-cli](https://tracker.debian.org/pkg/gpu-screen-recorder) or [gpu-screen-recorder alternative repository](https://sekoohaka.ddns.net/Sarisan/gpu-screen-recorder/packages)
-* Fedora: [Copr](https://copr.fedorainfracloud.org/coprs/brycensranch/gpu-screen-recorder-git/)
+* Fedora: [Copr](https://copr.fedorainfracloud.org/coprs/brycensranch/gpu-screen-recorder-git/) (Note: Fedora disables hardware accelerated video encoding for h264/hevc on AMD by default)
 * Guix: [gpu-screen-recorder](https://packages.guix.gnu.org/packages/gpu-screen-recorder/5.15.3/)
 * Nix: [NixOS wiki](https://wiki.nixos.org/wiki/Gpu-screen-recorder)
 * Nobara: [Nobara wiki](https://wiki.nobaraproject.org/en/general-usage/additional-software/GPU-Screen-Recorder)
 * OpenMandriva: [gpu-screen-recorder](https://github.com/OpenMandrivaAssociation/gpu-screen-recorder)
 * openSUSE: [openSUSE software repository](https://software.opensuse.org/package/gpu-screen-recorder)
 * Ubuntu: [gpu-screen-recorder-cli](https://launchpad.net/ubuntu/+source/gpu-screen-recorder)
-* Void Linux: [gpu-screen-recorder](https://github.com/cherrybtw/gsr4xbps)
+* Void Linux: [unofficial gpu-screen-recorder repository](https://github.com/cherrybtw/gsr4xbps)
 
 # Dependencies
 GPU Screen Recorder uses meson build system so you need to install `meson` to build GPU Screen Recorder.
