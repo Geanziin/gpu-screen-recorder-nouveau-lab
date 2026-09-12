@@ -224,7 +224,8 @@ static bool nvenc_driver_supports_ffmpeg_nvenc_api_version(void *nvenc_lib) {
     }
 
     if(driver_nvenc_api_version < FFMPEG_REQUIRED_NVENC_API_VERSION) {
-        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_get_supported_video_codecs_nvenc: your nvidia driver only supports nvenc api version %u.%u, but the FFmpeg version that GPU Screen Recorder uses requires nvenc api version %u.%u. Update your nvidia driver or use an older FFmpeg version to record with nvenc",
+        gsr_log(GSR_LOG_LEVEL_WARNING, "gsr_get_supported_video_codecs_nvenc: your nvidia driver only supports nvenc api version %u.%u but the FFmpeg version on your system requires nvenc api version %u.%u. "
+                                       "You can workaround this problem by using an older version of FFmpeg or by using the flatpak or AppImage version of GPU Screen Recorder or by compiling GPU Screen Recorder from source with the -Dffmpeg_static=true meson option.",
             driver_nvenc_api_version >> 4, driver_nvenc_api_version & 0xf,
             (uint32_t)FFMPEG_REQUIRED_NVENC_API_VERSION >> 4, (uint32_t)FFMPEG_REQUIRED_NVENC_API_VERSION & 0xf);
         return false;
