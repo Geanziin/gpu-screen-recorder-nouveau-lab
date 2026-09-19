@@ -442,3 +442,4 @@ kms take into consideration color pipeline for hdr/sdr capture.
 
 Add option to do replay with max ram usage (of the replay data) instead of replay duration. Good especially for CQP. Implement that by popping replay data from the front until the new data can fit without exceeding memory limit.
 
+Vulkan video encoding + replay on nvidia seems to freeze on shutdown? (with killall -SIGINT gpu-screen-recorder)

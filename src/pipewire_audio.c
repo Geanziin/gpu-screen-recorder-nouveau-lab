@@ -460,7 +460,8 @@ static void on_node_info_cb(void *data, const struct pw_node_info *info) {
        Nodes not created by an application (loopback and filter streams for example) have none of these properties. */
     const bool is_application = spa_dict_lookup(info->props, PW_KEY_APP_ID) != NULL
         || spa_dict_lookup(info->props, PW_KEY_APP_NAME) != NULL
-        || spa_dict_lookup(info->props, PW_KEY_APP_PROCESS_BINARY) != NULL;
+        || spa_dict_lookup(info->props, PW_KEY_APP_PROCESS_BINARY) != NULL
+        || (media_class && strcmp(media_class, "Stream/Output/Audio") == 0);
 
     gsr_pipewire_audio_node *existing_node = gsr_pipewire_audio_get_node_by_id(self, node_binding->node_id);
     if(existing_node) {
