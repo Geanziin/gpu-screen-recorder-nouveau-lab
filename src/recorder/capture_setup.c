@@ -218,7 +218,7 @@ static int region_get_data(gsr_egl *egl, vec2i *region_size, vec2i *region_posit
     } else {
         region_position->x -= monitor_pos.x;
         region_position->y -= monitor_pos.y;
-        /* Match drm plane coordinate space (1x scaling) to wayland coordinate space (which may have scaling set by user) */
+        /* Match drm plane coordinate space (1x scaling) to display server coordinate space (which may have scaling set by user) */
         region_position->x *= monitor_scale_inverted;
         region_position->y *= monitor_scale_inverted;
 

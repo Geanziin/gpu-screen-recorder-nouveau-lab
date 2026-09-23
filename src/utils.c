@@ -107,9 +107,8 @@ void for_each_active_monitor_output_x11_not_cached(Display *display, active_moni
         if(out_info && out_info->crtc && out_info->connection == RR_Connected) {
             XRRCrtcInfo *crt_info = XRRGetCrtcInfo(display, screen_res, out_info->crtc);
             if(crt_info && crt_info->mode) {
-                // We want to use the current mode info width/height (mode_info->width/height) instead of crtc info width/height (crt_info->width/height) because crtc info
-                // is scaled if the monitor is scaled (xrandr --output DP-1 --scale 1.5). Normally this is not an issue for x11 applications,
-                // but gpu screen recorder captures the drm framebuffer instead of x11 api. This drm framebuffer which doesn't increase in size when using xrandr scaling.
+                // The mode info width/height is the size of the drm framebuffer that gpu screen recorder captures while the crtc info width/height is
+                // the size in x11 screen coordinates. These differ when the monitor is scaled (xrandr --output DP-1 --scale 1.5).
                 // Maybe a better option would be to get the drm crtc size instead.
                 const XRRModeInfo *mode_info = get_mode_info(screen_res, crt_info->mode);
                 if(mode_info) {
@@ -123,7 +122,7 @@ void for_each_active_monitor_output_x11_not_cached(Display *display, active_moni
                         .pos = { .x = crt_info->x, .y = crt_info->y },
                         .size = monitor_size,
                         .logical_pos = { .x = crt_info->x, .y = crt_info->y },
-                        .logical_size = monitor_size,
+                        .logical_size = { .x = (int)crt_info->width, .y = (int)crt_info->height },
                         .connector_id = x11_output_get_connector_id(display, screen_res->outputs[i], randr_connector_id_atom),
                         .rotation = rotation,
                         .monitor_identifier = out_info->crtc
@@ -372,6 +371,16 @@ static void get_monitor_by_connector_id_callback(const gsr_monitor *monitor, voi
         data->position = monitor->pos;
         data->match_found = true;
     }
+}
+
+static vec2i scale_vec2i(vec2i value, vec2i from, vec2i to) {
+    if(from.x <= 0 || from.y <= 0)
+        return value;
+    return (vec2i){ value.x * ((double)to.x / (double)from.x), value.y * ((double)to.y / (double)from.y) };
+}
+
+vec2i gsr_monitor_drm_to_logical(const gsr_monitor *monitor, vec2i value) {
+    return scale_vec2i(value, monitor->size, monitor->logical_size);
 }
 
 bool drm_monitor_get_display_server_data(const gsr_window *window, const gsr_monitor *monitor, gsr_monitor_rotation *monitor_rotation, vec2i *monitor_position) {

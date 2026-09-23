@@ -16,6 +16,8 @@ typedef struct {
     char *name;
     vec2i pos;
     vec2i size;
+    vec2i logical_pos;
+    vec2i logical_size;
     uint32_t connector_id;
     gsr_monitor_rotation rotation;
     uint32_t monitor_identifier; /* crtc id */
@@ -44,6 +46,8 @@ static void store_x11_monitor(const gsr_monitor *monitor, void *userdata) {
     window_x11->outputs[index].name = monitor_name;
     window_x11->outputs[index].pos = monitor->pos;
     window_x11->outputs[index].size = monitor->size;
+    window_x11->outputs[index].logical_pos = monitor->logical_pos;
+    window_x11->outputs[index].logical_size = monitor->logical_size;
     window_x11->outputs[index].connector_id = monitor->connector_id;
     window_x11->outputs[index].rotation = monitor->rotation;
     window_x11->outputs[index].monitor_identifier = monitor->monitor_identifier;
@@ -121,8 +125,8 @@ static void gsr_window_x11_for_each_active_monitor_output_cached(const gsr_windo
             .name_len = strlen(output->name),
             .pos = output->pos,
             .size = output->size,
-            .logical_pos = output->pos,
-            .logical_size = output->size,
+            .logical_pos = output->logical_pos,
+            .logical_size = output->logical_size,
             .connector_id = output->connector_id,
             .rotation = output->rotation,
             .monitor_identifier = output->monitor_identifier

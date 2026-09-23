@@ -52,6 +52,9 @@ void for_each_active_monitor_output(const gsr_window *window, const char *card_p
 bool get_monitor_by_name(const gsr_window *window, const char *card_path, gsr_connection_type connection_type, const char *name, gsr_monitor *monitor);
 bool drm_monitor_get_display_server_data(const gsr_window *window, const gsr_monitor *monitor, gsr_monitor_rotation *monitor_rotation, vec2i *monitor_position);
 
+/* The display server coordinates are scaled when the monitor is scaled (xrandr --output DP-1 --scale 1.5) while the drm framebuffer the monitor scans out is not */
+vec2i gsr_monitor_drm_to_logical(const gsr_monitor *monitor, vec2i value);
+
 /* Lists every /dev/dri/cardN device that is a hardware accelerated gpu */
 void gsr_dri_cards_get(gsr_dri_cards *self);
 /* |card_path| should be at least |GSR_DRI_CARD_PATH_MAX_SIZE| bytes in size. Returns the gpu that the monitor is connected to */

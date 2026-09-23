@@ -32,6 +32,8 @@ typedef struct {
     NVFBC_TRACKING_TYPE tracking_type;
     uint32_t output_id;
     uint32_t tracking_width, tracking_height;
+    vec2i capture_pos;
+    vec2i capture_size;
     bool nvfbc_needs_recreate;
     double nvfbc_dead_start;
 } gsr_capture_nvfbc;
@@ -246,6 +248,18 @@ static void gsr_capture_nvfbc_stop(gsr_capture_nvfbc *self) {
     }
 }
 
+/* The returned monitor is in x11 screen coordinates when the whole x11 screen is captured, in which case there is no drm framebuffer to match */
+static gsr_monitor gsr_capture_nvfbc_get_monitor(gsr_capture_nvfbc *self) {
+    gsr_monitor monitor;
+    if(self->tracking_type == NVFBC_TRACKING_OUTPUT && get_monitor_by_name(self->params.egl->window, self->params.egl->card_path, GSR_CONNECTION_X11, self->params.display_to_capture, &monitor))
+        return monitor;
+
+    memset(&monitor, 0, sizeof(monitor));
+    monitor.size = (vec2i){ self->tracking_width, self->tracking_height };
+    monitor.logical_size = monitor.size;
+    return monitor;
+}
+
 static int gsr_capture_nvfbc_start(gsr_capture *cap, gsr_capture_metadata *capture_metadata) {
     gsr_capture_nvfbc *self = cap->priv;
 
@@ -284,15 +298,24 @@ static int gsr_capture_nvfbc_start(gsr_capture *cap, gsr_capture_metadata *captu
         goto error_cleanup;
     }
 
-    capture_metadata->video_size.x = self->tracking_width;
-    capture_metadata->video_size.y = self->tracking_height;
+    const gsr_monitor monitor = gsr_capture_nvfbc_get_monitor(self);
 
-    if(self->params.region_size.x > 0 && self->params.region_size.y > 0)
-        capture_metadata->video_size = self->params.region_size;
+    vec2i video_size = monitor.size;
+    vec2i capture_pos = {0, 0};
+    if(self->params.region_size.x > 0 && self->params.region_size.y > 0) {
+        video_size = self->params.region_size;
+        capture_pos = self->params.region_position;
+    }
+
+    /* Nvfbc captures the x11 screen, which is scaled when the monitor is scaled, while the video is recorded unscaled */
+    self->capture_pos = gsr_monitor_drm_to_logical(&monitor, capture_pos);
+    self->capture_size = gsr_monitor_drm_to_logical(&monitor, video_size);
 
     if(self->params.output_resolution.x > 0 && self->params.output_resolution.y > 0) {
-        self->params.output_resolution = scale_keep_aspect_ratio(capture_metadata->video_size, self->params.output_resolution);
+        self->params.output_resolution = scale_keep_aspect_ratio(video_size, self->params.output_resolution);
         capture_metadata->video_size = self->params.output_resolution;
+    } else {
+        capture_metadata->video_size = video_size;
     }
 
     return 0;
@@ -365,12 +388,7 @@ static int gsr_capture_nvfbc_capture(gsr_capture *cap, gsr_capture_metadata *cap
         }
     }
 
-    vec2i frame_size = (vec2i){self->width, self->height};
-    const vec2i original_frame_size = frame_size;
-    if(self->params.region_size.x > 0 && self->params.region_size.y > 0)
-        frame_size = self->params.region_size;
-
-    const vec2i output_size = scale_keep_aspect_ratio(frame_size, capture_metadata->recording_size);
+    const vec2i output_size = scale_keep_aspect_ratio(self->capture_size, capture_metadata->recording_size);
     const vec2i target_pos = gsr_capture_get_target_position(output_size, capture_metadata);
 
     NVFBC_FRAME_GRAB_INFO frame_info;
@@ -395,8 +413,8 @@ static int gsr_capture_nvfbc_capture(gsr_capture *cap, gsr_capture_metadata *cap
     //self->params.egl->glFinish();
 
     gsr_color_conversion_draw(color_conversion, self->setup_params.dwTextures[grab_params.dwTextureIndex],
-        target_pos, (vec2i){output_size.x, output_size.y},
-        self->params.region_position, frame_size, original_frame_size,
+        target_pos, output_size,
+        self->capture_pos, self->capture_size, (vec2i){self->width, self->height},
         GSR_ROT_0, capture_metadata->flip, GSR_SOURCE_COLOR_BGR, false);
 
     //self->params.egl->glFlush();

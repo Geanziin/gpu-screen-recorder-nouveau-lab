@@ -42,19 +42,24 @@ static int gsr_capture_ximage_start(gsr_capture *cap, gsr_capture_metadata *capt
         return -1;
     }
 
-    self->capture_pos = self->monitor.pos;
-    self->capture_size = self->monitor.size;
+    vec2i video_size = self->monitor.size;
+    vec2i capture_pos = {0, 0};
+    if(self->params.region_size.x > 0 && self->params.region_size.y > 0) {
+        video_size = self->params.region_size;
+        capture_pos = self->params.region_position;
+    }
 
-    if(self->params.region_size.x > 0 && self->params.region_size.y > 0)
-        self->capture_size = self->params.region_size;
+    /* XGetImage reads from the x11 screen, which is scaled when the monitor is scaled, while the video is recorded unscaled */
+    capture_pos = gsr_monitor_drm_to_logical(&self->monitor, capture_pos);
+    self->capture_pos.x = self->monitor.logical_pos.x + capture_pos.x;
+    self->capture_pos.y = self->monitor.logical_pos.y + capture_pos.y;
+    self->capture_size = gsr_monitor_drm_to_logical(&self->monitor, video_size);
 
     if(self->params.output_resolution.x > 0 && self->params.output_resolution.y > 0) {
-        self->params.output_resolution = scale_keep_aspect_ratio(self->capture_size, self->params.output_resolution);
+        self->params.output_resolution = scale_keep_aspect_ratio(video_size, self->params.output_resolution);
         capture_metadata->video_size = self->params.output_resolution;
-    } else if(self->params.region_size.x > 0 && self->params.region_size.y > 0) {
-        capture_metadata->video_size = self->params.region_size;
     } else {
-        capture_metadata->video_size = self->capture_size;
+        capture_metadata->video_size = video_size;
     }
 
     self->texture_id = gl_create_texture(self->params.egl, self->capture_size.x, self->capture_size.y, GL_RGB8, GL_RGB, GL_LINEAR);
@@ -135,7 +140,7 @@ static int gsr_capture_ximage_capture(gsr_capture *cap, gsr_capture_metadata *ca
 
     const vec2i output_size = scale_keep_aspect_ratio(self->capture_size, capture_metadata->recording_size);
     const vec2i target_pos = gsr_capture_get_target_position(output_size, capture_metadata);
-    gsr_capture_ximage_upload_to_texture(self, self->capture_pos.x + self->params.region_position.x, self->capture_pos.y + self->params.region_position.y, self->capture_size.x, self->capture_size.y);
+    gsr_capture_ximage_upload_to_texture(self, self->capture_pos.x, self->capture_pos.y, self->capture_size.x, self->capture_size.y);
 
     gsr_color_conversion_draw(color_conversion, self->texture_id,
         target_pos, output_size,
@@ -149,8 +154,8 @@ static int gsr_capture_ximage_capture(gsr_capture *cap, gsr_capture_metadata *ca
         };
 
         const vec2i cursor_pos = {
-            target_pos.x + (self->params.cursor->position.x - self->params.cursor->hotspot.x) * scale.x - self->capture_pos.x - self->params.region_position.x,
-            target_pos.y + (self->params.cursor->position.y - self->params.cursor->hotspot.y) * scale.y - self->capture_pos.y - self->params.region_position.y
+            target_pos.x + (self->params.cursor->position.x - self->params.cursor->hotspot.x - self->capture_pos.x) * scale.x,
+            target_pos.y + (self->params.cursor->position.y - self->params.cursor->hotspot.y - self->capture_pos.y) * scale.y
         };
 
         self->params.egl->glEnable(GL_SCISSOR_TEST);
