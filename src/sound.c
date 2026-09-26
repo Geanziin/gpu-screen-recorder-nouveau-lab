@@ -371,7 +371,9 @@ static bool pa_sound_device_handle_reconnect(pa_handle *p, char *device_name, si
 
     pa_proplist_free(proplist);
 
-    const int r = pa_stream_connect_record(p->stream, device_name, &p->attr,
+    // if default, don't send name, rather send NULL to indicate we are using whatever default happens to be
+    const char *connect_device_name = p->device_type == DEVICE_TYPE_DEFAULT_INPUT ? NULL : device_name;
+    const int r = pa_stream_connect_record(p->stream, connect_device_name, &p->attr,
         (pa_stream_flags_t)(PA_STREAM_INTERPOLATE_TIMING|PA_STREAM_ADJUST_LATENCY|PA_STREAM_AUTO_TIMING_UPDATE|PA_STREAM_DONT_MOVE));
 
     if(r < 0) {
