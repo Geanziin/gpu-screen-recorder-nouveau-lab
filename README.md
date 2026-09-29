@@ -336,6 +336,8 @@ This will be fixed in the future.
 This is a hyprland bug. I fixed it in xdg-desktop-portal-hyprland in [2026-08-29](https://github.com/hyprwm/xdg-desktop-portal-hyprland/commit/ba31964ee42b56bcb0d3b78a64ead5d8a1c3c6f6). If your xdg-desktop-portal-hyprland doesn't have that fix yet you have to capture the monitor directly with `-w monitor` instead or use another Wayland compositor.
 ## The captured video is laggy when capturing with desktop portal on COSMIC/Wlroots (sway)
 This is a bug in COSMIC and Wlroots. Their desktop portals send frame updates at low framerates (such as 25 fps) instead of the selected framerate (such as 60 fps). Capture a monitor directly instead (`-w DP-1` for example) to workaround that problem.
+## The video looks pixelated on wlroots (sway) when using desktop portal
+This appears to be a bug in wlroots or sway. Capturing a window instead fixes this problem.
 ## How to adjust the volume of the recorded audio?
 GPU Screen Recorder doesn't have the option to do that yet, but you can change the volume by starting recording and then open `pavucontrol`, go to the `Recording` tab and set the volume there. The system will remember the settings even after reboot, as long as the audio capture options remain the same.
 ## My game and recorded video is stuttering but my frame rate is high
