@@ -68,8 +68,9 @@ static void output_handle_geometry(void *data, struct wl_output *wl_output,
 
 static void output_handle_mode(void *data, struct wl_output *wl_output, uint32_t flags, int32_t width, int32_t height, int32_t refresh) {
     (void)wl_output;
-    (void)flags;
     (void)refresh;
+    if(!(flags & WL_OUTPUT_MODE_CURRENT))
+        return;
     gsr_wayland_output *gsr_output = data;
     gsr_output->size.x = width;
     gsr_output->size.y = height;
