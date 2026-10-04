@@ -421,11 +421,13 @@ static int pa_sound_device_read(pa_handle *p, double timeout_seconds) {
     CHECK_DEAD_GOTO(p, rerror, fail);
 
     while (p->output_index < p->output_length) {
-        if(clock_get_monotonic_seconds() - start_time >= timeout_seconds)
+        const double time_elapsed_seconds = clock_get_monotonic_seconds() - start_time;
+        if(time_elapsed_seconds >= timeout_seconds)
             return -1;
 
         if(!p->read_data) {
-            pa_mainloop_prepare(p->mainloop, 1 * 1000); // 1 ms
+            const int timeout_usec = (int)((timeout_seconds - time_elapsed_seconds) * 1000000.0) + 1;
+            pa_mainloop_prepare(p->mainloop, timeout_usec);
             pa_mainloop_poll(p->mainloop);
             pa_mainloop_dispatch(p->mainloop);
 
