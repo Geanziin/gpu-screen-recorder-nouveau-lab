@@ -70,9 +70,6 @@ uint32_t monitor_identifier_from_type_and_count(int monitor_type_index, int moni
 
 bool gl_get_gpu_info(gsr_egl *egl, gsr_gpu_info *info);
 
-bool try_card_has_valid_plane(const char *card_path);
-/* |output| should be at least 128 bytes in size */
-bool gsr_get_valid_card_path(gsr_egl *egl, char *output, bool is_monitor_capture);
 /* |render_path| should be at least 128 bytes in size */
 bool gsr_card_path_get_render_path(const char *card_path, char *render_path);
 

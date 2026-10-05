@@ -99,14 +99,39 @@ int gsr_windowing_init(gsr_windowing *self, const gsr_windowing_params *params) 
     return GSR_ERROR_OK;
 }
 
+static void monitor_found_callback(const gsr_monitor *monitor, void *userdata) {
+    (void)monitor;
+    *(bool*)userdata = true;
+}
+
+/* Used when no monitor to capture is specified, to match the gpu that would be used when capturing the first monitor */
+static bool get_first_monitor_card_path(const gsr_window *window, char *card_path) {
+    gsr_dri_cards cards;
+    gsr_dri_cards_get(&cards);
+
+    for(int i = 0; i < cards.num_cards; ++i) {
+        bool monitor_found = false;
+        for_each_active_monitor_output(window, cards.paths[i], GSR_CONNECTION_DRM, monitor_found_callback, &monitor_found);
+        if(monitor_found) {
+            snprintf(card_path, GSR_DRI_CARD_PATH_MAX_SIZE, "%s", cards.paths[i]);
+            return true;
+        }
+    }
+
+    return false;
+}
+
 /* On x11 every monitor is part of one framebuffer on the gpu that the display server runs on, so the monitor gpu is only used on wayland */
-static bool get_monitor_to_capture_card_path(const gsr_window *window, const char *monitor_to_capture, char *card_path) {
+static bool get_monitor_to_capture_card_path(const gsr_window *window, const gsr_windowing_params *params, char *card_path) {
     card_path[0] = '\0';
-    if(gsr_window_get_display_server(window) != GSR_DISPLAY_SERVER_WAYLAND || !monitor_to_capture || monitor_to_capture[0] == '\0')
+    if(gsr_window_get_display_server(window) != GSR_DISPLAY_SERVER_WAYLAND || !params->monitor_capture)
         return false;
 
-    if(!gsr_get_monitor_card_path(window, monitor_to_capture, card_path)) {
-        gsr_log(GSR_LOG_LEVEL_WARNING, "failed to find the gpu that the monitor \"%s\" is connected to, using the display server gpu instead", monitor_to_capture);
+    if(!params->monitor_to_capture || params->monitor_to_capture[0] == '\0')
+        return get_first_monitor_card_path(window, card_path);
+
+    if(!gsr_get_monitor_card_path(window, params->monitor_to_capture, card_path)) {
+        gsr_log(GSR_LOG_LEVEL_WARNING, "failed to find the gpu that the monitor \"%s\" is connected to, using the display server gpu instead", params->monitor_to_capture);
         return false;
     }
 
@@ -114,8 +139,9 @@ static bool get_monitor_to_capture_card_path(const gsr_window *window, const cha
 }
 
 int gsr_windowing_load_egl(gsr_windowing *self, const gsr_windowing_params *params) {
+    const bool monitor_to_capture_specified = params->monitor_to_capture && params->monitor_to_capture[0] != '\0';
     char monitor_card_path[GSR_DRI_CARD_PATH_MAX_SIZE];
-    const bool monitor_card_path_found = get_monitor_to_capture_card_path(self->window, params->monitor_to_capture, monitor_card_path);
+    const bool monitor_card_path_found = get_monitor_to_capture_card_path(self->window, params, monitor_card_path);
 
     if(!gsr_egl_load(&self->egl, self->window, params->monitor_capture, params->gl_debug, monitor_card_path_found ? monitor_card_path : NULL)) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "failed to load opengl");
@@ -123,17 +149,19 @@ int gsr_windowing_load_egl(gsr_windowing *self, const gsr_windowing_params *para
     }
     self->egl_loaded = true;
 
-    self->egl.card_path[0] = '\0';
-    if(monitor_card_path_found && gsr_egl_uses_card(&self->egl, monitor_card_path)) {
+    /* The monitor capture and the video encoder are gpu vendor specific and run on |card_path|, so it has to be the gpu that opengl runs on */
+    if(self->egl.dri_card_path)
+        snprintf(self->egl.card_path, sizeof(self->egl.card_path), "%s", self->egl.dri_card_path);
+    else if(monitor_card_path_found)
         snprintf(self->egl.card_path, sizeof(self->egl.card_path), "%s", monitor_card_path);
+    else
+        self->egl.card_path[0] = '\0';
+
+    if(self->egl.card_path[0] == '\0' && monitor_capture_use_drm(self->window, self->egl.gpu_info.vendor))
+        self->card_path_found = false;
+
+    if(monitor_card_path_found && monitor_to_capture_specified && gsr_egl_uses_card(&self->egl, monitor_card_path))
         gsr_log(GSR_LOG_LEVEL_INFO, "the monitor \"%s\" is connected to %s, capturing and encoding on that gpu", params->monitor_to_capture, monitor_card_path);
-    } else if(monitor_capture_use_drm(self->window, self->egl.gpu_info.vendor)) {
-        // TODO: Allow specifying another card, and in other places
-        if(!gsr_get_valid_card_path(&self->egl, self->egl.card_path, params->monitor_capture))
-            self->card_path_found = false;
-    } else {
-        gsr_get_valid_card_path(&self->egl, self->egl.card_path, false);
-    }
 
     return GSR_ERROR_OK;
 }
