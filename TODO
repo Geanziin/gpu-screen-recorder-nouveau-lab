@@ -194,8 +194,6 @@ Make it possible to save a shorter replay clip remotely. Maybe implement ipc fir
 
 Add an option to pass http headers when streaming. Some streaming services require streaming keys to be passed in a http header instead of in the url as a parameter.
 
-When adding vulkan video support add VK_VIDEO_ENCODE_TUNING_MODE_LOW_LATENCY_KHR.
-
 Implement screenshot without invoking opengl (which is slow to start on some systems).
 
 Automatically use desktop portal on wayland when hdr is enabled (or night light) by checking if kms hdr metadata exists, if hdr video codec is not used.

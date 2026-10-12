@@ -324,6 +324,7 @@ bool open_video_hardware(AVCodecContext *codec_context, bool low_power, const gs
 
     if(video_codec_is_vulkan(settings->video_codec)) {
         av_dict_set_int(&options, "async_depth", 3, 0);
+        // TODO: Set "ull" or "ll" only if low power mode is not enabled
         av_dict_set(&options, "tune", "ll", 0); // Low latency
         av_dict_set(&options, "usage", settings->is_livestream ? "stream" : "record", 0);
         av_dict_set(&options, "content", "rendered", 0); // Game or 3D content
