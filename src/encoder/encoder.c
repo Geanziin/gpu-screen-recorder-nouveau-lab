@@ -139,6 +139,10 @@ void gsr_encoder_receive_packets(gsr_encoder *self, AVCodecContext *codec_contex
             if(self->first_pts == -1)
                 self->first_pts = packet_dts_timestamp;
 
+            /* Flushing the encoder drains several packets at once, which all have to get their own timestamp.
+               |frame_size| is 0 for video, which uses the timestamp of the packet instead */
+            pts += codec_context->frame_size;
+
             av_packet->stream_index = stream_index;
             av_packet->pts = packet_pts_timestamp - self->first_pts;
             av_packet->dts = packet_dts_timestamp - self->first_pts;

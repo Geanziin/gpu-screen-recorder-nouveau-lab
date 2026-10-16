@@ -23,7 +23,7 @@ bool codec_supports_resolution(vec2i codec_max_resolution, vec2i capture_resolut
 gsr_video_codec select_appropriate_video_codec_automatically(vec2i video_size, const gsr_supported_video_codecs *supported_video_codecs);
 void force_cpu_encoding(gsr_recorder_settings *settings);
 
-gsr_audio_codec select_audio_codec_with_fallback(gsr_audio_codec audio_codec, const char *file_extension, bool uses_amix);
+gsr_audio_codec select_audio_codec_with_fallback(gsr_audio_codec audio_codec, const char *file_extension, bool uses_amix, bool audio_codec_specified);
 /* Changes the video codec to one supported by the container, if needed. This has to run before the capture is created so hdr capture (and tonemapping) matches the final video codec */
 gsr_video_codec video_codec_fallback_for_container(gsr_video_codec video_codec, const char *file_extension);
 /* Returns a |gsr_error| value. |settings| video codec and encoder are updated to the codec that was selected */

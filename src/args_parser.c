@@ -286,6 +286,7 @@ static bool args_parser_set_values(args_parser *self) {
     self->settings.tune = (gsr_tune)args_get_enum_by_key(self->args, NUM_ARGS, "-tune", GSR_TUNE_PERFORMANCE);
     self->settings.video_codec = (gsr_video_codec)args_get_enum_by_key(self->args, NUM_ARGS, "-k", GSR_VIDEO_CODEC_AUTO);
     self->settings.audio_codec = (gsr_audio_codec)args_get_enum_by_key(self->args, NUM_ARGS, "-ac", GSR_AUDIO_CODEC_OPUS);
+    self->settings.audio_codec_specified = args_get_by_key(self->args, NUM_ARGS, "-ac")->num_values > 0;
     self->settings.bitrate_mode = (gsr_bitrate_mode)args_get_enum_by_key(self->args, NUM_ARGS, "-bm", GSR_BITRATE_MODE_AUTO);
     self->settings.replay_storage = (gsr_replay_storage)args_get_enum_by_key(self->args, NUM_ARGS, "-replay-storage", GSR_REPLAY_STORAGE_RAM);
 

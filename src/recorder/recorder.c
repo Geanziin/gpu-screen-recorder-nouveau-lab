@@ -157,7 +157,7 @@ static int recorder_setup_container(gsr_recorder *self) {
     self->target_fps = 1.0 / (double)self->settings.fps;
 
     self->uses_amix = gsr_audio_input_tracks_should_use_amix(self->audio_input_tracks);
-    self->settings.audio_codec = select_audio_codec_with_fallback(self->settings.audio_codec, self->file_extension, self->uses_amix);
+    self->settings.audio_codec = select_audio_codec_with_fallback(self->settings.audio_codec, self->file_extension, self->uses_amix, self->settings.audio_codec_specified);
     if(!self->audio_only)
         self->settings.video_codec = video_codec_fallback_for_container(self->settings.video_codec, self->file_extension);
 

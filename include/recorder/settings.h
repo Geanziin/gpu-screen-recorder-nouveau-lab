@@ -28,6 +28,7 @@ typedef struct {
     const char *ffmpeg_video_opts;
     const char *ffmpeg_audio_opts;
     const char *auth;
+    bool audio_codec_specified;
     bool verbose;
     bool gl_debug;
     bool fallback_cpu_encoding;

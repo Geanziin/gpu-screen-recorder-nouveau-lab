@@ -155,65 +155,57 @@ void set_supported_video_codecs_ffmpeg(gsr_supported_video_codecs *supported_vid
     }
 }
 
-gsr_audio_codec select_audio_codec_with_fallback(gsr_audio_codec audio_codec, const char *file_extension, bool uses_amix) {
+gsr_audio_codec select_audio_codec_with_fallback(gsr_audio_codec audio_codec, const char *file_extension, bool uses_amix, bool audio_codec_specified) {
+    const gsr_audio_codec requested_audio_codec = audio_codec;
+    const char *reason = NULL;
+
     if(strcmp(file_extension, "mp3") == 0) {
-        if(audio_codec != GSR_AUDIO_CODEC_MP3)
-            gsr_log(GSR_LOG_LEVEL_WARNING, ".mp3 files only support the mp3 audio codec, changing audio codec from %s to mp3", audio_codec_get_name(audio_codec));
-        return GSR_AUDIO_CODEC_MP3;
+        audio_codec = GSR_AUDIO_CODEC_MP3;
+        reason = ".mp3 files only support the mp3 audio codec";
+    } else {
+        switch(audio_codec) {
+            case GSR_AUDIO_CODEC_AAC:
+            case GSR_AUDIO_CODEC_MP3: {
+                if(strcmp(file_extension, "webm") == 0) {
+                    audio_codec = GSR_AUDIO_CODEC_OPUS;
+                    reason = ".webm files only support the opus audio codec";
+                } else if(strcmp(file_extension, "whip") == 0) {
+                    audio_codec = GSR_AUDIO_CODEC_OPUS;
+                    reason = "whip (webrtc) only supports the opus audio codec";
+                }
+                break;
+            }
+            case GSR_AUDIO_CODEC_OPUS: {
+                if(strcmp(file_extension, "mp4") != 0 && strcmp(file_extension, "mkv") != 0 && strcmp(file_extension, "webm") != 0 && strcmp(file_extension, "ts") != 0 && strcmp(file_extension, "whip") != 0) {
+                    audio_codec = GSR_AUDIO_CODEC_AAC;
+                    reason = "the opus audio codec is only supported by .mp4, .mkv, .webm, .ts and whip outputs";
+                }
+                break;
+            }
+            case GSR_AUDIO_CODEC_FLAC: {
+                // TODO: Also check mpegts?
+                if(strcmp(file_extension, "webm") == 0) {
+                    audio_codec = GSR_AUDIO_CODEC_OPUS;
+                    reason = ".webm files only support the opus audio codec";
+                } else if(strcmp(file_extension, "whip") == 0) {
+                    audio_codec = GSR_AUDIO_CODEC_OPUS;
+                    reason = "whip (webrtc) only supports the opus audio codec";
+                } else if(strcmp(file_extension, "mp4") != 0 && strcmp(file_extension, "mkv") != 0) {
+                    audio_codec = GSR_AUDIO_CODEC_AAC;
+                    reason = "the flac audio codec is only supported by .mp4 and .mkv files";
+                } else if(uses_amix) {
+                    // TODO: remove this? is it true anymore?
+                    audio_codec = GSR_AUDIO_CODEC_OPUS;
+                    reason = "the flac audio codec is not supported when mixing audio sources";
+                }
+                break;
+            }
+        }
     }
 
-    switch(audio_codec) {
-        case GSR_AUDIO_CODEC_AAC: {
-            if(strcmp(file_extension, "webm") == 0) {
-                //audio_codec_to_use = "opus";
-                audio_codec = GSR_AUDIO_CODEC_OPUS;
-                gsr_log(GSR_LOG_LEVEL_WARNING, ".webm files only support opus audio codec, changing audio codec from aac to opus");
-            } else if(strcmp(file_extension, "whip") == 0) {
-                audio_codec = GSR_AUDIO_CODEC_OPUS;
-                gsr_log(GSR_LOG_LEVEL_WARNING, "whip (webrtc) only supports opus audio codec, changing audio codec from aac to opus");
-            }
-            break;
-        }
-        case GSR_AUDIO_CODEC_OPUS: {
-            if(strcmp(file_extension, "mp4") != 0 && strcmp(file_extension, "mkv") != 0 && strcmp(file_extension, "webm") != 0 && strcmp(file_extension, "ts") != 0 && strcmp(file_extension, "whip") != 0 && strcmp(file_extension, "ogg") != 0) {
-                //audio_codec_to_use = "aac";
-                audio_codec = GSR_AUDIO_CODEC_AAC;
-                gsr_log(GSR_LOG_LEVEL_WARNING, "opus audio codec is only supported by .mp4, .mkv, .webm, .ts and whip outputs, falling back to aac instead");
-            }
-            break;
-        }
-        case GSR_AUDIO_CODEC_FLAC: {
-            // TODO: Also check mpegts?
-            if(strcmp(file_extension, "webm") == 0) {
-                //audio_codec_to_use = "opus";
-                audio_codec = GSR_AUDIO_CODEC_OPUS;
-                gsr_log(GSR_LOG_LEVEL_WARNING, ".webm files only support opus audio codec, changing audio codec from flac to opus");
-            } else if(strcmp(file_extension, "whip") == 0) {
-                audio_codec = GSR_AUDIO_CODEC_OPUS;
-                gsr_log(GSR_LOG_LEVEL_WARNING, "whip (webrtc) only supports opus audio codec, changing audio codec from flac to opus");
-            } else if(strcmp(file_extension, "mp4") != 0 && strcmp(file_extension, "mkv") != 0) {
-                //audio_codec_to_use = "aac";
-                audio_codec = GSR_AUDIO_CODEC_AAC;
-                gsr_log(GSR_LOG_LEVEL_WARNING, "flac audio codec is only supported by .mp4 and .mkv files, falling back to aac instead");
-            } else if(uses_amix) {
-                // TODO: remove this? is it true anymore?
-                //audio_codec_to_use = "opus";
-                audio_codec = GSR_AUDIO_CODEC_OPUS;
-                gsr_log(GSR_LOG_LEVEL_WARNING, "flac audio codec is not supported when mixing audio sources, falling back to opus instead");
-            }
-            break;
-        }
-        case GSR_AUDIO_CODEC_MP3: {
-            if(strcmp(file_extension, "webm") == 0) {
-                audio_codec = GSR_AUDIO_CODEC_OPUS;
-                gsr_log(GSR_LOG_LEVEL_WARNING, ".webm files only support opus audio codec, changing audio codec from mp3 to opus");
-            } else if(strcmp(file_extension, "whip") == 0) {
-                audio_codec = GSR_AUDIO_CODEC_OPUS;
-                gsr_log(GSR_LOG_LEVEL_WARNING, "whip (webrtc) only supports opus audio codec, changing audio codec from mp3 to opus");
-            }
-            break;
-        }
-    }
+    if(audio_codec_specified && audio_codec != requested_audio_codec)
+        gsr_log(GSR_LOG_LEVEL_WARNING, "%s, changing audio codec from %s to %s", reason, audio_codec_get_name(requested_audio_codec), audio_codec_get_name(audio_codec));
+
     return audio_codec;
 }
 
