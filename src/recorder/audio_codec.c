@@ -12,6 +12,7 @@ enum AVCodecID audio_codec_get_id(gsr_audio_codec audio_codec) {
         case GSR_AUDIO_CODEC_AAC:  return AV_CODEC_ID_AAC;
         case GSR_AUDIO_CODEC_OPUS: return AV_CODEC_ID_OPUS;
         case GSR_AUDIO_CODEC_FLAC: return AV_CODEC_ID_FLAC;
+        case GSR_AUDIO_CODEC_MP3:  return AV_CODEC_ID_MP3;
     }
     assert(false);
     return AV_CODEC_ID_AAC;
@@ -74,6 +75,9 @@ enum AVSampleFormat audio_codec_get_sample_format(AVCodecContext *audio_codec_co
         case GSR_AUDIO_CODEC_FLAC: {
             return AV_SAMPLE_FMT_S32;
         }
+        case GSR_AUDIO_CODEC_MP3: {
+            return AV_SAMPLE_FMT_FLTP;
+        }
     }
     assert(false);
     return AV_SAMPLE_FMT_FLTP;
@@ -84,6 +88,7 @@ int64_t audio_codec_get_get_bitrate(gsr_audio_codec audio_codec) {
         case GSR_AUDIO_CODEC_AAC:  return 160000;
         case GSR_AUDIO_CODEC_OPUS: return 128000;
         case GSR_AUDIO_CODEC_FLAC: return 128000;
+        case GSR_AUDIO_CODEC_MP3:  return 192000;
     }
     assert(false);
     return 128000;
@@ -201,6 +206,8 @@ double audio_codec_get_desired_delay(gsr_audio_codec audio_codec, int fps) {
         case GSR_AUDIO_CODEC_FLAC:
             // TODO: Test
             return fmax(0.0, base - fps_inv);
+        case GSR_AUDIO_CODEC_MP3:
+            return fmax(0.0, (base + 0.008) * 2.0 - fps_inv);
     }
     assert(false);
     return fmax(0.0, base - fps_inv);
@@ -213,6 +220,7 @@ int audio_codec_get_frame_size(gsr_audio_codec audio_codec) {
         case GSR_AUDIO_CODEC_FLAC:
             assert(false);
             return 1024;
+        case GSR_AUDIO_CODEC_MP3: return 1152;
     }
     assert(false);
     return 1024;

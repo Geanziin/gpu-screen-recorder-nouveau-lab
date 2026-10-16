@@ -42,6 +42,7 @@ static const ArgEnum audio_codec_enums[] = {
     { .name = "opus", .value = GSR_AUDIO_CODEC_OPUS },
     { .name = "aac",  .value = GSR_AUDIO_CODEC_AAC  },
     { .name = "flac", .value = GSR_AUDIO_CODEC_FLAC },
+    { .name = "mp3",  .value = GSR_AUDIO_CODEC_MP3  },
 };
 
 static const ArgEnum video_encoder_enums[] = {
@@ -199,9 +200,9 @@ static double args_get_double_by_key(Arg *args, int num_args, const char *key, d
 static void usage_header(void) {
     const bool inside_flatpak = getenv("FLATPAK_ID") != NULL;
     const char *program_name = inside_flatpak ? "flatpak run --command=gpu-screen-recorder com.dec05eba.gpu_screen_recorder" : "gpu-screen-recorder";
-    printf("usage: %s -w <window_id|monitor|focused|portal|region|v4l2_device_path> [-c <container_format>] [-s WxH] [-region WxH+X+Y] [-f <fps>] [-a <audio_input>] "
+    printf("usage: %s [-w <window_id|monitor|focused|portal|region|v4l2_device_path>] [-c <container_format>] [-s WxH] [-region WxH+X+Y] [-f <fps>] [-a <audio_input>] "
            "[-q <quality>] [-r <replay_buffer_size_sec>] [-replay-storage ram|disk] [-restart-replay-on-save yes|no] "
-           "[-k h264|hevc|av1|vp8|vp9|hevc_hdr|av1_hdr|hevc_10bit|av1_10bit] [-ac aac|opus|flac] [-ab <bitrate>] [-fm cfr|vfr|content] "
+           "[-k h264|hevc|av1|vp8|vp9|hevc_hdr|av1_hdr|hevc_10bit|av1_10bit] [-ac aac|opus|flac|mp3] [-ab <bitrate>] [-fm cfr|vfr|content] "
            "[-bm auto|qp|vbr|cbr] [-cr limited|full] [-tune performance|quality] [-df yes|no] [-sc <script_path>] [-p <plugin_path>] "
            "[-cursor yes|no] [-keyint <value>] [-restore-portal-session yes|no] [-portal-session-token-filepath filepath] [-encoder gpu|cpu] "
            "[-fallback-cpu-encoding yes|no] [-o <output_file>] [-ro <output_directory>] [-ffmpeg-opts <options>] [-ffmpeg-video-opts <options>] [-ffmpeg-audio-opts <options>] "
@@ -251,6 +252,30 @@ static bool file_is_pipe_or_char_device(const char *filepath) {
     if(stat(filepath, &st) == -1)
         return false;
     return S_ISFIFO(st.st_mode) || S_ISCHR(st.st_mode);
+}
+
+/* Video is optional, but then there has to be audio to record */
+static bool args_parser_validate_audio_only(args_parser *self) {
+    const Arg *audio_arg = args_get_by_key(self->args, NUM_ARGS, "-a");
+    if(!audio_arg || audio_arg->num_values == 0) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "option -a is required when option -w is not used (audio only recording)");
+        usage();
+        return false;
+    }
+
+    if(self->settings.is_replaying) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "option -r (replay mode) can't be used without option -w, audio only replay is not supported");
+        usage();
+        return false;
+    }
+
+    if(self->settings.replay_recording_directory) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "option -ro can't be used without option -w, audio only replay is not supported");
+        usage();
+        return false;
+    }
+
+    return true;
 }
 
 static bool args_parser_set_values(args_parser *self) {
@@ -478,6 +503,9 @@ static bool args_parser_set_values(args_parser *self) {
     if(!self->settings.auth)
         self->settings.auth = getenv("GSR_AUTH");
 
+    if(!self->settings.capture_source && !args_parser_validate_audio_only(self))
+        return false;
+
     return true;
 }
 
@@ -540,7 +568,7 @@ args_parse_result args_parser_parse(args_parser *self, int argc, char **argv, co
     }
 
     int arg_index = 0;
-    self->args[arg_index++] = (Arg){ .key = "-w",                             .optional = false, .list = false, .type = ARG_TYPE_STRING  };
+    self->args[arg_index++] = (Arg){ .key = "-w",                             .optional = true,  .list = false, .type = ARG_TYPE_STRING  };
     self->args[arg_index++] = (Arg){ .key = "-c",                             .optional = true,  .list = false, .type = ARG_TYPE_STRING  };
     self->args[arg_index++] = (Arg){ .key = "-f",                             .optional = true,  .list = false, .type = ARG_TYPE_I64, .integer_value_min = 1, .integer_value_max = 1000 };
     self->args[arg_index++] = (Arg){ .key = "-s",                             .optional = true,  .list = false, .type = ARG_TYPE_STRING  };

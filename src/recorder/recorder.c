@@ -58,6 +58,7 @@ struct gsr_recorder {
     bool force_no_audio_offset;
     double target_fps;
     bool uses_amix;
+    bool audio_only;
     bool hdr;
     bool low_power;
     vec2i video_size;
@@ -147,12 +148,18 @@ static int recorder_setup_container(gsr_recorder *self) {
     if(self->file_extension[0] == '\0')
         snprintf(self->file_extension, sizeof(self->file_extension), "%s", self->settings.container_format ? self->settings.container_format : "");
 
+    if(!self->audio_only && strcmp(self->file_extension, "mp3") == 0) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "the mp3 container doesn't support video. Record without the -w option to record audio only");
+        return GSR_ERROR_GENERIC;
+    }
+
     self->force_no_audio_offset = self->settings.is_livestream || self->settings.is_output_piped || (strcmp(self->file_extension, "mp4") != 0 && strcmp(self->file_extension, "mkv") != 0 && strcmp(self->file_extension, "webm") != 0);
     self->target_fps = 1.0 / (double)self->settings.fps;
 
     self->uses_amix = gsr_audio_input_tracks_should_use_amix(self->audio_input_tracks);
     self->settings.audio_codec = select_audio_codec_with_fallback(self->settings.audio_codec, self->file_extension, self->uses_amix);
-    self->settings.video_codec = video_codec_fallback_for_container(self->settings.video_codec, self->file_extension);
+    if(!self->audio_only)
+        self->settings.video_codec = video_codec_fallback_for_container(self->settings.video_codec, self->file_extension);
 
     // The whip muxer is network only so local recordings created while streaming with whip (-ro and replay) are saved as mkv instead,
     // see gsr_recording_output_start
@@ -164,6 +171,9 @@ static int recorder_setup_container(gsr_recorder *self) {
 
 static int recorder_setup_video_sources(gsr_recorder *self) {
     self->video_size = (vec2i){0, 0};
+    if(self->audio_only)
+        return GSR_ERROR_OK;
+
     const int video_sources_result = gsr_video_sources_create(&self->video_sources_data, &self->settings, self->egl, self->capture_deps, false, self->capture_sources, &self->video_size);
     if(video_sources_result != GSR_ERROR_OK) {
         return video_sources_result;
@@ -189,7 +199,26 @@ static int recorder_setup_video_sources(gsr_recorder *self) {
     return GSR_ERROR_OK;
 }
 
+static int recorder_setup_encoder(gsr_recorder *self) {
+    const size_t estimated_replay_buffer_packets = calculate_estimated_replay_buffer_packets(self->settings.replay_buffer_size_secs, self->settings.fps, self->settings.audio_codec, self->audio_input_tracks);
+    self->recording_clock = gsr_recording_clock_create();
+    if(!self->recording_clock) {
+        return GSR_ERROR_GENERIC;
+    }
+
+    self->encoder_initialized = true;
+    if(!gsr_encoder_init(&self->encoder, self->settings.replay_storage, estimated_replay_buffer_packets, self->settings.replay_buffer_size_secs, self->settings.filename)) {
+        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create encoder");
+        return GSR_ERROR_GENERIC;
+    }
+
+    return GSR_ERROR_OK;
+}
+
 static int recorder_setup_video_encoder(gsr_recorder *self) {
+    if(self->audio_only)
+        return GSR_ERROR_OK;
+
     if(self->settings.video_encoder == GSR_VIDEO_ENCODER_HW_CPU && self->settings.video_codec != (gsr_video_codec)GSR_VIDEO_CODEC_AUTO && self->settings.video_codec != GSR_VIDEO_CODEC_H264) {
         gsr_log(GSR_LOG_LEVEL_ERROR, "-encoder cpu was specified but a codec other than h264 was specified. -encoder cpu supports only h264 at the moment");
         return GSR_ERROR_GENERIC;
@@ -220,18 +249,6 @@ static int recorder_setup_video_encoder(gsr_recorder *self) {
     self->video_frame->color_trc = self->video_codec_context->color_trc;
     self->video_frame->colorspace = self->video_codec_context->colorspace;
     self->video_frame->chroma_location = self->video_codec_context->chroma_sample_location;
-
-    const size_t estimated_replay_buffer_packets = calculate_estimated_replay_buffer_packets(self->settings.replay_buffer_size_secs, self->settings.fps, self->settings.audio_codec, self->audio_input_tracks);
-    self->recording_clock = gsr_recording_clock_create();
-    if(!self->recording_clock) {
-        return GSR_ERROR_GENERIC;
-    }
-
-    self->encoder_initialized = true;
-    if(!gsr_encoder_init(&self->encoder, self->settings.replay_storage, estimated_replay_buffer_packets, self->settings.replay_buffer_size_secs, self->settings.filename)) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "failed to create encoder");
-        return GSR_ERROR_GENERIC;
-    }
 
     self->video_encoder = create_video_encoder(self->egl, &self->settings);
     if(!self->video_encoder) {
@@ -366,7 +383,7 @@ static int recorder_setup_audio(gsr_recorder *self) {
     if(gsr_audio_capture_init(&self->audio_capture, &self->encoder, self->recording_clock, &self->running) != GSR_ERROR_OK)
         return GSR_ERROR_GENERIC;
 
-    int audio_stream_index = GSR_VIDEO_STREAM_INDEX + 1;
+    int audio_stream_index = self->audio_only ? 0 : GSR_VIDEO_STREAM_INDEX + 1;
     for(size_t i = 0; i < self->audio_input_tracks->num_items; ++i) {
         gsr_audio_track audio_track;
         const int audio_track_result = recorder_setup_audio_track(self, &self->audio_input_tracks->items[i], audio_stream_index, &audio_track);
@@ -424,6 +441,7 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
     self->capture_deps = params->capture_deps;
     self->capture_sources = params->capture_sources;
     self->audio_input_tracks = params->audio_input_tracks;
+    self->audio_only = params->capture_sources->num_items == 0;
     atomic_init(&self->running, 1);
     atomic_init(&self->toggle_pause, 0);
     atomic_init(&self->set_paused_request, GSR_SET_PAUSED_REQUEST_NONE);
@@ -445,6 +463,7 @@ gsr_recorder* gsr_recorder_create(const gsr_recorder_params *params, const gsr_r
     } setup_phases[] = {
         { recorder_setup_container },
         { recorder_setup_video_sources },
+        { recorder_setup_encoder },
         { recorder_setup_video_encoder },
         { recorder_setup_audio },
         { recorder_open_output },
@@ -775,7 +794,22 @@ static void recorder_poll_replay_save(gsr_recorder *self) {
     }
 }
 
+static void recorder_tick_video(gsr_recorder *self) {
+    if(self->audio_only)
+        return;
+
+    recorder_process_events(self);
+    const bool damaged = recorder_tick_video_sources(self);
+    recorder_update_fps_counters(self);
+    recorder_capture_and_encode_frame(self, damaged);
+}
+
 static void recorder_sleep_until_next_frame(gsr_recorder *self) {
+    if(self->audio_only) {
+        av_usleep(20.0 * 1000.0); // 20 milliseconds
+        return;
+    }
+
     const double time_at_frame_end = gsr_recording_clock_get_time(self->recording_clock);
     const double time_elapsed_total = time_at_frame_end - self->record_start_time;
     const int64_t frames_elapsed = floor(time_elapsed_total / self->target_fps);
@@ -856,10 +890,7 @@ int gsr_recorder_run(gsr_recorder *self) {
     }
 
     while(atomic_load(&self->running)) {
-        recorder_process_events(self);
-        const bool damaged = recorder_tick_video_sources(self);
-        recorder_update_fps_counters(self);
-        recorder_capture_and_encode_frame(self, damaged);
+        recorder_tick_video(self);
         recorder_apply_pause_toggle(self);
         recorder_apply_replay_recording_toggle(self);
         recorder_poll_replay_save(self);

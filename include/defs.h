@@ -77,6 +77,7 @@ typedef enum {
     GSR_AUDIO_CODEC_AAC,
     GSR_AUDIO_CODEC_OPUS,
     GSR_AUDIO_CODEC_FLAC,
+    GSR_AUDIO_CODEC_MP3,
 } gsr_audio_codec;
 
 typedef enum {

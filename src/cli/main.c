@@ -514,6 +514,7 @@ static int run(args_parser *arg_parser) {
     gsr_windowing windowing;
     gsr_capture_deps capture_deps;
     gsr_ipc ipc;
+    memset(&capture_sources, 0, sizeof(capture_sources));
     memset(&audio_input_tracks, 0, sizeof(audio_input_tracks));
     memset(&app_audio_names, 0, sizeof(app_audio_names));
     memset(&windowing, 0, sizeof(windowing));
@@ -523,23 +524,26 @@ static int run(args_parser *arg_parser) {
     const Arg *ipc_arg = args_parser_get_arg(arg_parser, "-ipc");
     assert(ipc_arg);
 
-    const int parse_capture_sources_result = gsr_capture_sources_parse(&capture_sources, arg_parser->settings.capture_source, arg_parser->settings.region_position, arg_parser->settings.region_size);
-    if(parse_capture_sources_result != GSR_ERROR_OK) {
-        exit_code = gsr_error_to_exit_code(parse_capture_sources_result);
-        goto done;
-    }
+    const bool record_video = arg_parser->settings.capture_source != NULL;
+    if(record_video) {
+        const int parse_capture_sources_result = gsr_capture_sources_parse(&capture_sources, arg_parser->settings.capture_source, arg_parser->settings.region_position, arg_parser->settings.region_size);
+        if(parse_capture_sources_result != GSR_ERROR_OK) {
+            exit_code = gsr_error_to_exit_code(parse_capture_sources_result);
+            goto done;
+        }
 
-    if(capture_sources.num_items == 0) {
-        gsr_log(GSR_LOG_LEVEL_ERROR, "option -w can't be empty. You need to capture video from at least one source");
-        args_parser_print_usage();
-        exit_code = 1;
-        goto done;
-    }
+        if(capture_sources.num_items == 0) {
+            gsr_log(GSR_LOG_LEVEL_ERROR, "option -w can't be empty. You need to capture video from at least one source");
+            args_parser_print_usage();
+            exit_code = 1;
+            goto done;
+        }
 
-    const int validate_args_result = validate_args_with_capture_sources(arg_parser, &capture_sources);
-    if(validate_args_result != GSR_ERROR_OK) {
-        exit_code = gsr_error_to_exit_code(validate_args_result);
-        goto done;
+        const int validate_args_result = validate_args_with_capture_sources(arg_parser, &capture_sources);
+        if(validate_args_result != GSR_ERROR_OK) {
+            exit_code = gsr_error_to_exit_code(validate_args_result);
+            goto done;
+        }
     }
 
     if(ipc_arg->num_values > 0 && gsr_ipc_init(&ipc, ipc_arg->values[0]) != GSR_ERROR_OK) {
@@ -573,6 +577,11 @@ static int run(args_parser *arg_parser) {
     const int validate_app_audio_result = gsr_audio_input_tracks_validate_app_audio(&audio_input_tracks, &app_audio_names);
     if(validate_app_audio_result != GSR_ERROR_OK) {
         exit_code = gsr_error_to_exit_code(validate_app_audio_result);
+        goto done;
+    }
+
+    if(!record_video) {
+        exit_code = gsr_error_to_exit_code(record(arg_parser, &windowing, &capture_deps, &capture_sources, &audio_input_tracks, &ipc));
         goto done;
     }
 

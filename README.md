@@ -21,6 +21,7 @@ Supported video codecs:
 Supported audio codecs:
 * Opus (default)
 * AAC
+* MP3
 
 Supported image formats:
 * JPEG
@@ -133,6 +134,10 @@ in this case you could record a window or a monitor with the name `DP-1`.\
 To list available audio devices that you can use you can run `gpu-screen-recorder --list-audio-devices` and the name to use is on the left size of the `|`.\
 To list available audio application names that you can use you can run `gpu-screen-recorder --list-application-audio`.\
 You can run `gpu-screen-recorder --info` to list more information about the system, such as the device that is used for capture and video encoding and supported codecs. These commands can be parsed by scripts/programs.
+## Audio only recording
+The `-w` option is optional. When it's not used then only audio is recorded and `-a` is required, for example: `gpu-screen-recorder -a default_output -o audio.mp3`.\
+`.mp3` files always use the mp3 audio codec, which requires FFmpeg to be built with libmp3lame. The audio codec can also be set explicitly with `-ac` for other file formats, for example `-ac aac`.\
+Audio only recording doesn't support replay mode (`-r` and `-ro`).
 ## Replay mode
 Run `gpu-screen-recorder` with the `-c mp4` and `-r` option, for example: `gpu-screen-recorder -w screen -f 60 -r 30 -c mp4 -o ~/Videos`. Note that in this case, `-o` should point to a directory.\
 If `-df yes` is set, replays are save in folders based on the date.

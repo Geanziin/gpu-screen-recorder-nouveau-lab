@@ -114,6 +114,7 @@ const char* audio_codec_get_name(gsr_audio_codec audio_codec) {
         case GSR_AUDIO_CODEC_AAC:  return "aac";
         case GSR_AUDIO_CODEC_OPUS: return "opus";
         case GSR_AUDIO_CODEC_FLAC: return "flac";
+        case GSR_AUDIO_CODEC_MP3:  return "mp3";
     }
     assert(false);
     return "";

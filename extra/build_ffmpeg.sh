@@ -69,6 +69,22 @@ case $library in
             make install
         }
         ;;
+    lame)
+        set -- --prefix="$prefix" \
+            --disable-shared \
+            --enable-static \
+            --with-pic \
+            --disable-decoder \
+            --disable-frontend \
+            --disable-analyzer-hooks \
+            CFLAGS="-O3 -flto -fPIC" \
+            LDFLAGS="-flto"
+        build() {
+            "$source_dir/configure" "$@"
+            make -j"$jobs"
+            make install
+        }
+        ;;
     mbedtls)
         require_program cmake
         require_program python3
@@ -114,8 +130,8 @@ case $library in
     ffmpeg)
         require_program nasm
 
-        encoders=aac,flac,libx264,libopus,h264_nvenc,hevc_nvenc,av1_nvenc,h264_vaapi,hevc_vaapi,vp8_vaapi,vp9_vaapi,h264_vulkan,hevc_vulkan
-        muxers=mp4,mov,matroska,webm,flv,mpegts,hls,whip
+        encoders=aac,flac,libx264,libopus,libmp3lame,h264_nvenc,hevc_nvenc,av1_nvenc,h264_vaapi,hevc_vaapi,vp8_vaapi,vp9_vaapi,h264_vulkan,hevc_vulkan
+        muxers=mp4,mov,matroska,webm,flv,mpegts,hls,whip,mp3
         protocols=file,pipe,tcp,udp,http,https,tls,rtmp,rtmps,libsrt
         filters=abuffer,abuffersink,amix,aresample,aformat,anull
 
@@ -157,6 +173,7 @@ case $library in
             --enable-bsf=extract_extradata \
             --enable-libx264 \
             --enable-libopus \
+            --enable-libmp3lame \
             --enable-libsrt \
             --enable-mbedtls \
             --enable-ffnvcodec \

@@ -54,7 +54,14 @@ Minimal performance impact compared to traditional screen recorders
 .SS Capture Options
 .TP
 .BI \-w " window_id|monitor|focused|portal|region|v4l2_device_path"
-Specify what to record.
+Specify what to record. This option is optional. When it's not used then
+.B \-a
+is required and only audio is recorded, for example:
+.B "gpu-screen-recorder -a default_output -o audio.mp3"
+.br
+Audio only recording doesn't support replay mode
+.RB ( \-r " and " \-ro ).
+
 Formats:
 .RS
 .IP \(bu 3
@@ -214,9 +221,13 @@ Format is width x height + X offset + Y offset. Set width and height to 0 to cap
 It is compatible with tools such as slop (X11) and slurp (Wayland).
 .TP
 .BI \-c " container_format"
-Container format (mp4, mkv, flv, webm). Defaults to extension from
+Container format (mp4, mkv, flv, webm, mp3). Defaults to extension from
 .B \-o
 filename.
+.br
+The mp3 container holds audio only and can only be used when recording without the
+.B \-w
+option.
 
 With FFmpeg 8.1 or later .mp4 and .mov files are recorded in hybrid fragmented mode, which means that the video file is still playable
 if the system crashes or if GPU Screen Recorder is killed while recording, just like .mkv files.
@@ -277,11 +288,13 @@ Run
 .B \-\-list\-application\-audio
 to list available applications for audio capture.
 .TP
-.BI \-ac " aac|opus|flac"
+.BI \-ac " aac|opus|flac|mp3"
 Audio codec (default: opus for mp4/mkv, aac otherwise). FLAC temporarily disabled.
+.br
+\&.mp3 files always use the mp3 audio codec. The mp3 audio codec requires FFmpeg to be built with libmp3lame.
 .TP
 .BI \-ab " bitrate"
-Audio bitrate in kbps (default: 128 for opus/flac, 160 for aac). 0 = automatic.
+Audio bitrate in kbps (default: 128 for opus/flac, 160 for aac, 192 for mp3). 0 = automatic.
 .SS Video Quality Options
 .TP
 .BI \-k " codec"
@@ -629,6 +642,13 @@ gpu-screen-recorder -w screen -f 60 -a "default_output|default_input" -o video.m
 .nf
 .RS
 gpu-screen-recorder -w $(xdotool selectwindow) -f 60 -o video.mp4
+.RE
+.fi
+.PP
+.B Record desktop audio only, without video:
+.nf
+.RS
+gpu-screen-recorder -a default_output -o audio.mp3
 .RE
 .fi
 .PP

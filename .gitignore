@@ -30,6 +30,8 @@ gsr-kms-server
 *.jpg
 *.jpeg
 *.png
+*.mp3
+*.ogg
 
 subprojects/*
 !subprojects/*.wrap
