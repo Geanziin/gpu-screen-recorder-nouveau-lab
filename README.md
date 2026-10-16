@@ -294,6 +294,9 @@ On KDE Plasma the night light tint is automatically removed from the recording (
 On other compositors you can record with desktop portal option (`-w portal`) instead which ignores night light, if you are ok with recording without HDR.
 ## Kdenlive says that the video is not usable for editing because it has variable frame rate
 To fix this you can either just press cancel, which will allow you to continue or record the video in .mkv format or constant frame rate (-fm cfr). I recommend recording the video in .mkv format and variable frame rate (-fm vfr).
+## Is the video lost if my system crashes while recording?
+No. `.mp4` and `.mov` files are recorded in hybrid fragmented mode, which means that the video file is still playable if the system crashes or if GPU Screen Recorder is killed while recording, just like `.mkv` files. The file is converted into a regular non-fragmented file when the recording is stopped, so it stays compatible with software that doesn't support fragmented mp4 files.\
+This requires FFmpeg 8.1 or later. GPU Screen Recorder shows a warning when recording to `.mp4` or `.mov` with an older FFmpeg version, in which case the video file is unplayable if the recording is not stopped properly.
 ## GPU Screen Recorder starts lagging after 30-40 minutes when launching GPU Screen Recorder from steam command launcher
 This is a [steam issue](https://github.com/ValveSoftware/steam-for-linux/issues/11446). Prepend the gpu-screen-recorder command with `LD_PREFIX=""`, for example `LD_PREFIX="" gpu-screen-recorder -w screen -o video.mp4`.
 ## How do I apply audio effects, such as noise suppression?

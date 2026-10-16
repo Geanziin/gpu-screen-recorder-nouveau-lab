@@ -443,3 +443,6 @@ Add option to do replay with max ram usage (of the replay data) instead of repla
 Vulkan video encoding + replay on nvidia seems to freeze on shutdown? (with killall -SIGINT gpu-screen-recorder).
 
 Fix build on ffmpeg 4.4 (used by ubuntu 22.04).
+
+Add IPC to change the monitor that is being recorded (or add/remove capture targets). This is needed to make recording in the ui change which monitor it records when "focused monitor" option is used.
+    Unfortunately it cant work that nicely because the other monitor might be on another gpu. This also applies to when capturing multiple monitors at the same time (-w "DP1|DP2").

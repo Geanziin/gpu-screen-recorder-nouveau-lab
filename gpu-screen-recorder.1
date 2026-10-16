@@ -217,6 +217,15 @@ It is compatible with tools such as slop (X11) and slurp (Wayland).
 Container format (mp4, mkv, flv, webm). Defaults to extension from
 .B \-o
 filename.
+
+With FFmpeg 8.1 or later .mp4 and .mov files are recorded in hybrid fragmented mode, which means that the video file is still playable
+if the system crashes or if GPU Screen Recorder is killed while recording, just like .mkv files.
+.br
+The file is converted into a regular non-fragmented file when the recording is stopped, so it stays compatible with software that
+doesn't support fragmented mp4 files.
+.br
+GPU Screen Recorder shows a warning when recording to .mp4 or .mov with an older FFmpeg version, in which case the video file is
+unplayable if the recording is not stopped properly.
 .TP
 .BI \-s " WxH"
 Output resolution limit (e.g., 1920x1080). The captured content is scaled to fit within this
@@ -715,6 +724,8 @@ Portal session token storage (default location).
 Some video editors don't support videos in variable frame rate mode.
 
 Change video container to .mkv or capture in constant frame rate mode instead to workaround this issue
+.IP \(bu 3
+\&.mp4, .mov and .mkv files are still playable if the system crashes while recording (FFmpeg 8.1 or later is required for .mp4 and .mov)
 .IP \(bu 3
 Variable frame rate may cause issues in some video players (use MPV)
 .IP \(bu 3
