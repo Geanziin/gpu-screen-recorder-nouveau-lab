@@ -2,6 +2,7 @@
 #include "../include/log.h"
 
 #include <stdio.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -14,8 +15,35 @@
 
 #define GSR_UI_UNIX_SOCKET_DOMAIN_FD 3
 
-static const char *bridge_host_path =
-    "/var/lib/flatpak/app/com.dec05eba.gpu_screen_recorder/current/active/files/bin/gsr-wayland-bridge";
+// Returns the length of the app path, or 0 on failure
+static size_t get_flatpak_app_path(char *path, size_t max_path) {
+    if(max_path == 0)
+        return 0;
+
+    path[0] = '\0';
+    FILE *f = fopen("/.flatpak-info", "rb");
+    if(!f)
+        return 0;
+
+    char line[4096];
+
+    while(fgets(line, sizeof(line), f)) {
+        size_t line_len = strlen(line);
+        if(line_len > 0 && line[line_len - 1] == '\n') {
+            line[line_len - 1] = '\0';
+            line_len -= 1;
+        }
+
+        if(line_len >= 9 && memcmp(line, "app-path=", 9) == 0) {
+            line_len -= 9;
+            snprintf(path, max_path, "%.*s", (int)line_len, line + 9);
+            break;
+        }
+    }
+
+    fclose(f);
+    return strlen(path);
+}
 
 static int recv_fd(int sock) {
     char dummy = 0;
@@ -43,7 +71,7 @@ static int recv_fd(int sock) {
     return -1;
 }
 
-static struct wl_display* connect_via_bridge() {
+static struct wl_display* connect_via_bridge(const char *bridge_host_path) {
     const char *wayland_display = getenv("WAYLAND_DISPLAY");
 
     int sv[2];
@@ -99,12 +127,21 @@ static struct wl_display* connect_via_bridge() {
 }
 
 struct wl_display* wayland_connect_to_host() {
-    const int inside_flatpak = getenv("FLATPAK_ID") != NULL;
-    if(inside_flatpak) {
-        struct wl_display *dpy = connect_via_bridge();
+    char gsr_wayland_bridge_path[PATH_MAX];
+    const size_t path_len = get_flatpak_app_path(gsr_wayland_bridge_path, sizeof(gsr_wayland_bridge_path));
+    const char *gsr_wayland_bridge_suffix = "/bin/gsr-wayland-bridge";
+    const size_t suffix_len = strlen(gsr_wayland_bridge_suffix);
+
+    if(path_len > 0 && path_len + suffix_len + 1 <= sizeof(gsr_wayland_bridge_path)) {
+        memcpy(gsr_wayland_bridge_path + path_len, gsr_wayland_bridge_suffix, suffix_len);
+        gsr_wayland_bridge_path[path_len + suffix_len] = '\0';
+
+        struct wl_display *dpy = connect_via_bridge(gsr_wayland_bridge_path);
         if(dpy)
             return dpy;
+
         gsr_log(GSR_LOG_LEVEL_WARNING, "WaylandHostBridge: falling back to sandboxed wl_display_connect");
     }
+
     return wl_display_connect(NULL);
 }
