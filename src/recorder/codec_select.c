@@ -45,10 +45,17 @@ gsr_video_encoder* create_video_encoder(gsr_egl *egl, const gsr_recorder_setting
             break;
         }
         case GSR_GPU_VENDOR_NVIDIA: {
-            gsr_video_encoder_nvenc_params params;
-            params.egl = egl;
-            params.color_depth = color_depth;
-            video_encoder = gsr_video_encoder_nvenc_create(&params);
+            if(egl->gpu_info.is_nouveau) {
+                gsr_video_encoder_vaapi_params params;
+                params.egl = egl;
+                params.color_depth = color_depth;
+                video_encoder = gsr_video_encoder_vaapi_create(&params);
+            } else {
+                gsr_video_encoder_nvenc_params params;
+                params.egl = egl;
+                params.color_depth = color_depth;
+                video_encoder = gsr_video_encoder_nvenc_create(&params);
+            }
             break;
         }
     }
@@ -75,28 +82,32 @@ bool get_supported_video_codecs(gsr_egl *egl, gsr_video_codec video_codec, bool 
         case GSR_GPU_VENDOR_APPLE:
             return gsr_get_supported_video_codecs_vaapi(video_codecs, egl->card_path, cleanup);
         case GSR_GPU_VENDOR_NVIDIA:
-            return gsr_get_supported_video_codecs_nvenc(video_codecs, egl->card_path, cleanup);
+            if(egl->gpu_info.is_nouveau)
+                return gsr_get_supported_video_codecs_vaapi(video_codecs, egl->card_path, cleanup);
+            else
+                return gsr_get_supported_video_codecs_nvenc(video_codecs, egl->card_path, cleanup);
     }
 
     return false;
 }
 
-static const AVCodec* get_ffmpeg_video_codec(gsr_video_codec video_codec, gsr_gpu_vendor vendor) {
+static const AVCodec* get_ffmpeg_video_codec(gsr_video_codec video_codec, gsr_gpu_vendor vendor, bool is_nouveau) {
+    const bool use_nvenc = (vendor == GSR_GPU_VENDOR_NVIDIA && !is_nouveau);
     switch(video_codec) {
         case GSR_VIDEO_CODEC_H264:
-            return avcodec_find_encoder_by_name(vendor == GSR_GPU_VENDOR_NVIDIA ? "h264_nvenc" : "h264_vaapi");
+            return avcodec_find_encoder_by_name(use_nvenc ? "h264_nvenc" : "h264_vaapi");
         case GSR_VIDEO_CODEC_HEVC:
         case GSR_VIDEO_CODEC_HEVC_HDR:
         case GSR_VIDEO_CODEC_HEVC_10BIT:
-            return avcodec_find_encoder_by_name(vendor == GSR_GPU_VENDOR_NVIDIA ? "hevc_nvenc" : "hevc_vaapi");
+            return avcodec_find_encoder_by_name(use_nvenc ? "hevc_nvenc" : "hevc_vaapi");
         case GSR_VIDEO_CODEC_AV1:
         case GSR_VIDEO_CODEC_AV1_HDR:
         case GSR_VIDEO_CODEC_AV1_10BIT:
-            return avcodec_find_encoder_by_name(vendor == GSR_GPU_VENDOR_NVIDIA ? "av1_nvenc" : "av1_vaapi");
+            return avcodec_find_encoder_by_name(use_nvenc ? "av1_nvenc" : "av1_vaapi");
         case GSR_VIDEO_CODEC_VP8:
-            return avcodec_find_encoder_by_name(vendor == GSR_GPU_VENDOR_NVIDIA ? "vp8_nvenc" : "vp8_vaapi");
+            return avcodec_find_encoder_by_name(use_nvenc ? "vp8_nvenc" : "vp8_vaapi");
         case GSR_VIDEO_CODEC_VP9:
-            return avcodec_find_encoder_by_name(vendor == GSR_GPU_VENDOR_NVIDIA ? "vp9_nvenc" : "vp9_vaapi");
+            return avcodec_find_encoder_by_name(use_nvenc ? "vp9_nvenc" : "vp9_vaapi");
         case GSR_VIDEO_CODEC_H264_VULKAN:
             return avcodec_find_encoder_by_name("h264_vulkan");
         case GSR_VIDEO_CODEC_HEVC_VULKAN:
@@ -111,43 +122,43 @@ static const AVCodec* get_ffmpeg_video_codec(gsr_video_codec video_codec, gsr_gp
     return NULL;
 }
 
-void set_supported_video_codecs_ffmpeg(gsr_supported_video_codecs *supported_video_codecs, gsr_supported_video_codecs *supported_video_codecs_vulkan, gsr_gpu_vendor vendor) {
-    if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_H264, vendor)) {
+void set_supported_video_codecs_ffmpeg(gsr_supported_video_codecs *supported_video_codecs, gsr_supported_video_codecs *supported_video_codecs_vulkan, gsr_gpu_vendor vendor, bool is_nouveau) {
+    if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_H264, vendor, is_nouveau)) {
         supported_video_codecs->h264.supported = false;
     }
 
-    if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_HEVC, vendor)) {
+    if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_HEVC, vendor, is_nouveau)) {
         supported_video_codecs->hevc.supported = false;
         supported_video_codecs->hevc_hdr.supported = false;
         supported_video_codecs->hevc_10bit.supported = false;
     }
 
-    if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_AV1, vendor)) {
+    if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_AV1, vendor, is_nouveau)) {
         supported_video_codecs->av1.supported = false;
         supported_video_codecs->av1_hdr.supported = false;
         supported_video_codecs->av1_10bit.supported = false;
     }
 
-    if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_VP8, vendor)) {
+    if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_VP8, vendor, is_nouveau)) {
         supported_video_codecs->vp8.supported = false;
     }
 
-    if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_VP9, vendor)) {
+    if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_VP9, vendor, is_nouveau)) {
         supported_video_codecs->vp9.supported = false;
     }
 
     if(supported_video_codecs_vulkan) {
-        if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_H264_VULKAN, vendor)) {
+        if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_H264_VULKAN, vendor, is_nouveau)) {
             supported_video_codecs_vulkan->h264.supported = false;
         }
 
-        if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_HEVC_VULKAN, vendor)) {
+        if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_HEVC_VULKAN, vendor, is_nouveau)) {
             supported_video_codecs_vulkan->hevc.supported = false;
             supported_video_codecs_vulkan->hevc_hdr.supported = false;
             supported_video_codecs_vulkan->hevc_10bit.supported = false;
         }
 
-        if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_AV1_VULKAN, vendor)) {
+        if(!get_ffmpeg_video_codec(GSR_VIDEO_CODEC_AV1_VULKAN, vendor, is_nouveau)) {
             supported_video_codecs_vulkan->av1.supported = false;
             supported_video_codecs_vulkan->av1_hdr.supported = false;
             supported_video_codecs_vulkan->av1_10bit.supported = false;
@@ -258,53 +269,53 @@ static const AVCodec* get_av_codec_if_supported(gsr_video_codec video_codec, gsr
             if(use_software_video_encoder)
                 return avcodec_find_encoder_by_name("libx264");
             else if(supported_video_codecs->h264.supported)
-                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor);
+                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor, egl->gpu_info.is_nouveau);
             break;
         }
         case GSR_VIDEO_CODEC_HEVC:
         case GSR_VIDEO_CODEC_HEVC_VULKAN: {
             if(supported_video_codecs->hevc.supported)
-                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor);
+                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor, egl->gpu_info.is_nouveau);
             break;
         }
         case GSR_VIDEO_CODEC_HEVC_HDR:
         case GSR_VIDEO_CODEC_HEVC_HDR_VULKAN: {
             if(supported_video_codecs->hevc_hdr.supported)
-                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor);
+                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor, egl->gpu_info.is_nouveau);
             break;
         }
         case GSR_VIDEO_CODEC_HEVC_10BIT:
          case GSR_VIDEO_CODEC_HEVC_10BIT_VULKAN: {
             if(supported_video_codecs->hevc_10bit.supported)
-                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor);
+                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor, egl->gpu_info.is_nouveau);
             break;
         }
         case GSR_VIDEO_CODEC_AV1:
         case GSR_VIDEO_CODEC_AV1_VULKAN: {
             if(supported_video_codecs->av1.supported)
-                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor);
+                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor, egl->gpu_info.is_nouveau);
             break;
         }
         case GSR_VIDEO_CODEC_AV1_HDR:
         case GSR_VIDEO_CODEC_AV1_HDR_VULKAN: {
             if(supported_video_codecs->av1_hdr.supported)
-                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor);
+                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor, egl->gpu_info.is_nouveau);
             break;
         }
         case GSR_VIDEO_CODEC_AV1_10BIT:
         case GSR_VIDEO_CODEC_AV1_10BIT_VULKAN: {
             if(supported_video_codecs->av1_10bit.supported)
-                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor);
+                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor, egl->gpu_info.is_nouveau);
             break;
         }
         case GSR_VIDEO_CODEC_VP8: {
             if(supported_video_codecs->vp8.supported)
-                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor);
+                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor, egl->gpu_info.is_nouveau);
             break;
         }
         case GSR_VIDEO_CODEC_VP9: {
             if(supported_video_codecs->vp9.supported)
-                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor);
+                return get_ffmpeg_video_codec(video_codec, egl->gpu_info.vendor, egl->gpu_info.is_nouveau);
             break;
         }
     }
@@ -502,7 +513,7 @@ int select_video_codec_with_fallback(vec2i video_size, gsr_recorder_settings *se
     get_supported_video_codecs(egl, settings->video_codec, settings->video_encoder == GSR_VIDEO_ENCODER_HW_CPU, true, &supported_video_codecs_non_vulkan);
 
     gsr_supported_video_codecs supported_video_codecs_vulkan = supported_video_codecs_non_vulkan;
-    set_supported_video_codecs_ffmpeg(&supported_video_codecs_non_vulkan, &supported_video_codecs_vulkan, egl->gpu_info.vendor);
+    set_supported_video_codecs_ffmpeg(&supported_video_codecs_non_vulkan, &supported_video_codecs_vulkan, egl->gpu_info.vendor, egl->gpu_info.is_nouveau);
 
     gsr_supported_video_codecs *supported_video_codecs = video_codec_is_vulkan(settings->video_codec)
         ? &supported_video_codecs_vulkan

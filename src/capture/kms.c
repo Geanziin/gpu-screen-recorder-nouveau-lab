@@ -126,7 +126,7 @@ static void gsr_capture_kms_create_input_texture_ids(gsr_capture_kms *self) {
     self->params.egl->glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     self->params.egl->glBindTexture(GL_TEXTURE_EXTERNAL_OES, 0);
 
-    const bool cursor_texture_id_is_external = self->params.egl->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA;
+    const bool cursor_texture_id_is_external = self->params.egl->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA && !self->params.egl->gpu_info.is_nouveau;
     const int cursor_texture_id_target = cursor_texture_id_is_external ? GL_TEXTURE_EXTERNAL_OES : GL_TEXTURE_2D;
 
     self->params.egl->glGenTextures(1, &self->cursor_texture_id);
@@ -686,7 +686,7 @@ static void render_drm_cursor(gsr_capture_kms *self, gsr_color_conversion *color
         self->capture_size.y == 0 ? 0 : (double)output_size.y / (double)self->capture_size.y
     };
 
-    const bool cursor_texture_id_is_external = self->params.egl->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA;
+    const bool cursor_texture_id_is_external = self->params.egl->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA && !self->params.egl->gpu_info.is_nouveau;
     const vec2i cursor_size = {cursor_drm_fd->width, cursor_drm_fd->height};
 
     const gsr_monitor_rotation cursor_plane_rotation = kms_rotation_to_gsr_monitor_rotation(cursor_drm_fd->rotation);

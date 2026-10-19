@@ -9,7 +9,7 @@
 #include <libavcodec/avcodec.h>
 
 int video_quality_to_h264_equivalent_qp(gsr_video_quality video_quality);
-enum AVPixelFormat get_pixel_format(gsr_video_codec video_codec, gsr_gpu_vendor vendor, bool use_software_video_encoder);
+enum AVPixelFormat get_pixel_format(gsr_video_codec video_codec, gsr_gpu_vendor vendor, bool is_nouveau, bool use_software_video_encoder);
 
 AVCodecContext* create_video_codec_context(enum AVPixelFormat pix_fmt, const AVCodec *codec, const gsr_egl *egl, const gsr_recorder_settings *settings, int width, int height);
 bool open_video_software(AVCodecContext *codec_context, const gsr_recorder_settings *settings);

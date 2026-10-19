@@ -15,7 +15,7 @@ typedef struct gsr_video_encoder gsr_video_encoder;
 gsr_video_encoder* create_video_encoder(gsr_egl *egl, const gsr_recorder_settings *settings);
 
 bool get_supported_video_codecs(gsr_egl *egl, gsr_video_codec video_codec, bool use_software_video_encoder, bool cleanup, gsr_supported_video_codecs *video_codecs);
-void set_supported_video_codecs_ffmpeg(gsr_supported_video_codecs *supported_video_codecs, gsr_supported_video_codecs *supported_video_codecs_vulkan, gsr_gpu_vendor vendor);
+void set_supported_video_codecs_ffmpeg(gsr_supported_video_codecs *supported_video_codecs, gsr_supported_video_codecs *supported_video_codecs_vulkan, gsr_gpu_vendor vendor, bool is_nouveau);
 
 vec2i codec_get_max_resolution(gsr_video_codec video_codec, bool use_software_video_encoder, const gsr_supported_video_codecs *supported_video_codecs);
 bool codec_supports_resolution(vec2i codec_max_resolution, vec2i capture_resolution);

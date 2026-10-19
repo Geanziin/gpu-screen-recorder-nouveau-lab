@@ -447,37 +447,45 @@ bool gl_get_gpu_info(gsr_egl *egl, gsr_gpu_info *info) {
         }
     }
 
+    info->is_nouveau = false;
+
     if(strstr(gl_vendor, "AMD"))
         info->vendor = GSR_GPU_VENDOR_AMD;
     else if(strstr(gl_vendor, "Mesa") && gl_renderer && strstr(gl_renderer, "AMD"))
         info->vendor = GSR_GPU_VENDOR_AMD;
     else if(strstr(gl_vendor, "Intel"))
         info->vendor = GSR_GPU_VENDOR_INTEL;
-    else if(strstr(gl_vendor, "NVIDIA"))
+    else if(strstr(gl_vendor, "NVIDIA")) {
         info->vendor = GSR_GPU_VENDOR_NVIDIA;
-    else if(strstr(gl_vendor, "Broadcom"))
+        if(gl_renderer && (strstr(gl_renderer, "nouveau") || strstr(gl_renderer, "NVK")))
+            info->is_nouveau = true;
+    } else if(strstr(gl_vendor, "Broadcom"))
         info->vendor = GSR_GPU_VENDOR_BROADCOM;
     else if(strstr(gl_vendor, "Mesa") && gl_renderer && strstr(gl_renderer, "Apple"))
         info->vendor = GSR_GPU_VENDOR_APPLE;
-    else {
+    else if(strstr(gl_vendor, "Mesa") && gl_renderer && (strstr(gl_renderer, "NVIDIA") || strstr(gl_renderer, "NVK") || strstr(gl_renderer, "nouveau") || strstr(gl_renderer, "GeForce"))) {
+        info->vendor = GSR_GPU_VENDOR_NVIDIA;
+        info->is_nouveau = true;
+    } else {
         gsr_log(GSR_LOG_LEVEL_ERROR, "unknown gpu vendor: %s", gl_vendor);
         return false;
     }
 
     if(gl_renderer) {
-        if(info->vendor == GSR_GPU_VENDOR_NVIDIA)
-            sscanf(gl_renderer, "%*s %*s %*s %d", &info->gpu_version);
+        if(info->vendor == GSR_GPU_VENDOR_NVIDIA) {
+            if(info->is_nouveau)
+                info->gpu_version = 1000;
+            else
+                sscanf(gl_renderer, "%*s %*s %*s %d", &info->gpu_version);
+        }
         info->is_steam_deck = strstr(gl_renderer, "vangogh") != NULL;
     }
 
     return true;
 }
 
-/* Nouveau is not supported by gpu screen recorder. The other drm drivers dont do hardware accelerated
-   rendering, mesa falls back to llvmpipe (software rendering) on them.
-   Note: this list is kept in sync with gpu screen recorder ui */
+/* Note: this list is kept in sync with gpu screen recorder ui */
 static const char* unsupported_drm_drivers[] = {
-    "nouveau",
     "vkms",
     "vgem",
     "simpledrm",

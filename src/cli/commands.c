@@ -70,7 +70,7 @@ static void list_supported_video_codecs(gsr_egl *egl, bool wayland) {
     gsr_supported_video_codecs supported_video_codecs_vulkan;
     get_supported_video_codecs(egl, GSR_VIDEO_CODEC_H264_VULKAN, false, false, &supported_video_codecs_vulkan);
 
-    set_supported_video_codecs_ffmpeg(&supported_video_codecs, &supported_video_codecs_vulkan, egl->gpu_info.vendor);
+    set_supported_video_codecs_ffmpeg(&supported_video_codecs, &supported_video_codecs_vulkan, egl->gpu_info.vendor, egl->gpu_info.is_nouveau);
 
     if(supported_video_codecs.h264.supported)
         puts("h264");

@@ -231,7 +231,7 @@ static int recorder_setup_video_encoder(gsr_recorder *self) {
         return select_video_codec_result;
     }
 
-    const enum AVPixelFormat video_pix_fmt = get_pixel_format(self->settings.video_codec, self->egl->gpu_info.vendor, self->settings.video_encoder == GSR_VIDEO_ENCODER_HW_CPU);
+    const enum AVPixelFormat video_pix_fmt = get_pixel_format(self->settings.video_codec, self->egl->gpu_info.vendor, self->egl->gpu_info.is_nouveau, self->settings.video_encoder == GSR_VIDEO_ENCODER_HW_CPU);
     self->video_codec_context = create_video_codec_context(video_pix_fmt, video_codec_f, self->egl, &self->settings, self->video_size.x, self->video_size.y);
     if(!self->settings.is_replaying)
         self->video_stream = create_stream(self->av_format_context, self->video_codec_context);

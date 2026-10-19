@@ -596,7 +596,7 @@ bool gsr_egl_load(gsr_egl *self, gsr_window *window, bool is_monitor_capture, bo
         goto fail;
 
     /* Nvfbc requires glx */
-    if(gsr_window_get_display_server(self->window) == GSR_DISPLAY_SERVER_X11 && is_monitor_capture && self->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA) {
+    if(gsr_window_get_display_server(self->window) == GSR_DISPLAY_SERVER_X11 && is_monitor_capture && self->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA && !self->gpu_info.is_nouveau) {
         self->context_type = GSR_GL_CONTEXT_TYPE_GLX;
         if(!gsr_egl_switch_to_glx_context(self))
             goto fail;
@@ -614,7 +614,7 @@ bool gsr_egl_load(gsr_egl *self, gsr_window *window, bool is_monitor_capture, bo
 
     gsr_egl_disable_vsync(self);
 
-    if(self->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA) {
+    if(self->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA && !self->gpu_info.is_nouveau) {
         /* This fixes nvenc codecs unable to load on openSUSE tumbleweed because of a cuda error. Don't ask me why */
         const bool inside_flatpak = getenv("FLATPAK_ID") != NULL;
         if(inside_flatpak)

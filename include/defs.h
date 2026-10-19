@@ -18,6 +18,7 @@ typedef struct {
     gsr_gpu_vendor vendor;
     int gpu_version; /* 0 if unknown */
     bool is_steam_deck;
+    bool is_nouveau;
 } gsr_gpu_info;
 
 typedef enum {

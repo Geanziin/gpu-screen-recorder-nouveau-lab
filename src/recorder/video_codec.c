@@ -9,12 +9,12 @@
 
 int video_quality_to_h264_equivalent_qp(gsr_video_quality video_quality) {
     switch(video_quality) {
-        case GSR_VIDEO_QUALITY_MEDIUM:    return 35;
-        case GSR_VIDEO_QUALITY_HIGH:      return 30;
-        case GSR_VIDEO_QUALITY_VERY_HIGH: return 25;
-        case GSR_VIDEO_QUALITY_ULTRA:     return 22;
+        case GSR_VIDEO_QUALITY_MEDIUM:    return 24;
+        case GSR_VIDEO_QUALITY_HIGH:      return 20;
+        case GSR_VIDEO_QUALITY_VERY_HIGH: return 17;
+        case GSR_VIDEO_QUALITY_ULTRA:     return 14;
     }
-    return 22;
+    return 20;
 }
 
 static int video_quality_to_codec_quality_value(enum AVCodecID codec_id, gsr_video_quality video_quality) {
@@ -95,33 +95,32 @@ AVCodecContext *create_video_codec_context(enum AVPixelFormat pix_fmt, const AVC
         codec_context->rc_initial_buffer_occupancy = 0;//codec_context->bit_rate;//codec_context->bit_rate * 1000;
     } else if(settings->bitrate_mode == GSR_BITRATE_MODE_VBR) {
         const int quality = vbr_get_quality_parameter(codec_context, settings->video_quality, hdr);
+        int64_t base_bitrate = 25000000;
         switch(settings->video_quality) {
             case GSR_VIDEO_QUALITY_MEDIUM:
-                codec_context->qmin = quality;
-                codec_context->qmax = quality;
-                codec_context->bit_rate = 100000;//4500000 + (codec_context->width * codec_context->height)*0.75;
+                base_bitrate = 15000000;
                 break;
             case GSR_VIDEO_QUALITY_HIGH:
-                codec_context->qmin = quality;
-                codec_context->qmax = quality;
-                codec_context->bit_rate = 100000;//10000000-9000000 + (codec_context->width * codec_context->height)*0.75;
+                base_bitrate = 25000000;
                 break;
             case GSR_VIDEO_QUALITY_VERY_HIGH:
-                codec_context->qmin = quality;
-                codec_context->qmax = quality;
-                codec_context->bit_rate = 100000;//10000000-9000000 + (codec_context->width * codec_context->height)*0.75;
+                base_bitrate = 40000000;
                 break;
             case GSR_VIDEO_QUALITY_ULTRA:
-                codec_context->qmin = quality;
-                codec_context->qmax = quality;
-                codec_context->bit_rate = 100000;//10000000-9000000 + (codec_context->width * codec_context->height)*0.75;
+                base_bitrate = 60000000;
                 break;
         }
 
-        codec_context->rc_max_rate = codec_context->bit_rate;
-        //codec_context->rc_min_rate = codec_context->bit_rate;
-        codec_context->rc_buffer_size = codec_context->bit_rate;//codec_context->bit_rate / 10;
-        codec_context->rc_initial_buffer_occupancy = codec_context->bit_rate;//codec_context->bit_rate * 1000;
+        int64_t pixels_per_sec = (int64_t)codec_context->width * codec_context->height * (settings->fps > 0 ? settings->fps : 60);
+        int64_t target_bitrate = base_bitrate * pixels_per_sec / (1920LL * 1080LL * 60LL);
+        if(target_bitrate < 5000000) target_bitrate = 5000000;
+
+        codec_context->qmin = quality;
+        codec_context->qmax = quality;
+        codec_context->bit_rate = target_bitrate;
+        codec_context->rc_max_rate = target_bitrate * 3 / 2;
+        codec_context->rc_buffer_size = target_bitrate;
+        codec_context->rc_initial_buffer_occupancy = target_bitrate / 2;
     } else {
         //codec_context->rc_buffer_size = 50000 * 1000;
     }
@@ -129,7 +128,7 @@ AVCodecContext *create_video_codec_context(enum AVPixelFormat pix_fmt, const AVC
     if (codec_context->codec_id == AV_CODEC_ID_MPEG1VIDEO)
         codec_context->mb_decision = 2;
 
-    const bool uses_vaapi_encoder = !use_software_video_encoder && egl->gpu_info.vendor != GSR_GPU_VENDOR_NVIDIA && !video_codec_is_vulkan(settings->video_codec);
+    const bool uses_vaapi_encoder = !use_software_video_encoder && (egl->gpu_info.vendor != GSR_GPU_VENDOR_NVIDIA || egl->gpu_info.is_nouveau) && !video_codec_is_vulkan(settings->video_codec);
     if(uses_vaapi_encoder && settings->bitrate_mode != GSR_BITRATE_MODE_CBR) {
         // 8 bit / 10 bit = 80%, and increase it even more
         const float quality_multiply = hdr ? (8.0f/10.0f * 0.7f) : 1.0f;
@@ -139,14 +138,14 @@ AVCodecContext *create_video_codec_context(enum AVPixelFormat pix_fmt, const AVC
     av_opt_set_int(codec_context->priv_data, "b_ref_mode", 0, 0);
     //av_opt_set_int(codec_context->priv_data, "cbr", true, 0);
 
-    if(egl->gpu_info.vendor != GSR_GPU_VENDOR_NVIDIA || video_codec_is_vulkan(settings->video_codec)) {
+    if((egl->gpu_info.vendor != GSR_GPU_VENDOR_NVIDIA || egl->gpu_info.is_nouveau) || video_codec_is_vulkan(settings->video_codec)) {
         // TODO: More options, better options
         //codec_context->bit_rate = codec_context->width * codec_context->height;
         switch(settings->bitrate_mode) {
             case GSR_BITRATE_MODE_QP: {
                 if(video_codec_is_vulkan(settings->video_codec))
                     av_opt_set(codec_context->priv_data, "rc_mode", "cqp", 0);
-                else if(egl->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA)
+                else if(egl->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA && !egl->gpu_info.is_nouveau)
                     av_opt_set(codec_context->priv_data, "rc", "constqp", 0);
                 else
                     av_opt_set(codec_context->priv_data, "rc_mode", "CQP", 0);
@@ -155,7 +154,7 @@ AVCodecContext *create_video_codec_context(enum AVPixelFormat pix_fmt, const AVC
             case GSR_BITRATE_MODE_VBR: {
                 if(video_codec_is_vulkan(settings->video_codec))
                     av_opt_set(codec_context->priv_data, "rc_mode", "vbr", 0);
-                else if(egl->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA)
+                else if(egl->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA && !egl->gpu_info.is_nouveau)
                     av_opt_set(codec_context->priv_data, "rc", "vbr", 0);
                 else
                     av_opt_set(codec_context->priv_data, "rc_mode", "VBR", 0);
@@ -164,7 +163,7 @@ AVCodecContext *create_video_codec_context(enum AVPixelFormat pix_fmt, const AVC
             case GSR_BITRATE_MODE_CBR: {
                 if(video_codec_is_vulkan(settings->video_codec))
                     av_opt_set(codec_context->priv_data, "rc_mode", "cbr", 0);
-                else if(egl->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA)
+                else if(egl->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA && !egl->gpu_info.is_nouveau)
                     av_opt_set(codec_context->priv_data, "rc", "cbr", 0);
                 else
                     av_opt_set(codec_context->priv_data, "rc_mode", "CBR", 0);
@@ -190,7 +189,7 @@ AVCodecContext *create_video_codec_context(enum AVPixelFormat pix_fmt, const AVC
     return codec_context;
 }
 
-static void dict_set_profile(AVCodecContext *codec_context, gsr_gpu_vendor vendor, gsr_color_depth color_depth, gsr_video_codec video_codec, AVDictionary **options) {
+static void dict_set_profile(AVCodecContext *codec_context, gsr_gpu_vendor vendor, bool is_nouveau, gsr_color_depth color_depth, gsr_video_codec video_codec, AVDictionary **options) {
     #if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(61, 17, 100)
     if(codec_context->codec_id == AV_CODEC_ID_H264) {
         // TODO: Only for vaapi
@@ -199,7 +198,7 @@ static void dict_set_profile(AVCodecContext *codec_context, gsr_gpu_vendor vendo
         //else
         av_dict_set(options, "profile", "high", 0);
     } else if(codec_context->codec_id == AV_CODEC_ID_AV1) {
-        if(vendor == GSR_GPU_VENDOR_NVIDIA) {
+        if(vendor == GSR_GPU_VENDOR_NVIDIA && !is_nouveau) {
             if(color_depth == GSR_COLOR_DEPTH_10_BITS)
                 av_dict_set_int(options, "highbitdepth", 1, 0);
         } else {
@@ -212,7 +211,7 @@ static void dict_set_profile(AVCodecContext *codec_context, gsr_gpu_vendor vendo
             av_dict_set(options, "profile", "main", 0);
     }
     #else
-    const bool use_nvidia_values = vendor == GSR_GPU_VENDOR_NVIDIA && !video_codec_is_vulkan(video_codec);
+    const bool use_nvidia_values = vendor == GSR_GPU_VENDOR_NVIDIA && !is_nouveau && !video_codec_is_vulkan(video_codec);
     if(codec_context->codec_id == AV_CODEC_ID_H264) {
         // TODO: Only for vaapi
         //if(color_depth == GSR_COLOR_DEPTH_10_BITS)
@@ -270,12 +269,12 @@ bool open_video_software(AVCodecContext *codec_context, const gsr_recorder_setti
     return true;
 }
 
-static void video_set_rc(gsr_video_codec video_codec, gsr_gpu_vendor vendor, gsr_bitrate_mode bitrate_mode, AVDictionary **options) {
+static void video_set_rc(gsr_video_codec video_codec, gsr_gpu_vendor vendor, bool is_nouveau, gsr_bitrate_mode bitrate_mode, AVDictionary **options) {
     switch(bitrate_mode) {
         case GSR_BITRATE_MODE_QP: {
             if(video_codec_is_vulkan(video_codec))
                 av_dict_set(options, "rc_mode", "cqp", 0);
-            else if(vendor == GSR_GPU_VENDOR_NVIDIA)
+            else if(vendor == GSR_GPU_VENDOR_NVIDIA && !is_nouveau)
                 av_dict_set(options, "rc", "constqp", 0);
             else
                 av_dict_set(options, "rc_mode", "CQP", 0);
@@ -284,7 +283,7 @@ static void video_set_rc(gsr_video_codec video_codec, gsr_gpu_vendor vendor, gsr
         case GSR_BITRATE_MODE_VBR: {
             if(video_codec_is_vulkan(video_codec))
                 av_dict_set(options, "rc_mode", "vbr", 0);
-            else if(vendor == GSR_GPU_VENDOR_NVIDIA)
+            else if(vendor == GSR_GPU_VENDOR_NVIDIA && !is_nouveau)
                 av_dict_set(options, "rc", "vbr", 0);
             else
                 av_dict_set(options, "rc_mode", "VBR", 0);
@@ -293,7 +292,7 @@ static void video_set_rc(gsr_video_codec video_codec, gsr_gpu_vendor vendor, gsr
         case GSR_BITRATE_MODE_CBR: {
             if(video_codec_is_vulkan(video_codec))
                 av_dict_set(options, "rc_mode", "cbr", 0);
-            else if(vendor == GSR_GPU_VENDOR_NVIDIA)
+            else if(vendor == GSR_GPU_VENDOR_NVIDIA && !is_nouveau)
                 av_dict_set(options, "rc", "cbr", 0);
             else
                 av_dict_set(options, "rc_mode", "CBR", 0);
@@ -316,11 +315,11 @@ bool open_video_hardware(AVCodecContext *codec_context, bool low_power, const gs
     if(settings->bitrate_mode == GSR_BITRATE_MODE_QP)
         video_hardware_set_qp(codec_context, settings->video_quality, hdr, &options);
 
-    video_set_rc(settings->video_codec, egl->gpu_info.vendor, settings->bitrate_mode, &options);
+    video_set_rc(settings->video_codec, egl->gpu_info.vendor, egl->gpu_info.is_nouveau, settings->bitrate_mode, &options);
 
     // TODO: Enable multipass
 
-    dict_set_profile(codec_context, egl->gpu_info.vendor, color_depth, settings->video_codec, &options);
+    dict_set_profile(codec_context, egl->gpu_info.vendor, egl->gpu_info.is_nouveau, color_depth, settings->video_codec, &options);
 
     if(video_codec_is_vulkan(settings->video_codec)) {
         av_dict_set_int(&options, "async_depth", 3, 0);
@@ -338,7 +337,7 @@ bool open_video_hardware(AVCodecContext *codec_context, bool low_power, const gs
             if(hdr)
                 av_dict_set(&options, "sei", "hdr", 0);
         }
-    } else if(egl->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA) {
+    } else if(egl->gpu_info.vendor == GSR_GPU_VENDOR_NVIDIA && !egl->gpu_info.is_nouveau) {
         // TODO: These dont seem to be necessary
         // av_dict_set_int(&options, "zerolatency", 1, 0);
         // if(codec_context->codec_id == AV_CODEC_ID_AV1) {
@@ -423,13 +422,13 @@ bool open_video_hardware(AVCodecContext *codec_context, bool low_power, const gs
     return true;
 }
 
-enum AVPixelFormat get_pixel_format(gsr_video_codec video_codec, gsr_gpu_vendor vendor, bool use_software_video_encoder) {
+enum AVPixelFormat get_pixel_format(gsr_video_codec video_codec, gsr_gpu_vendor vendor, bool is_nouveau, bool use_software_video_encoder) {
     if(use_software_video_encoder) {
         return AV_PIX_FMT_NV12;
     } else {
         if(video_codec_is_vulkan(video_codec))
             return AV_PIX_FMT_VULKAN;
         else
-            return vendor == GSR_GPU_VENDOR_NVIDIA ? AV_PIX_FMT_CUDA : AV_PIX_FMT_VAAPI;
+            return (vendor == GSR_GPU_VENDOR_NVIDIA && !is_nouveau) ? AV_PIX_FMT_CUDA : AV_PIX_FMT_VAAPI;
     }
 }
